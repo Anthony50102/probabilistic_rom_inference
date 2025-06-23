@@ -1,0 +1,111 @@
+INFO: NEW SESSION ----------------------------------------- 2025-06-19 10:34:28
+INFO: generating training data...done in 0.414242 s.
+INFO: generating training data...done in 0.434432 s.
+INFO: generating training data...done in 0.516010 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-19 11:14:25
+INFO: generating training data...done in 0.419367 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-19 12:21:57
+INFO: generating training data...done in 0.395843 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: NEW SESSION ----------------------------------------- 2025-06-19 12:31:38
+INFO: generating training data...done in 0.443372 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: NEW SESSION ----------------------------------------- 2025-06-19 12:36:33
+INFO: generating training data...done in 0.397105 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.490336 s.
+INFO: generating training data...done in 0.423807 s.
+INFO: generating training data...done in 0.459257 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-19 16:48:23
+INFO: generating training data...done in 0.430875 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: NEW SESSION ----------------------------------------- 2025-06-19 17:22:39
+INFO: generating training data...done in 0.416576 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.424873 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-19 17:35:59
+INFO: generating training data...done in 0.421085 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 12:14:29
+INFO: generating training data...done in 0.443059 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 12:16:00
+INFO: generating training data...done in 0.364651 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: reducing noisy training states to 3 dimensions...done in 0.083137 s.
+INFO: generating training data...done in 0.386646 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.060526 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.054296 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.056723 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.063528 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.055862 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 12:38:55
+INFO: generating training data...done in 0.386864 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.042076 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.385672 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.069083 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 13:09:49
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.510437 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.055850 s.
+INFO: generating training data...done in 0.402757 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.046610 s.
+INFO: generating training data...done in 0.592613 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 13:31:59
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.376777 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.044157 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 13:33:11
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.414357 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.044227 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 13:35:37
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.377780 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.043310 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 13:37:22
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.414469 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.042007 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 13:48:26
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.394385 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.045466 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 13:55:47
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.403090 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.045130 s.
+INFO: generating training data...done in 0.436497 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.046918 s.
+INFO: arviz_base not installed
+INFO: arviz_stats not installed
+INFO: arviz_plots not installed
+INFO: generating training data...done in 0.437949 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.045084 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 14:42:38
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.375904 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.042719 s.
+INFO: generating training data...done in 0.440725 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.043513 s.
+INFO: generating training data...done in 0.380564 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.044197 s.
+INFO: generating training data...done in 0.412273 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.042201 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 16:53:51
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.379976 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.078104 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 17:00:54
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.374802 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.045164 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 17:02:49
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.381750 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.042958 s.
+INFO: NEW SESSION ----------------------------------------- 2025-06-20 17:03:15
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.379712 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.042840 s.
