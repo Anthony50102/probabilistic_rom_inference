@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 import opinf
 
-import config
+import fitz_nagumo.helpers.config as config
 
 
 # Logging / timing tools ======================================================

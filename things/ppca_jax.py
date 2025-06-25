@@ -32,15 +32,20 @@ class BayesianPPCA:
         self.mcmc = None
         self.samples = None
 
-    def penalty(self, V, strength = 50):
+    def penalty(self, V, strength = 5000):
         '''
         Add a soft penalty to punish the loss between V^T V - I
         '''
         loss = jnp.sum(((V.T @ V) - jnp.eye(V.shape[1]))**2)
         numpyro.factor("orth_penalty", -strength * loss)
 
+    # def prior_V(self, feature_dim: int = None, heteroskedastic:bool = False):
+    #     if feature_dim == None and heteroskedastic == True:
+    #         raise ValueError "Feature dim must be passed if using heteroskedastic"
+    #     # Give different noises across feature dims
+    #     if heteroskedastic:
         
-    def model(self, data: jnp.ndarray, penalty: bool = False) -> None:
+    def model(self, data: jnp.ndarray, penalty: bool = False, heteroskedastic:bool = True) -> None:
         """
         NumPyro model for PPCA.
         
@@ -84,39 +89,6 @@ class BayesianPPCA:
                 mean,
                 jnp.sqrt(sigma2) * jnp.ones_like(mean)
             ).to_event(1), obs=data)
-    
-    def marginalized_qhat_model(self, data: jnp.ndarray) -> None:
-        """
-        NumPyro model for marginalized PPCA.
-        
-        Args:
-            data: Array of shape (n_samples, obs_dim)
-        """
-        n_samples, obs_dim = data.shape
-        
-        # Priors on parameters only (not on latent variables!)
-        V = numpyro.sample("V", dist.Normal(
-            jnp.zeros((obs_dim, self.latent_dim)),
-            jnp.ones((obs_dim, self.latent_dim))
-        ).to_event(2))
-        
-        qbar = numpyro.sample("qbar", dist.Normal(
-            jnp.zeros(obs_dim),
-            jnp.ones(obs_dim) * 2.0
-        ).to_event(1))
-        
-        log_sigma2 = numpyro.sample("log_sigma2", dist.Normal(0.0, 1.0))
-        sigma2 = jnp.exp(log_sigma2)
-        
-        # Compute covariance: C = V @ V^T + σ²I
-        C = V @ V.T + sigma2 * jnp.eye(obs_dim)
-        
-        # Add small value for numerical stability
-        C = C + 1e-6 * jnp.eye(obs_dim)
-        
-        # Likelihood: each observation comes from N(μ, C)
-        with numpyro.plate("data", n_samples):
-            numpyro.sample("obs", dist.MultivariateNormal(qbar, C), obs=data)
     
     def fit(self, 
             data: jnp.ndarray, 
@@ -171,6 +143,7 @@ class BayesianPPCA:
                 data: jnp.ndarray,
                 num_iterations: int = 5000,
                 learning_rate: float = 0.01,
+                penalty: bool = False,
                 rng_key: Optional[jax.random.PRNGKey] = None) -> None:
         """
         Fit using Stochastic Variational Inference - even faster!
@@ -188,7 +161,7 @@ class BayesianPPCA:
         svi = SVI(self.model, guide, optimizer, loss=Trace_ELBO())
         
         print("Running SVI optimization...")
-        svi_result = svi.run(rng_key, num_iterations, data)
+        svi_result = svi.run(rng_key, num_iterations, data, penalty)
         
         # Extract posterior samples
         params = svi_result.params

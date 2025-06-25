@@ -9,7 +9,7 @@ import numpy as np
 
 import opinf
 
-import config
+import fitz_nagumo.helpers.config as config
 
 
 def trajectory(

@@ -1,0 +1,6 @@
+EXPERIMENTAL SCENARIO
+Data: 400 uniformly sampled snapshots over 0.00 ≤ t < 6.00 with 10.00% noise
+Dimension: retaining 3 POD modes
+Training: using 400 regression points
+GP regularization: eta = 1.00e-04
+Posterior: 100 draws
