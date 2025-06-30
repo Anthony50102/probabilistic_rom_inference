@@ -17,12 +17,12 @@ np.random.seed(42)
 # ------------------------
 # Kernel derivative functions
 # ------------------------
-@jax.jit
+# @jax.jit
 def flatten_time(t: jnp.ndarray) -> jnp.ndarray:
     """Return t with shape (n,) no matter if (n,), (n,1) or (1,n) was given."""
     return jnp.ravel(t)
 
-@jax.jit
+# @jax.jit
 def rbf_kernel_no_nugget(lengthscale: float, variance: float, t: jnp.ndarray) -> jnp.ndarray:
     """Full n×n RBF kernel matrix K_ij = variance * exp(-(t_i-t_j)^2 / (2*ell^2))."""
     t = flatten_time(t)
@@ -30,13 +30,13 @@ def rbf_kernel_no_nugget(lengthscale: float, variance: float, t: jnp.ndarray) ->
     ell2 = lengthscale ** 2
     return variance * jnp.exp(-diff**2 / (2.0 * ell2))
 
-@jax.jit
+# @jax.jit
 def get_c_phi(lengthscale: float, variance: float, t: jnp.ndarray, nugget: float = 1e-4) -> jnp.ndarray:
     """Kernel matrix plus nugget on the diagonal."""
     kmat = rbf_kernel_no_nugget(lengthscale, variance, t)
     return kmat + nugget * jnp.eye(kmat.shape[0])
 
-@jax.jit
+# @jax.jit
 def get_c_phi_dash(lengthscale: float, variance: float, t: jnp.ndarray) -> jnp.ndarray:
     """Derivative with respect to the second time argument (dt2)."""
     t = flatten_time(t)
@@ -44,12 +44,12 @@ def get_c_phi_dash(lengthscale: float, variance: float, t: jnp.ndarray) -> jnp.n
     ell2 = lengthscale ** 2
     return (diff / ell2) * rbf_kernel_no_nugget(lengthscale, variance, t)
 
-@jax.jit
+# @jax.jit
 def get_dash_c_phi(lengthscale: float, variance: float, t: jnp.ndarray) -> jnp.ndarray:
     """Derivative with respect to the first time argument (dt1)."""
     return -get_c_phi_dash(lengthscale, variance, t)
 
-@jax.jit
+# @jax.jit
 def get_c_phi_double_dash(lengthscale: float, variance: float, t: jnp.ndarray) -> jnp.ndarray:
     """Second mixed derivative with respect to both time arguments."""
     t = flatten_time(t)
@@ -473,3 +473,76 @@ class BayesianGP:
             'variance': self.samples['variance'],
             'noise': self.samples['noise']
         }
+    
+    def predict_with_hypers(self,
+                            X_test,
+                            lengthscale: float,
+                            variance: float,
+                            noise: float,
+                            num_samples: int = None,
+                            rng_key = None):
+        """
+        Generate posterior predictions at X_test using fixed hyperparameters.
+
+        Args:
+            X_test: array (m, d) — test inputs
+            lengthscale: float — kernel lengthscale
+            variance: float — kernel variance
+            noise: float — noise std (not variance)
+            num_samples: int or None — how many samples to draw (default: all)
+            rng_key: JAX PRNGKey — for sampling
+
+        Returns:
+            mean: (m,) predictive mean
+            std: (m,) predictive stddev
+            samples: (S, m) samples if num_samples is given (else (N, m))
+        """
+        # sanity checks
+        if not hasattr(self, 'X_train') or not hasattr(self, 'y_train'):
+            raise RuntimeError("You must fit the model first (self.X_train, self.y_train).")
+
+        X_train = jnp.asarray(self.X_train)
+        y_train = jnp.asarray(self.y_train)
+        X_test = jnp.asarray(X_test)
+        n_train = X_train.shape[0]
+        n_test  = X_test.shape[0]
+        norm   = self.normalization
+
+        # choose how many parameter-sets to use
+        # if you want exactly one prediction, set num_samples=1
+        # if None, we'll draw one sample from the predictive per posterior sample
+        # here we ignore self.samples entirely since we are fixing hypers
+        if rng_key is None:
+            rng_key = random.PRNGKey(0)
+        # build kernel matrices
+        K_tt = self.kernel(X_train, X_train, lengthscale, variance)
+        K_tt += (noise + norm) * jnp.eye(n_train)
+
+        K_st = self.kernel(X_test,  X_train, lengthscale, variance)
+        K_ss = self.kernel(X_test,  X_test,  lengthscale, variance)
+
+        # Cholesky of training cov
+        L = jnp.linalg.cholesky(K_tt)
+        alpha = jax.scipy.linalg.cho_solve((L, True), y_train)
+
+        # predictive mean
+        mean = K_st @ alpha
+
+        # predictive covariance
+        v = jax.scipy.linalg.solve_triangular(L, K_st.T, lower=True)
+        cov = K_ss - v.T @ v
+        cov += norm * jnp.eye(n_test)  # add a tiny nugget for safety
+
+        # if user just wants mean & std
+        std = jnp.sqrt(jnp.diag(cov))
+
+        # if they also want samples
+        if num_samples is not None:
+            keys = random.split(rng_key, num_samples)
+            # draw from MVN( mean, cov )
+            # fastest: sample standard normal and transform by Cholesky
+            Lp = jnp.linalg.cholesky(cov)
+            samples = jnp.stack([ mean + Lp @ random.normal(k, (n_test,)) for k in keys ])
+            return mean, std, samples
+
+        return mean, std, None
