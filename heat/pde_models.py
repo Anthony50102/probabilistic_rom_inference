@@ -1,18 +1,20 @@
-import jax.numpy as jnp
 # pde_models.py
 """Partial differential equation (full-order) models used in the examples."""
 
+__all__ = [
+    "Euler",
+    "CubicHeatBimodal",
+]
+
 import abc
 import numpy as np
-import scipy.sparse as sparse
-import scipy.integrate as integrate
-import scipy.interpolate as interpolate
+import scipy.sparse
+import scipy.integrate
+import scipy.interpolate
+import matplotlib.colors
+import matplotlib.animation
 import matplotlib.pyplot as plt
-import matplotlib.colors as mplcolors
-import matplotlib.animation as animation
 from IPython.display import HTML
-
-import opinf
 
 
 # Base classes ================================================================
@@ -77,7 +79,7 @@ class _BasePDE(abc.ABC):
         Q : (N, k) ndarray
             Solution to the PDE over the discretized space-time domain.
         """
-        return integrate.solve_ivp(
+        return scipy.integrate.solve_ivp(
             fun=self.derivative,
             t_span=[timepoints[0], timepoints[-1]],
             y0=np.array(initial_conditions),
@@ -187,7 +189,6 @@ class Euler(_BasePDE):
         zeta = 1 / rho
 
         return np.concatenate((v, p, zeta))
-        return states
 
     @classmethod
     def unlift(cls, lifted_states):
@@ -211,6 +212,29 @@ class Euler(_BasePDE):
         rho_e = p / (cls.gamma - 1) + 0.5 * rho * v**2
 
         return np.concatenate((rho, rho_v, rho_e))
+
+    @classmethod
+    def lift_ddts(cls, states, ddts):
+        """Lift the native state time derivatives to the time derivatives
+        of the learning variables.
+
+        Parameters
+        ----------
+        states : (n, k) ndarray
+            Native state variables.
+        ddts : (n, k) ndarray
+            Time derivatives of the native state variables. Each column
+            ``ddts[:, j]`` corresponds to the state vector ``states[:, j]``.
+        """
+        rho, rho_v, _ = cls.split(states)
+        drho, drho_v, drho_e = cls.split(ddts)
+        v = rho_v / rho
+
+        dv = (drho_v - drho * v) / rho
+        dp = (cls.gamma - 1) * (drho_e - rho_v * dv - drho * v**2 / 2)
+        dxi = -drho / rho**2
+
+        return np.concatenate((dv, dp, dxi))
 
     # Initial conditions ------------------------------------------------------
     def initial_conditions(self, init_params, plot=False):
@@ -236,7 +260,7 @@ class Euler(_BasePDE):
         rho0s = np.concatenate((rho0s, [rho0s[0]]))
 
         # Initial condition for velocity.
-        v_spline = interpolate.CubicSpline(
+        v_spline = scipy.interpolate.CubicSpline(
             self.__nodes,
             v0s,
             bc_type="periodic",
@@ -247,7 +271,7 @@ class Euler(_BasePDE):
         p = 1e5 * np.ones_like(v)
 
         # Initial condition for density.
-        rho_spline = interpolate.CubicSpline(
+        rho_spline = scipy.interpolate.CubicSpline(
             self.__nodes,
             rho0s,
             bc_type="periodic",
@@ -257,7 +281,7 @@ class Euler(_BasePDE):
         # Group the initial conditions together and plot if desired.
         init = np.concatenate((v, p, 1 / rho))
         if plot:
-            fig, axes = self.plot_space(init)
+            _, axes = self.plot_space(init)
             axes[0].set_title("Initial conditions")
             axes[0].plot(self.__nodes, v0s, "k*", mew=0)
             axes[2].plot(self.__nodes, rho0s, "k*", mew=0)
@@ -450,8 +474,8 @@ class Euler(_BasePDE):
 
         # Colorbar.
         lsc = cmap(np.linspace(0, 1, 400))
-        scale = mplcolors.Normalize(vmin=0, vmax=1)
-        lscmap = mplcolors.LinearSegmentedColormap.from_list(
+        scale = matplotlib.colors.Normalize(vmin=0, vmax=1)
+        lscmap = matplotlib.colors.LinearSegmentedColormap.from_list(
             "euler", lsc, N=nlocs
         )
         mappable = plt.cm.ScalarMappable(norm=scale, cmap=lscmap)
@@ -532,7 +556,7 @@ class Euler(_BasePDE):
         self._format_spatial_subplots(fig, axes)
         axes[0].set_title(r"$t = t_{0}$")
 
-        a = animation.FuncAnimation(
+        a = matplotlib.animation.FuncAnimation(
             fig,
             update,
             init_func=init,
@@ -595,7 +619,7 @@ class HeatBimodal(_BasePDE):
         self.__N = dof = spatial_domain.size - 2
         dx2inv = diffusion / dx[0] ** 2
         diags = np.array([1, -2, 1]) * dx2inv
-        self.__A = sparse.diags(diags, [-1, 0, 1], (dof, dof)).tocsc()
+        self.__A = scipy.sparse.diags(diags, [-1, 0, 1], (dof, dof)).tocsc()
 
         # Constant vector for Dirichlet BCs.
         c = np.zeros(dof, dtype=float)
@@ -727,56 +751,6 @@ class HeatBimodal(_BasePDE):
         nonhomogeneous = alpha + (beta - alpha) / L * (x - x[0])
         return homogeneous1 - homogeneous2 + nonhomogeneous
 
-    def shift(self, states):
-        """Shift states to satisfy homogeneous Dirichlet boundary conditions.
-        If q(x, t) are the states, we construct a smooth function qbar(x) where
-
-            qbar(x[0]) = left_bc,    qbar(x[-1]) = right_bc,
-
-        so that the shifted states q(x, t) - qbar(x) satisfy
-
-            q(x[0], t) - qbar(x[0]) = 0 = q(x[-1], t) - qbar(x[-1]).
-
-        Parameters
-        ----------
-        states : (N+2, k) ndarray
-            States to shift.
-
-        Returns
-        -------
-        states_shifted (N+2, k) ndarray
-            Shifted states satisfying homogeneous boundary conditions.
-        """
-        if np.ndim(states) == 2:
-            return states - self._shift.reshape((-1, 1))
-        return states - self._shift
-
-    def unshift(self, states_shifted):
-        """Unshift previously states to satisfy the nonhomogeneous Dirichlet
-        boundary conditions of the original problem.
-        If z(x, t) are the states, we construct a smooth function qbar(x) where
-
-            qbar(x[0]) = left_bc,    qbar(x[-1]) = right_bc,
-
-        so that the unshifted states z(x, t) + qbar(x) satisfy
-
-            z(x[0], t) + qbar(x[0]) = left_bc,
-            z(x[-1], t) - qbar(x[-1]) = right_bc.
-
-        Parameters
-        ----------
-        states_shifted : (N+2,) or (N+2, k) ndarray
-            Previously shifted states to unshift.
-
-        Returns
-        -------
-        states_shifted (N+2,) or (N+2, k) ndarray
-            Unshifted states satisfying the nonhomogeneous boundary conditions.
-        """
-        if np.ndim(states_shifted) == 2:
-            return states_shifted + self._shift.reshape((-1, 1))
-        return states_shifted + self._shift
-
     # Differential equation ---------------------------------------------------
     def derivative(self, t: float, state: np.ndarray) -> np.ndarray:
         """Compute the derivative of the state at the given time.
@@ -901,31 +875,6 @@ class HeatBimodal(_BasePDE):
                 np.vstack([states[0, 1:], newinterior, states[-1, 1:]]),
             ]
         )
-
-        # # Add truncated normal noise (except to auxiliary conditions).
-        # noise_std = noise_level * interior
-        # noise_std[noise_std == 0.0] = 0.1
-        # # minimum value = 0; maximum value = 2 standard deviations.
-        # a = np.minimum(
-        #     np.zeros(interior.shape),
-        #     (0.0 - interior) / noise_std,
-        # )
-        # b = 2 * np.ones(interior.shape)
-        # interior_noised = stats.truncnorm.rvs(
-        #     a,
-        #     b,
-        #     loc=interior,
-        #     scale=noise_std,
-        #     size=interior.shape,
-        # )
-        # all_but_init = np.vstack(
-        #     (
-        #         states[0, 1:],
-        #         interior_noised,
-        #         states[-1, 1:],
-        #     )
-        # )
-        # return np.column_stack([states[:, 0], all_but_init])
 
     # Visualization -----------------------------------------------------------
     def plot_space(self, state, ax=None):
@@ -1113,7 +1062,7 @@ class HeatBimodal(_BasePDE):
             ax.set_ylabel(r"$q(x, t)$")
 
         # Make the animation.
-        ani = animation.FuncAnimation(
+        ani = matplotlib.animation.FuncAnimation(
             fig,
             update,
             frames=profiles[0].shape[1],
@@ -1161,11 +1110,7 @@ class CubicHeatBimodal(HeatBimodal):
         Constant dirichlet boundary condition at x = spatial_domain[-1].
     """
 
-    def derivative(
-        self,
-        t: float,
-        state: np.ndarray,
-    ) -> np.ndarray:
+    def derivative(self, t: float, state: np.ndarray) -> np.ndarray:
         """Compute the derivative of the state at the given time.
 
         Parameters
@@ -1181,3 +1126,7 @@ class CubicHeatBimodal(HeatBimodal):
             State derivative at time t.
         """
         return HeatBimodal.derivative(self, t, state) - state**3
+
+    def jacobian(self, t: float, state: np.ndarray) -> np.ndarray:
+        """Calculate the derivative Jacobian."""
+        return self.stiffness - np.diag(3 * state**2)

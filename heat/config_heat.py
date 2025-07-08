@@ -24,6 +24,9 @@ __all__ = [
 ]
 
 import numpy as np
+import jax.numpy as jnp
+from jax.scipy.special import gammaln
+import jax.numpy as jnp
 
 import opinf
 
@@ -80,25 +83,37 @@ class Basis(opinf.basis.PODBasis):
     def compress(self, states):
         """Map high-dimensional states to low-dimensional coordinates."""
         states = np.concatenate((states, states**2))
-        print(states.shape, self.shift_.shape)
-        # states = states[:, None]
-        print(states.ndim)
-        # Make states 2 for pre shift
-        if states.ndim == 1:
-            states = states[:, None]
         states = opinf.pre.shift(states, shift_by=self.shift_)
-        print("done with the pre shift", states.ndim, states.shape)
-        # remove second dim
-        if states.ndim == 2 and states.shape[1] == 1:
-            states = states.reshape(-1)
         return super().compress(states)
 
-    def decompress(self, states_compressed, locs = None):
+    def decompress(self, states_compressed):
         """Map low-dimensional coordinates to high-dimensional states."""
         states = super().decompress(states_compressed)
         states = opinf.pre.shift(states, shift_by=-self.shift_)
         return np.split(states, 2, axis=0)[0]
 
+
+
+
+def binom(x, y):
+  return jnp.exp(gammaln(x + 1) - gammaln(y + 1) - gammaln(x - y + 1))
+
+def Quadraticckron(state):
+    return jnp.concatenate(
+                [state[i] * state[: i + 1] for i in range(state.shape[0])],
+                axis=0,
+            )
+
+def Cubicckron(state):
+    state2 = Quadraticckron(state)
+    lens = binom(jnp.arange(2, len(state) + 2), 2).astype(int)
+    return jnp.concatenate(
+        [state[i] * state2[: lens[i]] for i in range(state.shape[0])],
+        axis=0,
+    )
+
+def khatri_rao(a, b):
+    return jnp.vstack([jnp.kron(a[:, k], b[:, k]) for k in range(b.shape[1])]).T
 
 class ReducedOrderModel(opinf.models.ContinuousModel):
     """Reduced-order model for this problem."""
@@ -108,6 +123,29 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
 
     def __init__(self):
         super().__init__("cAHBN")
+    
+    def _assemble_data_matrix(self, states, inputs):
+        """Assemble the data matrix for operator inference."""
+        blocks = []
+        for i in self._indices_of_operators_to_infer:
+            op = self.operators[i]
+            if isinstance(op, opinf.operators.ConstantOperator):
+                block = jnp.ones((1, jnp.atleast_1d(states).shape[-1]))
+            elif isinstance(op, opinf.operators.LinearOperator):
+                block = jnp.atleast_2d(states)
+            elif isinstance(op, opinf.operators.QuadraticOperator):
+                block = Quadraticckron(jnp.atleast_2d(states))
+            elif isinstance(op, opinf.operators.CubicOperator):
+                block =Cubicckron(np.atleast_2d(states))
+            elif isinstance(op, opinf.operators.InputOperator):
+                block =jnp.atleast_2d(inputs)
+            elif isinstance(op, opinf.operators.StateInputOperator):
+                block =khatri_rao(jnp.atleast_2d(inputs), jnp.atleast_2d(states))
+            else:
+                print("idkK!!", type(op))
+            blocks.append(block.T)
+
+        return jnp.hstack(blocks)
 
 
 def input_func_factory(params):
