@@ -9,8 +9,7 @@ import numpy as np
 
 import opinf
 
-import fitz_nagumo.helpers.config as config
-
+import config
 
 def trajectory(
     training_span: tuple[float, float],

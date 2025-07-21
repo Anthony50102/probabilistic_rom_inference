@@ -23,6 +23,7 @@ __all__ = [
 ]
 
 import numpy as np
+from typing import override
 
 import opinf
 
@@ -73,6 +74,7 @@ class Basis(opinf.basis.PODBasis):
             )
 
 
+    @override
     def compress(self, states):
         """Map high-dimensional states to low-dimensional coordinates."""
         q1, q2 = np.split(states, 2, axis=0)
@@ -80,6 +82,7 @@ class Basis(opinf.basis.PODBasis):
             np.concatenate((q1, q2, q1**2)),
         )
 
+    @override
     def decompress(self, states_compressed, **kwargs):
         """Map low-dimensional coordinates to high-dimensional states."""
         q = super().decompress(states_compressed)

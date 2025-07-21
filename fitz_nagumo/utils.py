@@ -7,8 +7,7 @@ import matplotlib.pyplot as plt
 
 import opinf
 
-import fitz_nagumo.helpers.config as config
-
+import config
 
 # Logging / timing tools ======================================================
 def _array2string(arr):
