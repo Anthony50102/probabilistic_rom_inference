@@ -25,8 +25,8 @@ def summarize_experiment(
     noiselevel: float,
     num_regression_points: int,
     numPODmodes: int,
-    gp_regularizer: float = None,
-    ndraws: int = None,
+    gp_regularizer: float = 1e-6,
+    ndraws: int = 60,
 ):
     """Summarize the experimental setup."""
     report = [
@@ -54,7 +54,7 @@ def _open_file(file_path: str):
         if platform.system() == "Darwin":  # MacOS
             subprocess.call(("open", file_path))
         elif platform.system() == "Windows":  # Windows
-            os.startfile(file_path)
+            os.startfile(file_path) # type: ignore
         else:  # Linux
             subprocess.call(("xdg-open", file_path))
 
