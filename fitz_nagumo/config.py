@@ -75,15 +75,15 @@ class Basis(opinf.basis.PODBasis):
 
 
     @override
-    def compress(self, states):
+    def compress(self, state: np.ndarray) -> np.ndarray:
         """Map high-dimensional states to low-dimensional coordinates."""
-        q1, q2 = np.split(states, 2, axis=0)
+        q1, q2 = np.split(state, 2, axis=0)
         return super().compress(
             np.concatenate((q1, q2, q1**2)),
         )
 
     @override
-    def decompress(self, states_compressed, **kwargs):
+    def decompress(self, states_compressed: np.ndarray, locs=None) -> np.ndarray:
         """Map low-dimensional coordinates to high-dimensional states."""
         q = super().decompress(states_compressed)
         q1, q2, _ = np.split(q, 3, axis=0)
@@ -186,7 +186,9 @@ _logger.addHandler(_handler)
 
 # Log the session header.
 if hasattr(sys.modules["__main__"], "__file__"):
-    _front = f"({os.path.basename(sys.modules['__main__'].__file__)})"
+    from pathlib import Path
+    file_path = getattr(sys.modules["__main__"], "__file__", None)
+    _front = f"({Path(file_path).name})" if isinstance(file_path, str) else "(interactive)"
     _end = time.strftime("%Y-%m-%d %H:%M:%S")
     _mid = "-" * (79 - len(_front) - len(_end) - 20)
     _header = f"NEW SESSION {_front} {_mid} {_end}"
