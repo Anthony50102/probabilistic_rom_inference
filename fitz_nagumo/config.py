@@ -23,6 +23,8 @@ __all__ = [
 ]
 
 import numpy as np
+import jax.numpy as jnp
+from jax.scipy.special import gammaln
 from typing import override
 
 import opinf
@@ -89,6 +91,25 @@ class Basis(opinf.basis.PODBasis):
         q1, q2, _ = np.split(q, 3, axis=0)
         return np.concatenate((q1, q2))
 
+def binom(x, y):
+  return jnp.exp(gammaln(x + 1) - gammaln(y + 1) - gammaln(x - y + 1))
+
+def Quadraticckron(state):
+    return jnp.concatenate(
+                [state[i] * state[: i + 1] for i in range(state.shape[0])],
+                axis=0,
+            )
+
+def Cubicckron(state):
+    state2 = Quadraticckron(state)
+    lens = binom(jnp.arange(2, len(state) + 2), 2).astype(int)
+    return jnp.concatenate(
+        [state[i] * state2[: lens[i]] for i in range(state.shape[0])],
+        axis=0,
+    )
+
+def khatri_rao(a, b):
+    return jnp.vstack([jnp.kron(a[:, k], b[:, k]) for k in range(b.shape[1])]).T
 
 class ReducedOrderModel(opinf.models.ContinuousModel):
     """Reduced-order model for this problem."""
@@ -112,6 +133,29 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
     @staticmethod
     def full_rhs(t):
         pass
+    
+    def _assemble_data_matrix(self, states, inputs):
+        """Assemble the data matrix for operator inference."""
+        blocks = []
+        for i in self._indices_of_operators_to_infer:
+            op = self.operators[i]
+            if isinstance(op, opinf.operators.ConstantOperator):
+                block = jnp.ones((1, jnp.atleast_1d(states).shape[-1]))
+            elif isinstance(op, opinf.operators.LinearOperator):
+                block = jnp.atleast_2d(states)
+            elif isinstance(op, opinf.operators.QuadraticOperator):
+                block = Quadraticckron(jnp.atleast_2d(states))
+            elif isinstance(op, opinf.operators.CubicOperator):
+                block =Cubicckron(np.atleast_2d(states))
+            elif isinstance(op, opinf.operators.InputOperator):
+                block =jnp.atleast_2d(inputs)
+            elif isinstance(op, opinf.operators.StateInputOperator):
+                block =khatri_rao(jnp.atleast_2d(inputs), jnp.atleast_2d(states))
+            else:
+                print("idkK!!", type(op))
+            blocks.append(block.T)
+
+        return jnp.hstack(blocks)
 
 
 monolithic = True
