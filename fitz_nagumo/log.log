@@ -7,3 +7,24 @@ INFO: generating training data...done in 0.539885 s.
 INFO: Animation.save using <class 'matplotlib.animation.HTMLWriter'>
 INFO: reducing noisy training states to 3 dimensions...done in 0.062094 s.
 INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: NEW SESSION ----------------------------------------- 2025-07-24 23:08:18
+INFO: generating training data...done in 0.388424 s.
+INFO: Animation.save using <class 'matplotlib.animation.HTMLWriter'>
+INFO: reducing noisy training states to 3 dimensions...done in 0.111691 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: NEW SESSION ----------------------------------------- 2025-07-25 10:43:12
+INFO: generating training data...done in 0.773691 s.
+INFO: Animation.save using <class 'matplotlib.animation.HTMLWriter'>
+INFO: reducing noisy training states to 3 dimensions...done in 0.097037 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 1.363506 s.
+INFO: Animation.save using <class 'matplotlib.animation.HTMLWriter'>
+INFO: reducing noisy training states to 3 dimensions...done in 0.129455 s.
+INFO: NEW SESSION ----------------------------------------- 2025-07-25 11:04:08
+INFO: generating training data...done in 0.467131 s.
+INFO: Animation.save using <class 'matplotlib.animation.HTMLWriter'>
+INFO: reducing noisy training states to 3 dimensions...done in 0.062997 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.450737 s.
+INFO: Animation.save using <class 'matplotlib.animation.HTMLWriter'>
+INFO: reducing noisy training states to 3 dimensions...done in 0.076633 s.
