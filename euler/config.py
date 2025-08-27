@@ -13,6 +13,7 @@ from config_euler import (
     FullOrderModel,
     Basis,
     ReducedOrderModel,
+    ReducedOrderModelOriginal,
     CONSTANT_VALUE_BOUNDS,
     LENGTH_SCALE_BOUNDS,
     NOISE_LEVEL_BOUNDS,

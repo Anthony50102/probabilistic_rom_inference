@@ -1,4 +1,4 @@
-# config_heatcubiclifted.py
+# config_euler.py
 """Configuration for Euler equations in specific volume variables.
 
 This experiment reduces the lifted variables (u, q, 1/rho) jointly and learns
@@ -128,6 +128,16 @@ class Basis(opinf.basis.PODBasis):
         
         return decompressed
 
+class ReducedOrderModelOriginal(opinf.models.ContinuousModel):
+    """Reduced-order model for this problem."""
+
+    ivp_method = "RK45"
+    input_dimension = 0
+
+    def __init__(self):
+        super().__init__("cAH")
+
+    input_func = None
 
 class ReducedOrderModel(opinf.models.ContinuousModel):
     """Reduced-order model for this problem."""
@@ -215,6 +225,20 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
 
             op.set_entries(blk)
             index = end
+    
+    # config_euler.py
+    def constant_set_entries(self, entries):
+        # Always 1D
+        arr = jnp.array(entries)
+        if arr.ndim == 2 and 1 in arr.shape:
+            arr = arr.ravel()
+        if arr.ndim != 1:
+            raise ValueError("ConstantOperator entries must be one-dimensional")
+
+        # IMPORTANT: assign to backing field to avoid property recursion
+        # (do NOT do: self.entries = arr)
+        object.__setattr__(self, "_entries", arr)
+
 
 def khatri_rao(a,b):
     c = jnp.vstack([jnp.kron(a[:, k], b[:, k]) for k in range(b.shape[1])]).T 
