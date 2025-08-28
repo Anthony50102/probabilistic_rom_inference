@@ -1,8 +1,8 @@
 import sys
 sys.path.append("../")
-from plotter import plotter
+from plotter import Plotter
 import matplotlib.pyplot as plot
 
-class euler_plotter(plotter):
+class EulerPlotter(Plotter):
     def __init__(self) -> None:
         super().__init__()
