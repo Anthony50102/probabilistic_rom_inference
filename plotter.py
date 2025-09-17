@@ -1,9 +1,88 @@
 import matplotlib.pyplot as plt
+from helpers.bgp_jax import BayesianGP
 import numpy as np
+from typing import List
 
 class Plotter:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, 
+                 numPODmodes: int,
+                 time_domain_training: np.ndarray, 
+                 time_domain_prediction: np.ndarray, 
+                 snapshots_training: np.ndarray, 
+                 snapshots_prediction: np.ndarray,
+                 ) -> None:
+
+        self.numPODmodes = numPODmodes
+        self.time_domain_training = time_domain_training
+        self.time_domain_prediction = time_domain_prediction
+        self.snapshots_training = snapshots_training
+        self.snapshots_prediction = snapshots_prediction
+
+        self.lengthscales = None
+        self.variances = None
+        self.noises = None
+
+    def gp_plot(self,
+                time_domain_eval_training: np.ndarray,
+                lengthscales: np.ndarray | List,
+                variances: np.ndarray | List,
+                noises: np.ndarray | List,
+                double: bool = True,
+                figsize=(12,8),
+                max_num_samples: int = 1000
+                ):
+
+        # Put them in shapes (numPODmodes, num_samples)
+        self.lengthscales = lengthscales if not isinstance(lengthscales, list) else np.array(lengthscales)
+        self.variances = variances if not isinstance(variances, list) else np.array(variances)
+        self.noises = noises if not isinstance(noises, list) else np.array(noises)
+
+
+
+        num_samples = min(self.lengthscales.shape[1], self.variances.shape[1], self.noises.shape[1], max_num_samples)
+        print(f"Number of samples: {num_samples}")
+
+        if double:
+            fig, ax = plt.subplots(self.numPODmodes, 2, figsize = figsize, sharey='row', sharex='col')
+        
+        gp = BayesianGP()
+        gp.X_train = self.time_domain_training[:, None]
+
+        for i in range(self.numPODmodes):
+            gp.y_train = self.snapshots_training[i]
+
+            ax[i,0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+            ax[i,1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+
+            means, stds, eval_means, eval_stds = [], [], [], []
+            for j in range(num_samples):
+                mean, std, _ = gp.predict_with_hypers(X_test=self.time_domain_training[:, None], lengthscale=self.lengthscales[i][j], variance=self.variances[i][j], noise=self.noises[i][j])
+                means.append(mean)
+                stds.append(std)
+                eval_mean, eval_std, _ = gp.predict_with_hypers(X_test=time_domain_eval_training[:, None], lengthscale=self.lengthscales[i][j], variance=self.variances[i][j], noise=self.noises[i][j])
+                eval_means.append(eval_mean)
+                eval_stds.append(eval_std)
+            
+            means, stds, eval_means, eval_stds = np.array(means), np.array(stds), np.array(eval_means), np.array(eval_stds)
+            ax[i,0].plot(self.time_domain_training, means.T, alpha = .3)
+            ax[i,1].plot(time_domain_eval_training, eval_means.T, alpha = .3)
+        
+            ax[i,0].fill_between(self.time_domain_training, np.mean(means, axis=0)-2*np.mean(stds, axis=0), np.mean(means, axis=0)+2*np.mean(stds, axis=0), alpha = .3, color = "gray", label = "Mean $\pm$ 2 std")
+            ax[i,1].fill_between(time_domain_eval_training, np.mean(eval_means, axis=0)-2*np.mean(eval_stds, axis=0), np.mean(eval_means, axis=0)+2*np.mean(eval_stds, axis=0), alpha = .3, color = "gray", label = "Mean $\pm$ 2 std")
+        
+            ax[i,0].set_title(f"Mode {i+1} Training Domain")
+            ax[i,1].set_title(f"Mode {i+1} Training Domain Increase Density")
+            ax[i,0].legend()
+            ax[i,1].legend()
+            ax[i,0].grid()
+            ax[i,1].grid()
+
+        fig.suptitle("GP Hyperparameter Samples", fontsize=16)
+        plt.tight_layout()
+        plt.show()
+                
+
+
     
     def trajectory_plot(self, 
                         time_snaps: np.ndarray, 
