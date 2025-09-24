@@ -267,8 +267,8 @@ class Plotter:
             ax[i,1].grid()
             ax[i,2].grid()
 
-        fig.tight_layout()
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
+        fig.tight_layout()
         fig.show()
     
     def operator_plot_trajectories(
