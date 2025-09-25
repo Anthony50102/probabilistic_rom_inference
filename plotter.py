@@ -263,6 +263,25 @@ class Plotter:
             ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
             ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
 
+            yvals = np.asarray(self.snapshots_prediction[i])
+            ymin = np.nanmin(yvals)
+            ymax = np.nanmax(yvals)
+
+            if np.isclose(ymin, ymax):
+                if np.isclose(ymax, 0.0):
+                    pad = 1.0  # arbitrary small window around zero
+                else:
+                    pad = abs(ymax) * 0.75
+                    ymin -= pad
+                    ymax += pad
+            else:
+                ymin = ymin - abs(ymin) * 0.75
+                ymax = ymax * 1.75
+
+            ax[i, 0].set_ylim(float(ymin), float(ymax))
+            ax[i, 1].set_ylim(float(ymin), float(ymax))
+            ax[i, 2].set_ylim(float(ymin), float(ymax))
+
             ax[i,0].grid()
             ax[i,1].grid()
             ax[i,2].grid()
@@ -313,6 +332,25 @@ class Plotter:
             ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training, 5, axis=0)[i], np.percentile(draws_training, 95, axis=0)[i], alpha=.2)
             ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], alpha=.2)
             ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], alpha=.2)
+
+            yvals = np.asarray(self.snapshots_prediction[i])
+            ymin = np.nanmin(yvals)
+            ymax = np.nanmax(yvals)
+
+            if np.isclose(ymin, ymax):
+                if np.isclose(ymax, 0.0):
+                    pad = 1.0  # arbitrary small window around zero
+                else:
+                    pad = abs(ymax) * 0.5
+                    ymin -= pad
+                    ymax += pad
+            else:
+                ymin = ymin - abs(ymin) * 0.5
+                ymax = ymax * 1.5
+
+            ax[i, 0].set_ylim(float(ymin), float(ymax))
+            ax[i, 1].set_ylim(float(ymin), float(ymax))
+            ax[i, 2].set_ylim(float(ymin), float(ymax))
 
             ax[i,0].grid()
             ax[i,1].grid()
