@@ -1,1 +1,2 @@
-- Make plots for various noise levels
+- Implement for heat + fitz nagumo
+- Plot full order reconstruction error
