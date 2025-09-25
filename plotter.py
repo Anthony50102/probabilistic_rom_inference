@@ -200,6 +200,8 @@ class Plotter:
 
     def operator_plot(
                     self,
+                    # TODO: Add support for List q0
+                    q0: np.ndarray | List,
                     operator_samples: np.ndarray | List,
                     latent_state_samples: np.ndarray | List,
                     rom,
@@ -222,14 +224,14 @@ class Plotter:
             operator = self.operator_samples[i]
             rom.model._extract_operators(operator)
             # TODO: Can't cheat like this with starting value
-            rom.model.predict(state0=self.snapshots_training[:, 0], t=self.time_domain_eval_training)
+            rom.model.predict(state0=q0, t=self.time_domain_eval_training)
             if rom.model.predict_result_.y.shape[1] < self.time_domain_eval_training.size:
                 print("Bad solve within training domain, skipping", rom.model.predict_result_.y.shape)
                 continue
             rom_solves_training.append(rom.model.predict_result_.y)
 
 
-            rom.model.predict(state0=self.snapshots_prediction[:, 0], t=self.time_domain_eval_prediction)
+            rom.model.predict(state0=q0, t=self.time_domain_eval_prediction)
             if rom.model.predict_result_.y.shape[1] < self.time_domain_eval_prediction.size:
                 print("Bad solve within prediction domain, skipping", rom.model.predict_result_.y.shape)
                 continue
