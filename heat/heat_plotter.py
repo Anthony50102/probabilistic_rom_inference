@@ -135,12 +135,14 @@ class HeatPlotter(Plotter):
                     ax[i,j].plot(time_domain_training_prediction_parameters, self.snapshots_prediction_parameters[j], 'k*', label='Truth', alpha=0.5)
 
                 # Plot the predictions means and stds - now using pre-calculated statistics
-                ax[i,j].plot(self.time_domain_eval_training, rom_solves_training_mean[i, j], label='GP Mean', alpha=0.5)
-                ax[i,j].plot(self.time_domain_eval_training, rom_solves_training_median[i, j], label='GP Median', alpha=0.5)
+                ax[i,j].plot(self.time_domain_eval_training, rom_solves_training_mean[i, j], label='GP Mean', alpha=0.5, lw=2)
+                ax[i,j].plot(self.time_domain_eval_training, rom_solves_training_median[i, j], label='GP Median', alpha=0.5, lw=2)
                 ax[i,j].fill_between(self.time_domain_eval_training, 
                                     rom_solves_training_5[i, j], 
                                     rom_solves_training_95[i, j], 
                                     alpha=0.3, label='95% CI')
+
+                ax[i,j].grid()
         
         fig.show()
 
@@ -158,18 +160,44 @@ class HeatPlotter(Plotter):
                 # Plot the snapshots (truth data) and the truth data
                 if i < self.num_initial_conditions:
                     ax[i,j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*', label='Truth', alpha=0.5)
-                    ax[i,j].plot(self.time_domain_prediction, self.snapshots_prediction[i][j], color="tab:gray", label='Truth', alpha=0.5)
+                    # ax[i,j].plot(self.time_domain_prediction, self.snapshots_prediction[i][j], color="tab:gray", label='Truth', alpha=0.5)
                 else:
                     ax[i,j].plot(time_domain_training_prediction_parameters, self.snapshots_prediction_parameters[j], 'k*', label='Truth', alpha=0.5)
                     ax[i,j].plot(self.time_domain_prediction, snapshots_prediction_new_initial[j], color="tab:gray", label='Truth', alpha=0.5)
 
                 # Plot the predictions means and stds - now using pre-calculated statistics
-                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_mean[i, j], label='GP Mean', alpha=0.5)
-                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_median[i, j], label='GP Median', alpha=0.5)
+                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_mean[i, j], label='GP Mean', alpha=0.5, lw=2)
+                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_median[i, j], label='GP Median', alpha=0.5, lw=2)
                 ax[i,j].fill_between(self.time_domain_eval_prediction, 
                                     rom_solves_prediction_5[i, j], 
                                     rom_solves_prediction_95[i, j], 
                                     alpha=0.3, label='95% CI')
                 
-        
+                ax[i,j].grid()
+                ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
+
+        fig.show()
+
+        # Create a new plot for the out-of-sample predictions
+        fig, ax = plt.subplots(self.num_initial_conditions + 1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
+
+        for i in range(self.num_initial_conditions + 1):
+            for j in range(self.numPODmodes):
+                # Plot the snapshots (truth data) and the truth data
+                if i < self.num_initial_conditions:
+                    ax[i,j].plot(self.time_domain_prediction, self.snapshots_prediction[i][j], color="tab:gray", label='Truth', alpha=0.5)
+                else:
+                    ax[i,j].plot(self.time_domain_prediction, snapshots_prediction_new_initial[j], color="tab:gray", label='Truth', alpha=0.5)
+
+                # Plot the predictions means and stds - now using pre-calculated statistics
+                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_mean[i, j], label='GP Mean', alpha=0.5, lw=2)
+                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_median[i, j], label='GP Median', alpha=0.5, lw=2)
+                ax[i,j].fill_between(self.time_domain_eval_prediction, 
+                                    rom_solves_prediction_5[i, j], 
+                                    rom_solves_prediction_95[i, j], 
+                                    alpha=0.3, label='95% CI')
+
+                ax[i,j].grid()
+                ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
+
         fig.show()
