@@ -42,6 +42,53 @@ class HeatPlotter(Plotter):
                 ax[j][k].fill_between(self.time_domain_eval_training, mean-2*std, mean+2*std, alpha=0.3)
                 ax[j][k].plot(self.time_domain_training[j], self.snapshots_training[j][k], 'k*')
     
+    def gp_plot_states_hyperparams(self,
+                                   lengthscales, # Shape (samples, num_initial_conditions, numPODmodes)
+                                   variances,    # Shape (samples, num_initial_conditions, numPODmodes)
+                                   noises,       # Shape (samples, num_initial_conditions, numPODmodes)
+                                   figsize=(20,12),
+                                ):
+        
+        samples = min(lengthscales.shape[0], variances.shape[0], noises.shape[0])
+
+        fig, ax = plt.subplots(self.num_initial_conditions, self.numPODmodes, figsize=figsize, sharex='col')
+
+        lengthscale_mean = lengthscales.mean(axis=0) # i is POD mode j is intitial condition
+        variance_mean = variances.mean(axis=0)
+        noise_mean = noises.mean(axis=0)
+
+        means = np.zeros((samples, self.num_initial_conditions, self.numPODmodes, self.time_domain_eval_training.shape[0]))
+
+        gp = BayesianGP()
+        for i in range(samples):
+            for j in range(self.num_initial_conditions):
+                gp.X_train = self.time_domain_training[j,][:,None]
+                # TODO: fix this to take actual samples
+                for k in range(self.numPODmodes):
+                    Ls = lengthscales[i][j][k]
+                    Vs = variances[i][j][k]
+                    Ns = noises[i][j][k]
+                    gp.y_train = self.snapshots_training[j][k]
+                    mean, std, _ = gp.predict_with_hypers(X_test=self.time_domain_eval_training[:,None], lengthscale=Ls, variance=Vs, noise=Ns)
+                    means[i][j][k] = mean
+                    ax[j][k].plot(self.time_domain_eval_training, mean)
+        
+        # compute the mean and std over the samples
+        means_mean = means.mean(axis=0)
+        means_std = means.std(axis=0)
+
+        for i in range(self.num_initial_conditions):
+            for j in range(self.numPODmodes):
+                ax[i][j].plot(self.time_domain_eval_training, means_mean[i][j], color='tab:orange', lw=2)
+                ax[i][j].fill_between(self.time_domain_eval_training, 
+                                     means_mean[i][j]-2*means_std[i][j], 
+                                     means_mean[i][j]+2*means_std[i][j], 
+                                     color='tab:orange', alpha=0.3)
+                ax[i][j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*')
+        
+        fig.show()
+
+    
     def gp_plot_derivatives(self,
                             figsize=(20,12),
                             ):
@@ -201,3 +248,37 @@ class HeatPlotter(Plotter):
                 ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
 
         fig.show()
+    
+    def operator_plot_trajectories(
+            self,
+            snapshots_training_new_initial,
+            time_domain_training_new_initial,
+            draws_training,
+            draws_prediction,
+            time_domain_prediction,
+            time_domain_training_prediction_parameters,
+            figsize=(20,12),
+            max_num_samples = 100,
+            ):
+        
+        plt.clf()
+
+        fig, ax = plt.subplots(self.num_initial_conditions+1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
+
+        for i in range(self.num_initial_conditions + 1):
+            for j in range(self.numPODmodes):
+                # Plot the snapshots (truth data)
+                if i < self.num_initial_conditions:
+                    ax[i,j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*', label='Truth', alpha=0.5)
+                else:
+                    ax[i,j].plot(time_domain_training_new_initial, self.snapshots_prediction_parameters[j], 'k*', label='Truth', alpha=0.5)
+
+                # Plot the predictions means and stds - now using pre-calculated statistics
+                for k in range(min(max_num_samples, draws_training.shape[0])):
+                    ax[i,j].plot(self.time_domain_eval_training, draws_training[k,i,j,:], color='tab:blue', alpha=0.1)
+
+                ax[i,j].plot(self.time_domain_eval_training, draws_training.mean(axis=0)[i,j,:], '--', color='tab:orange', alpha=0.8, lw=2, label='Mean')
+
+                ax[i,j].grid()
+
+            fig.show()
