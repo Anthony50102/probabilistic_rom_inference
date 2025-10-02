@@ -160,7 +160,15 @@ class HeatPlotter(Plotter):
             print(rom_solves_training[i].shape)
             rom_solves_prediction[i] = np.array(rom_solves_prediction[i]) 
             print(rom_solves_prediction[i].shape)
-
+        
+        # Find minimum number of samples across all initial conditions
+        min_samples_training = min(arr.shape[0] for arr in rom_solves_training)
+        min_samples_prediction = min(arr.shape[0] for arr in rom_solves_prediction)
+        
+        # Truncate all arrays to the minimum sample count
+        rom_solves_training = [arr[:min_samples_training] for arr in rom_solves_training]
+        rom_solves_prediction = [arr[:min_samples_prediction] for arr in rom_solves_prediction]
+        
         # Convert to numpy arrays and permute dimensions correctly
         rom_solves_training = np.permute_dims(np.array(rom_solves_training), (1,0,2,3)) # (samples, initial conditions, POD modes, time)
         rom_solves_prediction = np.permute_dims(np.array(rom_solves_prediction), (1,0,2,3)) # (samples, initial conditions, POD modes, time)
@@ -209,7 +217,7 @@ class HeatPlotter(Plotter):
                     ax[i,j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*', label='Truth', alpha=0.5)
                 else:
                     ax[i,j].plot(time_domain_training_prediction_parameters, self.snapshots_prediction_parameters[j], 'k*', label='Truth', alpha=0.5)
-                    ax[i,j].plot(self.time_domain_prediction, snapshots_prediction_new_initial[j], color="tab:gray", label='Truth', alpha=0.5)
+                    # ax[i,j].plot(self.time_domain_prediction, snapshots_prediction_new_initial[j], color="tab:gray", label='Truth', alpha=0.5)
 
                 # Plot the predictions means and stds
                 ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_mean[i, j], '--', color='tab:orange', alpha=0.8, lw=2, label='Mean')
