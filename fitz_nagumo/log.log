@@ -28,3 +28,14 @@ INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dl
 INFO: generating training data...done in 0.450737 s.
 INFO: Animation.save using <class 'matplotlib.animation.HTMLWriter'>
 INFO: reducing noisy training states to 3 dimensions...done in 0.076633 s.
+INFO: NEW SESSION ----------------------------------------- 2025-10-20 10:20:47
+INFO: generating training data...done in 0.529999 s.
+INFO: reducing noisy training states to 3 dimensions...done in 1.216631 s.
+INFO: 
+fitting GP model for state 'r_01'
+ERROR: (KeyboardInterrupt)  (raised after 29.349551 s)
+INFO: generating training data...done in 0.824943 s.
+INFO: reducing noisy training states to 3 dimensions...done in 7.673728 s.
+INFO: 
+fitting GP model for state 'r_01'
+ERROR: (KeyboardInterrupt)  (raised after 140.429616 s)
