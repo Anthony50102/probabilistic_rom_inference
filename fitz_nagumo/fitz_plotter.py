@@ -49,8 +49,21 @@ def compute_derivatives_fourth_order(snapshots, time_points):
 
 
 class FitzPlotter(Plotter):
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, scaler=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self.scaler = scaler
+    
+    def _to_original_space(self, data_scaled):
+        """Convert scaled data back to original space."""
+        if self.scaler is not None:
+            return self.scaler.inverse_transform(data_scaled)
+        return data_scaled
+    
+    def _to_scaled_space(self, data_original):
+        """Convert original data to scaled space."""
+        if self.scaler is not None:
+            return self.scaler.transform(data_original)
+        return data_original
 
     def gp_plot_state(self,
                 lengthscales: np.ndarray | List,
@@ -77,8 +90,15 @@ class FitzPlotter(Plotter):
         gp.X_train = self.time_domain_training[:, None]
 
         for i in range(self.numPODmodes):
-            gp.y_train = self.snapshots_training[i]
+            # Use scaled data for GP if scaler is available
+            if self.scaler is not None:
+                y_train_scaled = self.scaler.transform(self.snapshots_training)[i]
+            else:
+                y_train_scaled = self.snapshots_training[i]
+            
+            gp.y_train = y_train_scaled
 
+            # Plot original (unscaled) data
             ax[i,0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
             ax[i,1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
 
@@ -92,11 +112,22 @@ class FitzPlotter(Plotter):
                 eval_stds.append(eval_std)
             
             means, stds, eval_means, eval_stds = np.array(means), np.array(stds), np.array(eval_means), np.array(eval_stds)
-            ax[i,0].plot(self.time_domain_training, means.T, alpha = .3)
-            ax[i,1].plot(self.time_domain_eval_training, eval_means.T, alpha = .3)
+            
+            # Inverse transform predictions back to original scale for plotting
+            if self.scaler is not None:
+                means_orig = np.array([self.scaler.inverse_transform(np.vstack([means[j] for _ in range(self.numPODmodes)]))[i] for j in range(num_samples)])
+                eval_means_orig = np.array([self.scaler.inverse_transform(np.vstack([eval_means[j] for _ in range(self.numPODmodes)]))[i] for j in range(num_samples)])
+                stds_orig = stds * self.scaler.stds_[i, 0]
+                eval_stds_orig = eval_stds * self.scaler.stds_[i, 0]
+            else:
+                means_orig, eval_means_orig = means, eval_means
+                stds_orig, eval_stds_orig = stds, eval_stds
+            
+            ax[i,0].plot(self.time_domain_training, means_orig.T, alpha = .3)
+            ax[i,1].plot(self.time_domain_eval_training, eval_means_orig.T, alpha = .3)
         
-            ax[i,0].fill_between(self.time_domain_training, np.mean(means, axis=0)-2*np.mean(stds, axis=0), np.mean(means, axis=0)+2*np.mean(stds, axis=0), alpha = .3, color = "gray", label = "Mean $\pm$ 2 std")
-            ax[i,1].fill_between(self.time_domain_eval_training, np.mean(eval_means, axis=0)-2*np.mean(eval_stds, axis=0), np.mean(eval_means, axis=0)+2*np.mean(eval_stds, axis=0), alpha = .3, color = "gray", label = "Mean $\pm$ 2 std")
+            ax[i,0].fill_between(self.time_domain_training, np.mean(means_orig, axis=0)-2*np.mean(stds_orig, axis=0), np.mean(means_orig, axis=0)+2*np.mean(stds_orig, axis=0), alpha = .3, color = "gray", label = "Mean $\\pm$ 2 std")
+            ax[i,1].fill_between(self.time_domain_eval_training, np.mean(eval_means_orig, axis=0)-2*np.mean(eval_stds_orig, axis=0), np.mean(eval_means_orig, axis=0)+2*np.mean(eval_stds_orig, axis=0), alpha = .3, color = "gray", label = "Mean $\\pm$ 2 std")
 
             ax[i,0].set_title(f"Mode {i+1} Training Domain")
             ax[i,1].set_title(f"Mode {i+1} Training Domain Increase Density")
@@ -120,6 +151,12 @@ class FitzPlotter(Plotter):
                 ):
         plt.clf()
 
+        # Determine if we're working with scaled data
+        if self.scaler is not None:
+            snapshots_scaled = self.scaler.transform(self.snapshots_training)
+        else:
+            snapshots_scaled = self.snapshots_training
+
         K_yys, K_zys, K_zzs = [], [], []
         for i in range(self.numPODmodes):
             ell2 = self.gp_lengthscales[i].mean(axis=0)**2
@@ -130,34 +167,41 @@ class FitzPlotter(Plotter):
             rbf_zz = rbf_eval(self.gp_lengthscales[i].mean(axis=0), self.gp_variances[i].mean(axis=0), self.time_domain_eval_training, self.time_domain_eval_training)
 
             # K_yy with noise term
-            K_yy = rbf_yy + 1e-5 * np.eye(len(self.time_domain_training))  # Fixed: use eye instead of diag
+            K_yy = rbf_yy + 1e-5 * np.eye(len(self.time_domain_training))
 
-            # K_zy: derivative kernel - note the correct difference computation
-            diff_zy = self.time_domain_eval_training[:, None] - self.time_domain_training[None, :]  # (250, 150)
-            K_zy = -(diff_zy / ell2) * rbf_zy  # (250, 150)
+            # K_zy: derivative kernel
+            diff_zy = self.time_domain_eval_training[:, None] - self.time_domain_training[None, :]
+            K_zy = -(diff_zy / ell2) * rbf_zy
             
             # K_zz: second derivative kernel
-            diff_zz = self.time_domain_eval_training[:, None] - self.time_domain_eval_training[None, :]  # (250, 250)
-            K_zz = ((1 - (diff_zz**2 / ell2)) / ell2) * rbf_zz  # (250, 250)
+            diff_zz = self.time_domain_eval_training[:, None] - self.time_domain_eval_training[None, :]
+            K_zz = ((1 - (diff_zz**2 / ell2)) / ell2) * rbf_zz
             
             K_yys.append(K_yy)
             K_zys.append(K_zy)
             K_zzs.append(K_zz)
 
-        # Now the prediction should work
-        mu_z = []
-        cov_z = []
+        # Compute GP derivative predictions in scaled space
+        mu_z_scaled = []
+        cov_z_scaled = []
         for i in range(self.numPODmodes):
-            w = jnp.linalg.solve(K_yys[i], self.snapshots_training[i])  # w shape: (150,)
-            mu_zi = K_zys[i] @ w  # (250, 150) @ (150,) = (250,)
-            mu_z.append(mu_zi)
+            w = jnp.linalg.solve(K_yys[i], snapshots_scaled[i])
+            mu_zi = K_zys[i] @ w
+            mu_z_scaled.append(mu_zi)
 
             cov_zi = K_zzs[i] - K_zys[i] @ jnp.linalg.solve(K_yys[i], K_zys[i].T)
-            cov_z.append(cov_zi)
+            cov_z_scaled.append(cov_zi)
 
-
+        # Compute finite difference derivatives in original space
         self.snapshots_training_derivatives = compute_derivatives_fourth_order(self.snapshots_training, self.time_domain_training)
 
+        # Convert GP predictions back to original space for plotting
+        if self.scaler is not None:
+            mu_z = [mu_z_scaled[i] * self.scaler.stds_[i, 0] for i in range(self.numPODmodes)]
+            std_z = [jnp.sqrt(jnp.diag(cov_z_scaled[i])) * self.scaler.stds_[i, 0] for i in range(self.numPODmodes)]
+        else:
+            mu_z = mu_z_scaled
+            std_z = [jnp.sqrt(jnp.diag(cov_z_scaled[i])) for i in range(self.numPODmodes)]
 
         fig, ax = plt.subplots(self.numPODmodes, 1, figsize = figsize, sharex=True)
         for i in range(self.numPODmodes):
@@ -165,8 +209,8 @@ class FitzPlotter(Plotter):
             if eval:
                 ax[i].plot(self.time_domain_eval_training, mu_z[i], label='Predicted Mean')
                 ax[i].fill_between(self.time_domain_eval_training, 
-                                mu_z[i] - 2 * jnp.sqrt(jnp.diag(cov_z[i])), 
-                                mu_z[i] + 2 * jnp.sqrt(jnp.diag(cov_z[i])), 
+                                mu_z[i] - 2 * std_z[i], 
+                                mu_z[i] + 2 * std_z[i], 
                                 color='gray', alpha=0.3, label='Predicted Mean ± 2 Std Dev')
                 ax[i].set_title(f"Mode {i+1} Derivative Prediction on Eval Grid")
             ax[i].legend()
@@ -182,6 +226,7 @@ class FitzPlotter(Plotter):
                     operator_samples: np.ndarray | List,
                     latent_state_samples: np.ndarray | List,
                     rom,
+                    input_func = None,
                     figsize: tuple = (12, 8),
                     max_num_samples = 1000,
                     plot_samples: bool = False
@@ -201,14 +246,13 @@ class FitzPlotter(Plotter):
             operator = self.operator_samples[i]
             rom.model._extract_operators(operator)
             # TODO: Can't cheat like this with starting value
-            rom.model.predict(state0=q0, t=self.time_domain_eval_training)
+            rom.model.predict(state0=q0, t=self.time_domain_eval_training, input_func=input_func)
             if rom.model.predict_result_.y.shape[1] < self.time_domain_eval_training.size:
                 print("Bad solve within training domain, skipping", rom.model.predict_result_.y.shape)
                 continue
             rom_solves_training.append(rom.model.predict_result_.y)
 
-
-            rom.model.predict(state0=q0, t=self.time_domain_eval_prediction)
+            rom.model.predict(state0=q0, t=self.time_domain_eval_prediction, input_func=input_func)
             if rom.model.predict_result_.y.shape[1] < self.time_domain_eval_prediction.size:
                 print("Bad solve within prediction domain, skipping", rom.model.predict_result_.y.shape)
                 continue
@@ -292,25 +336,33 @@ class FitzPlotter(Plotter):
         if isinstance(draws_prediction, list):
             draws_prediction = np.array(draws_prediction)
 
+        # Inverse transform draws if scaler is available
+        if self.scaler is not None:
+            draws_training_orig = np.array([self.scaler.inverse_transform(draws_training[j]) for j in range(draws_training.shape[0])])
+            draws_prediction_orig = np.array([self.scaler.inverse_transform(draws_prediction[j]) for j in range(draws_prediction.shape[0])])
+        else:
+            draws_training_orig = draws_training
+            draws_prediction_orig = draws_prediction
+
         for i in range(self.numPODmodes):
             ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
             ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
             ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
 
             # Plot the mean
-            ax[i, 0].plot(time_domain_training, draws_training.mean(axis=0)[i], alpha=0.8, lw=2)
-            ax[i, 1].plot(time_domain_prediction, draws_prediction.mean(axis=0)[i], alpha=0.8, lw=2)
-            ax[i, 2].plot(time_domain_prediction, draws_prediction.mean(axis=0)[i], alpha=0.8, lw=2)
+            ax[i, 0].plot(time_domain_training, draws_training_orig.mean(axis=0)[i], alpha=0.8, lw=2)
+            ax[i, 1].plot(time_domain_prediction, draws_prediction_orig.mean(axis=0)[i], alpha=0.8, lw=2)
+            ax[i, 2].plot(time_domain_prediction, draws_prediction_orig.mean(axis=0)[i], alpha=0.8, lw=2)
 
             # Plot the median
-            ax[i, 0].plot(time_domain_training, np.median(draws_training, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
-            ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], alpha=0.8, linestyle='--', lw=2) 
-            ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
+            ax[i, 0].plot(time_domain_training, np.median(draws_training_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
+            ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2) 
+            ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
 
             # Plot the 5th and 95th percentiles
-            ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training, 5, axis=0)[i], np.percentile(draws_training, 95, axis=0)[i], alpha=.2)
-            ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], alpha=.2)
-            ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], alpha=.2)
+            ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training_orig, 5, axis=0)[i], np.percentile(draws_training_orig, 95, axis=0)[i], alpha=.2)
+            ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], alpha=.2)
+            ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], alpha=.2)
 
             yvals = np.asarray(self.snapshots_prediction[i])
             ymin = np.nanmin(yvals)

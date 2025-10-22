@@ -12,7 +12,9 @@ import scipy.linalg as la
 import scipy.optimize as opt
 
 import config
+import importlib
 import bayes
+importlib.reload(bayes)
 import wlstsq
 
 import opinf
@@ -88,7 +90,8 @@ def _posterior_autoregularized_multisample(
             invSigma = (RsqrtD.T @ RsqrtD) + (reg2 * np.eye(mean.size))
             precisions.append(invSigma)
         try:
-            return bayes.BayesianROM(means, precisions, rom)
+            # TODO: fix this type issue here
+            return bayes.BayesianROM(means, np.array(precisions), rom)
         except np.linalg.LinAlgError as ex:
             if ex.args[0] == "Matrix is not positive definite":
                 return None
@@ -202,7 +205,7 @@ def estimate_posterior(
         Initialized Bayesian model.
     """
     with opinf.utils.TimedBlock("constructing posterior hyperparameters\n"):
-        rom = config.ReducedOrderModelOriginal()
+        rom = config.ReducedOrderModel()
         rom.state_dimension = len(gps)
 
         # Construct the data matrix RHS ddts vector, and weight matrix.

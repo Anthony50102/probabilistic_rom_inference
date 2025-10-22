@@ -39,3 +39,274 @@ INFO: reducing noisy training states to 3 dimensions...done in 7.673728 s.
 INFO: 
 fitting GP model for state 'r_01'
 ERROR: (KeyboardInterrupt)  (raised after 140.429616 s)
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 07:09:32
+INFO: generating training data...done in 0.590394 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.181257 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 33.936903 s.
+INFO: computing weight matrix...done in 0.165123 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 29.788736 s.
+INFO: computing weight matrix...done in 0.195380 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 22.381001 s.
+INFO: computing weight matrix...done in 0.196615 s.
+INFO: constructing posterior hyperparameters
+ERROR: (AttributeError) module 'config' has no attribute 'ReducedOrderModelOriginal' (raised after 0.000016 s)
+INFO: constructing posterior hyperparameters
+ERROR: (AttributeError) module 'config' has no attribute 'ReducedOrderModelOriginal' (raised after 0.000031 s)
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 07:14:50
+INFO: generating training data...done in 0.507351 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.133657 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 32.453998 s.
+INFO: computing weight matrix...done in 0.131607 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 30.141569 s.
+INFO: computing weight matrix...done in 0.145005 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 23.965490 s.
+INFO: computing weight matrix...done in 0.179039 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+INFO: constructing posterior hyperparameters
+ERROR: (ValueError) precisions[0] should be 2D (raised after 0.919210 s)
+INFO: constructing posterior hyperparameters
+ERROR: (ValueError) precisions[0] should be 2D (raised after 0.051310 s)
+INFO: constructing posterior hyperparameters
+ERROR: (ValueError) precisions[0] should be 2D (raised after 0.064275 s)
+INFO: constructing posterior hyperparameters
+ERROR: (ValueError) precisions[0] should be 2D (raised after 0.052202 s)
+INFO: constructing posterior hyperparameters
+ERROR: (ValueError) precisions[0] should be 2D (raised after 0.048415 s)
+INFO: constructing posterior hyperparameters
+ERROR: (ValueError) precisions[0] should be 2D (raised after 0.058542 s)
+INFO: Best regularization via gridsearch: 3.1623e+02
+INFO: Best regularization via optimization: 4.2345e+02
+INFO: constructing posterior hyperparameters...done in 9.499668 s.
+INFO: Best regularization via gridsearch: 3.1623e+02
+INFO: Best regularization via optimization: 4.2285e+02
+INFO: constructing posterior hyperparameters...done in 8.595051 s.
+INFO: generating training data...done in 0.437695 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.152094 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 24.117394 s.
+INFO: computing weight matrix...done in 0.189924 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 27.542301 s.
+INFO: computing weight matrix...done in 0.184914 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 31.062158 s.
+INFO: computing weight matrix...done in 0.231038 s.
+INFO: Best regularization via gridsearch: 1.7783e+02
+INFO: Best regularization via optimization: 1.3123e+02
+INFO: constructing posterior hyperparameters...done in 9.035901 s.
+INFO: sampling posterior distribution...done in 1.768109 s.
+INFO: generating training data...done in 0.427397 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.140241 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 26.010745 s.
+INFO: computing weight matrix...done in 0.192922 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 25.470019 s.
+INFO: computing weight matrix...done in 0.210426 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 24.424900 s.
+INFO: computing weight matrix...done in 0.201089 s.
+INFO: Best regularization via gridsearch: 3.1623e+02
+INFO: Best regularization via optimization: 3.4665e+02
+INFO: constructing posterior hyperparameters...done in 8.033234 s.
+INFO: sampling posterior distribution...done in 1.449606 s.
+INFO: generating training data...done in 0.437974 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.102209 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 27.680922 s.
+INFO: computing weight matrix...done in 0.252757 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 34.213637 s.
+INFO: computing weight matrix...done in 0.205318 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 34.078519 s.
+INFO: computing weight matrix...done in 0.337239 s.
+INFO: Best regularization via gridsearch: 1.7783e+02
+INFO: Best regularization via optimization: 2.0371e+02
+INFO: constructing posterior hyperparameters...done in 10.626026 s.
+INFO: sampling posterior distribution...done in 1.681085 s.
+INFO: generating training data...done in 0.431613 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.151119 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 33.335113 s.
+INFO: computing weight matrix...done in 0.402132 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 32.692373 s.
+INFO: computing weight matrix...done in 0.399749 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 34.595830 s.
+INFO: computing weight matrix...done in 0.436652 s.
+INFO: Best regularization via gridsearch: 3.1623e+00
+INFO: Best regularization via optimization: 4.4371e+00
+INFO: constructing posterior hyperparameters...done in 89.781512 s.
+INFO: sampling posterior distribution...done in 4.753917 s.
+INFO: generating training data...done in 0.422467 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.254676 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 23.704120 s.
+INFO: computing weight matrix...done in 0.350924 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 27.742465 s.
+INFO: computing weight matrix...done in 0.339865 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 29.862557 s.
+INFO: computing weight matrix...done in 0.376095 s.
+INFO: Best regularization via gridsearch: 1.7783e+03
+INFO: Best regularization via optimization: 1.1785e+03
+INFO: constructing posterior hyperparameters...done in 4.460695 s.
+INFO: sampling posterior distribution...done in 0.684258 s.
+INFO: generating training data...done in 0.418852 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.108320 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 29.935580 s.
+INFO: computing weight matrix...done in 0.414784 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 26.108147 s.
+INFO: computing weight matrix...done in 0.361697 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 29.182171 s.
+INFO: computing weight matrix...done in 0.398433 s.
+INFO: Best regularization via gridsearch: 1.7783e+03
+INFO: Best regularization via optimization: 1.4129e+03
+INFO: constructing posterior hyperparameters...done in 4.202679 s.
+INFO: sampling posterior distribution...done in 0.742301 s.
+INFO: generating training data...done in 0.506504 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.142194 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 28.385985 s.
+INFO: computing weight matrix...done in 0.654576 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 33.655028 s.
+INFO: computing weight matrix...done in 0.603366 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 32.161706 s.
+INFO: computing weight matrix...done in 0.620659 s.
+INFO: Best regularization via gridsearch: 1.7783e+03
+INFO: Best regularization via optimization: 1.5580e+03
+INFO: constructing posterior hyperparameters...done in 9.709191 s.
+INFO: sampling posterior distribution...done in 0.860650 s.
+INFO: generating training data...done in 0.495406 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.152545 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 28.034410 s.
+INFO: computing weight matrix...done in 0.461533 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 30.993457 s.
+INFO: computing weight matrix...done in 0.387132 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 24.047552 s.
+INFO: computing weight matrix...done in 0.517927 s.
+INFO: Best regularization via gridsearch: 5.6234e-01
+INFO: Best regularization via optimization: 7.1623e-01
+INFO: constructing posterior hyperparameters...done in 91.204363 s.
+INFO: sampling posterior distribution...done in 5.008440 s.
+INFO: generating training data...done in 0.470500 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.158823 s.
+INFO: 
+fitting GP model for state 'r_01'...done in 30.480065 s.
+INFO: computing weight matrix...done in 0.414383 s.
+INFO: 
+fitting GP model for state 'r_02'...done in 28.674472 s.
+INFO: computing weight matrix...done in 0.429672 s.
+INFO: 
+fitting GP model for state 'r_03'...done in 28.711230 s.
+INFO: computing weight matrix...done in 0.414662 s.
+INFO: Best regularization via gridsearch: 5.6234e+01
+INFO: Best regularization via optimization: 7.7371e+01
+INFO: constructing posterior hyperparameters...done in 45.220194 s.
+INFO: sampling posterior distribution...done in 1.575240 s.
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 08:00:54
+INFO: generating training data...done in 0.583058 s.
+INFO: reducing noisy training states to 3 dimensions...done in 1.523679 s.
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+INFO: generating training data...done in 0.490616 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.171461 s.
+INFO: generating training data...done in 0.498500 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.163574 s.
+INFO: generating training data...done in 0.467257 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.100725 s.
+INFO: generating training data...done in 0.425115 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.145843 s.
+INFO: generating training data...done in 0.453477 s.
+INFO: generating training data...done in 0.619236 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.232874 s.
+INFO: generating training data...done in 0.427354 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.122675 s.
+INFO: generating training data...done in 0.478117 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.142560 s.
+INFO: generating training data...done in 0.456120 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.156017 s.
+INFO: generating training data...done in 0.521740 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.160968 s.
+INFO: generating training data...done in 0.660618 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.271984 s.
+INFO: generating training data...done in 0.554228 s.
+INFO: reducing noisy training states to 3 dimensions...done in 1.107840 s.
+INFO: generating training data...done in 0.520509 s.
+INFO: reducing noisy training states to 3 dimensions...done in 1.107848 s.
+INFO: generating training data...done in 0.785181 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.268881 s.
+INFO: generating training data...done in 0.575759 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.222658 s.
+INFO: generating training data...done in 0.508897 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.208142 s.
+INFO: generating training data...done in 1.064272 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.193577 s.
+INFO: generating training data...done in 0.515003 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.132217 s.
+INFO: generating training data...done in 0.497986 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.130575 s.
+INFO: generating training data...done in 0.471097 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.134105 s.
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 10:56:44
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+INFO: generating training data...done in 0.587514 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.123473 s.
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 10:58:29
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+INFO: generating training data...done in 0.585139 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.147062 s.
+INFO: generating training data...done in 0.472831 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.153166 s.
+INFO: generating training data...done in 0.474895 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.172297 s.
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 11:03:55
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+INFO: generating training data...done in 0.560622 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.155507 s.
+INFO: generating training data...done in 0.579371 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.141284 s.
+INFO: generating training data...done in 0.494977 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.146481 s.
+INFO: generating training data...done in 0.450453 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.152148 s.
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 15:01:56
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+INFO: generating training data...done in 0.577923 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.127458 s.
+INFO: generating training data...done in 0.483267 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.180217 s.
+INFO: generating training data...done in 0.427155 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.154118 s.
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 15:04:18
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+INFO: generating training data...done in 0.494401 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.148582 s.
+INFO: NEW SESSION ----------------------------------------- 2025-10-21 15:04:36
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
+INFO: generating training data...done in 2.300375 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.140950 s.
