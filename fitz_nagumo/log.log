@@ -310,3 +310,11 @@ INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: li
 WARNING: An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.
 INFO: generating training data...done in 2.300375 s.
 INFO: reducing noisy training states to 3 dimensions...done in 0.140950 s.
+INFO: NEW SESSION ----------------------------------------- 2025-11-03 22:38:07
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom_jax_opinf/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.369572 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.120450 s.
+INFO: NEW SESSION ----------------------------------------- 2025-11-03 22:43:07
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: dlopen(libtpu.so, 0x0001): tried: 'libtpu.so' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibtpu.so' (no such file), '/Users/anthonypoole/miniconda3/envs/prob_rom/bin/../lib/libtpu.so' (no such file), '/usr/lib/libtpu.so' (no such file, not in dyld cache), 'libtpu.so' (no such file)
+INFO: generating training data...done in 0.395220 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.090484 s.
