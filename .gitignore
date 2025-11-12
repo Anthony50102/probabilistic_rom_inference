@@ -1,5 +1,8 @@
 *.log
-*__pycache__*
+*_pycache_*
 __pycache__
+*.pyc
 *figures*
 *.log
+*.png
+*results*

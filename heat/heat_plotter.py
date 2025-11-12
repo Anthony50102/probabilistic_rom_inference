@@ -119,7 +119,8 @@ class HeatPlotter(Plotter):
                   input_parameters_prediction: np.ndarray | List,
                   figsize=(20,12),
                   max_num_samples = 100,
-                  plot_samples = False
+                  plot_samples = False,
+                  plot_single = True,
                   ):
         plt.clf()
 
@@ -199,7 +200,8 @@ class HeatPlotter(Plotter):
 
                 ax[i,j].grid()
         
-        fig.show()
+        if not plot_single:
+            fig.show()
 
         # Create a new plot for the out-of-sample predictions
         fig, ax = plt.subplots(self.num_initial_conditions + 1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
@@ -254,7 +256,10 @@ class HeatPlotter(Plotter):
                 ax[i,j].grid()
                 ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
 
-        fig.show()
+        if not plot_single:
+            fig.show()
+        
+        plt.clf()
     
     def operator_plot_trajectories(
             self,
@@ -267,7 +272,8 @@ class HeatPlotter(Plotter):
             true_states_compressed,
             figsize=(20,12),
             max_num_samples = 100,
-            plot_samples = False
+            plot_samples = False,
+            plot_single = True
             ):
         
         plt.clf()
@@ -296,7 +302,8 @@ class HeatPlotter(Plotter):
 
                 ax[i,j].grid()
 
-        fig.show()
+        if not plot_single:
+            fig.show()
 
         # Create a new plot for the out-of-sample predictions
         fig, ax = plt.subplots(self.num_initial_conditions + 1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
@@ -347,4 +354,8 @@ class HeatPlotter(Plotter):
 
                 ax[i,j].grid()
                 ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
-        fig.show()
+        
+        if not plot_single:
+            fig.show()
+        
+        plt.clf()

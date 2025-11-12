@@ -229,7 +229,9 @@ class FitzPlotter(Plotter):
                     input_func = None,
                     figsize: tuple = (12, 8),
                     max_num_samples = 1000,
-                    plot_samples: bool = False
+                    plot_samples: bool = False,
+                    save=False,
+                    save_path: str = "operator_inference_trajectories.png"
                     ):
         plt.clf()
 
@@ -311,6 +313,8 @@ class FitzPlotter(Plotter):
 
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
         fig.tight_layout()
+        if save:
+            fig.savefig(save_path, dpi=300)
         fig.show()
     
     def operator_plot_trajectories(
