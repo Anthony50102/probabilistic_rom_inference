@@ -230,6 +230,7 @@ class FitzPlotter(Plotter):
                     figsize: tuple = (12, 8),
                     max_num_samples = 1000,
                     plot_samples: bool = False,
+                    plot_single: bool = False,
                     save=False,
                     save_path: str = "operator_inference_trajectories.png"
                     ):
@@ -241,8 +242,7 @@ class FitzPlotter(Plotter):
         print(self.operator_samples.shape, self.latent_state_samples.shape)
         samples = min(self.operator_samples.shape[0], self.latent_state_samples.shape[0], max_num_samples)
 
-        fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
-
+        # Generate ROM solves
         rom_solves_training, rom_solves_prediction = [], []
         for i in range(samples):
             operator = self.operator_samples[i]
@@ -263,55 +263,113 @@ class FitzPlotter(Plotter):
         rom_solves_training, rom_solves_prediction = np.array(rom_solves_training), np.array(rom_solves_prediction)
         print(rom_solves_training.shape, rom_solves_prediction.shape)
 
-        for i in range(self.numPODmodes):
-            ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
-            ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
-            ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
-
-            if plot_samples:
-                ax[i, 0].plot(self.time_domain_eval_training, rom_solves_training[:,i,:].T, alpha = .3, lw=2)
-                ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T, alpha = .3, lw=2)
-                ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T, alpha = .3, lw=2)
-
-            # Plot the mean
-            ax[i, 0].plot(self.time_domain_eval_training, rom_solves_training[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-            ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-            ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-
-            # Plot the median
-            ax[i, 0].plot(self.time_domain_eval_training, np.median(rom_solves_training[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
-            ax[i, 1].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
-            ax[i, 2].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
-
-            # Plot the 5th and 95th percentiles
-            ax[i, 0].fill_between(self.time_domain_eval_training, np.percentile(rom_solves_training[:,i,:], 5, axis=0), np.percentile(rom_solves_training[:,i,:], 95, axis=0), alpha=.2)
-            ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
-            ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
-
-            yvals = np.asarray(self.snapshots_prediction[i])
-            ymin = np.nanmin(yvals)
-            ymax = np.nanmax(yvals)
-
-            if np.isclose(ymin, ymax):
-                if np.isclose(ymax, 0.0):
-                    pad = 1.0  # arbitrary small window around zero
+        if plot_single:
+            # Single row with one column per POD mode
+            fig, ax = plt.subplots(self.numPODmodes, 1, figsize=figsize, sharey=False)
+            
+            # Handle case where numPODmodes = 1
+            if self.numPODmodes == 1:
+                ax = [ax]
+            
+            for i in range(self.numPODmodes):
+                # Plot training data
+                ax[i].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+                
+                # Plot ground truth
+                ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i], 
+                          color='tab:gray', lw=2, label='Ground Truth')
+                
+                # Plot the mean
+                # ax[i].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), 
+                #           alpha=0.8, lw=2, label='Mean')
+                
+                # Plot the median
+                ax[i].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), 
+                          alpha=0.8, linestyle='--', lw=2, label='Median')
+                
+                # Plot the 5th and 95th percentiles
+                ax[i].fill_between(self.time_domain_eval_prediction, 
+                                  np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), 
+                                  np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), 
+                                  alpha=0.2)
+                
+                # Set y-limits based on ground truth
+                yvals = np.asarray(self.snapshots_prediction[i])
+                ymin = np.nanmin(yvals)
+                ymax = np.nanmax(yvals)
+                
+                if np.isclose(ymin, ymax):
+                    if np.isclose(ymax, 0.0):
+                        pad = 1.0
+                    else:
+                        pad = abs(ymax) * 0.75
+                        ymin -= pad
+                        ymax += pad
                 else:
-                    pad = abs(ymax) * 0.75
-                    ymin -= pad
-                    ymax += pad
-            else:
-                ymin = ymin - abs(ymin) * 0.75
-                ymax = ymax * 1.75
+                    ymin = ymin - abs(ymin) * 0.75
+                    ymax = ymax * 1.75
+                
+                ax[i].set_ylim(float(ymin), float(ymax))
+                ax[i].set_xlabel('Time')
+                ax[i].set_ylabel(f'Mode {i+1}')
+                # ax[i].grid()
+                ax[i].legend()
+            
+            fig.suptitle("Operator Inference Trajectories", fontsize=16)
+        else:
+            # Original three-column layout
+            fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
 
-            ax[i, 0].set_ylim(float(ymin), float(ymax))
-            ax[i, 1].set_ylim(float(ymin), float(ymax))
-            ax[i, 2].set_ylim(float(ymin), float(ymax))
+            for i in range(self.numPODmodes):
+                ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+                ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+                ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
 
-            ax[i,0].grid()
-            ax[i,1].grid()
-            ax[i,2].grid()
+                if plot_samples:
+                    ax[i, 0].plot(self.time_domain_eval_training, rom_solves_training[:,i,:].T, alpha = .3, lw=2)
+                    ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T, alpha = .3, lw=2)
+                    ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T, alpha = .3, lw=2)
 
-        fig.suptitle("Operator Inference Trajectories", fontsize=16)
+                # Plot the mean
+                ax[i, 0].plot(self.time_domain_eval_training, rom_solves_training[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
+                ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
+                ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
+
+                # Plot the median
+                ax[i, 0].plot(self.time_domain_eval_training, np.median(rom_solves_training[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
+                ax[i, 1].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
+                ax[i, 2].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
+
+                # Plot the 5th and 95th percentiles
+                ax[i, 0].fill_between(self.time_domain_eval_training, np.percentile(rom_solves_training[:,i,:], 5, axis=0), np.percentile(rom_solves_training[:,i,:], 95, axis=0), alpha=.2)
+                ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
+                ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
+
+                yvals = np.asarray(self.snapshots_prediction[i])
+                ymin = np.nanmin(yvals)
+                ymax = np.nanmax(yvals)
+
+                if np.isclose(ymin, ymax):
+                    if np.isclose(ymax, 0.0):
+                        pad = 1.0  # arbitrary small window around zero
+                    else:
+                        pad = abs(ymax) * 0.75
+                        ymin -= pad
+                        ymax += pad
+                else:
+                    ymin = ymin - abs(ymin) * 0.75
+                    ymax = ymax * 1.75
+
+                ax[i, 0].set_ylim(float(ymin), float(ymax))
+                ax[i, 1].set_ylim(float(ymin), float(ymax))
+                ax[i, 2].set_ylim(float(ymin), float(ymax))
+
+                ax[i,0].grid()
+                ax[i,1].grid()
+                ax[i,2].grid()
+
+            fig.suptitle("Operator Inference Trajectories", fontsize=16)
+        
         fig.tight_layout()
         if save:
             fig.savefig(save_path, dpi=300)
@@ -324,6 +382,7 @@ class FitzPlotter(Plotter):
                     time_domain_training = None,
                     time_domain_prediction = None,
                     figsize: tuple = (12, 8),
+                    plot_single: bool = False,
     ):
         plt.clf()
 
@@ -332,8 +391,6 @@ class FitzPlotter(Plotter):
 
         if time_domain_prediction is None:
             time_domain_prediction = self.time_domain_eval_prediction
-
-        fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
 
         if isinstance(draws_training, list):
             draws_training = np.array(draws_training)
@@ -348,49 +405,102 @@ class FitzPlotter(Plotter):
             draws_training_orig = draws_training
             draws_prediction_orig = draws_prediction
 
-        for i in range(self.numPODmodes):
-            ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
-            ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
-            ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
-
-            # Plot the mean
-            ax[i, 0].plot(time_domain_training, draws_training_orig.mean(axis=0)[i], alpha=0.8, lw=2)
-            ax[i, 1].plot(time_domain_prediction, draws_prediction_orig.mean(axis=0)[i], alpha=0.8, lw=2)
-            ax[i, 2].plot(time_domain_prediction, draws_prediction_orig.mean(axis=0)[i], alpha=0.8, lw=2)
-
-            # Plot the median
-            ax[i, 0].plot(time_domain_training, np.median(draws_training_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
-            ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2) 
-            ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
-
-            # Plot the 5th and 95th percentiles
-            ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training_orig, 5, axis=0)[i], np.percentile(draws_training_orig, 95, axis=0)[i], alpha=.2)
-            ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], alpha=.2)
-            ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], alpha=.2)
-
-            yvals = np.asarray(self.snapshots_prediction[i])
-            ymin = np.nanmin(yvals)
-            ymax = np.nanmax(yvals)
-
-            if np.isclose(ymin, ymax):
-                if np.isclose(ymax, 0.0):
-                    pad = 1.0  # arbitrary small window around zero
+        if plot_single:
+            # Single row with one column per POD mode
+            fig, ax = plt.subplots(self.numPODmodes, 1, figsize=figsize, sharey=False)
+            
+            # Handle case where numPODmodes = 1
+            if self.numPODmodes == 1:
+                ax = [ax]
+            
+            for i in range(self.numPODmodes):
+                # Plot training data
+                ax[i].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+                
+                # Plot ground truth
+                ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i], 
+                          color='tab:gray', lw=2, label='Ground Truth')
+                
+                # Plot the median
+                ax[i].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], 
+                          alpha=0.8, linestyle='--', lw=2, label='Median')
+                
+                # Plot the 5th and 95th percentiles
+                ax[i].fill_between(time_domain_prediction, 
+                                  np.percentile(draws_prediction_orig, 5, axis=0)[i], 
+                                  np.percentile(draws_prediction_orig, 95, axis=0)[i], 
+                                  alpha=0.2)
+                
+                # Set y-limits based on ground truth
+                yvals = np.asarray(self.snapshots_prediction[i])
+                ymin = np.nanmin(yvals)
+                ymax = np.nanmax(yvals)
+                
+                if np.isclose(ymin, ymax):
+                    if np.isclose(ymax, 0.0):
+                        pad = 1.0
+                    else:
+                        pad = abs(ymax) * 0.5
+                        ymin -= pad
+                        ymax += pad
                 else:
-                    pad = abs(ymax) * 0.5
-                    ymin -= pad
-                    ymax += pad
-            else:
-                ymin = ymin - abs(ymin) * 0.5
-                ymax = ymax * 1.5
+                    ymin = ymin - abs(ymin) * 0.5
+                    ymax = ymax * 1.5
+                
+                ax[i].set_ylim(float(ymin), float(ymax))
+                ax[i].set_xlabel('Time')
+                ax[i].set_ylabel(f'Mode {i+1}')
+                ax[i].legend()
+            
+            fig.suptitle("Operator Inference Trajectories", fontsize=16)
+        else:
+            # Original three-column layout
+            fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
 
-            ax[i, 0].set_ylim(float(ymin), float(ymax))
-            ax[i, 1].set_ylim(float(ymin), float(ymax))
-            ax[i, 2].set_ylim(float(ymin), float(ymax))
+            for i in range(self.numPODmodes):
+                ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+                ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+                ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
 
-            ax[i,0].grid()
-            ax[i,1].grid()
-            ax[i,2].grid()
+                # Plot the mean
+                ax[i, 0].plot(time_domain_training, draws_training_orig.mean(axis=0)[i], alpha=0.8, lw=2)
+                ax[i, 1].plot(time_domain_prediction, draws_prediction_orig.mean(axis=0)[i], alpha=0.8, lw=2)
+                ax[i, 2].plot(time_domain_prediction, draws_prediction_orig.mean(axis=0)[i], alpha=0.8, lw=2)
+
+                # Plot the median
+                ax[i, 0].plot(time_domain_training, np.median(draws_training_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
+                ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2) 
+                ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
+
+                # Plot the 5th and 95th percentiles
+                ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training_orig, 5, axis=0)[i], np.percentile(draws_training_orig, 95, axis=0)[i], alpha=.2)
+                ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], alpha=.2)
+                ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], alpha=.2)
+
+                yvals = np.asarray(self.snapshots_prediction[i])
+                ymin = np.nanmin(yvals)
+                ymax = np.nanmax(yvals)
+
+                if np.isclose(ymin, ymax):
+                    if np.isclose(ymax, 0.0):
+                        pad = 1.0  # arbitrary small window around zero
+                    else:
+                        pad = abs(ymax) * 0.5
+                        ymin -= pad
+                        ymax += pad
+                else:
+                    ymin = ymin - abs(ymin) * 0.5
+                    ymax = ymax * 1.5
+
+                ax[i, 0].set_ylim(float(ymin), float(ymax))
+                ax[i, 1].set_ylim(float(ymin), float(ymax))
+                ax[i, 2].set_ylim(float(ymin), float(ymax))
+
+                ax[i,0].grid()
+                ax[i,1].grid()
+                ax[i,2].grid()
    
-        fig.suptitle("Operator Inference Trajectories", fontsize=16)
+            fig.suptitle("Operator Inference Trajectories", fontsize=16)
+        
         fig.tight_layout()
         fig.show()
