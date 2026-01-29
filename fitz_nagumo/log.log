@@ -1271,3 +1271,5 @@ INFO: Best regularization via gridsearch: 1.0000e-02
 INFO: Best regularization via optimization: 1.2906e-02
 INFO: constructing posterior hyperparameters...done in 87.548535 s.
 INFO: sampling posterior distribution...done in 5.490298 s.
+INFO: generating training data...done in 0.512957 s.
+INFO: reducing noisy training states to 3 dimensions...done in 0.322672 s.
