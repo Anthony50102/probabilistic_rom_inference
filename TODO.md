@@ -1,2 +1,0 @@
-- Implement for heat + fitz nagumo
-- Plot full order reconstruction error
