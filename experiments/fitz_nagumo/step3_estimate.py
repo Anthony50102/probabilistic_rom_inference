@@ -3,6 +3,7 @@
 
 __all__ = [
     "estimate_posterior",
+    "compute_deterministic_operator",
 ]
 
 import sys
@@ -25,6 +26,53 @@ __MAXOPTVAL = 1e12  # Ceiling for optimization.
 __DEFAULT_SEARCH_GRID = np.logspace(-16, 4, 81)  # Search grid.
 
 
+def compute_deterministic_operator(
+    gps: list,
+    inputs: np.ndarray,
+    regularizer: float = 1e-6,
+) -> np.ndarray:
+    """Compute a deterministic OpInf operator (for use as prior mean).
+    
+    This fits a standard (non-Bayesian) OpInf model using the GP mean estimates.
+    
+    Parameters
+    ----------
+    gps : list of trained gpkernel.GP_RBFW objects.
+        Gaussian processes for each state variable, already fit to data.
+    inputs : (k,) ndarray or None
+        Inputs corresponding to the GP state estimates (if present).
+    regularizer : float
+        L2 regularization for the deterministic solve.
+        
+    Returns
+    -------
+    operator : (r, d) ndarray
+        Deterministic operator matrix (each row is one mode's operator).
+    """
+    rom = config.ReducedOrderModel()
+    rom.state_dimension = len(gps)
+    
+    # Get GP mean estimates (no uncertainty)
+    state_estimates = np.array([gp.state_estimate for gp in gps])
+    ddt_estimates = np.array([gp.ddt_estimate for gp in gps])
+    
+    # Assemble data matrix
+    D = rom._assemble_data_matrix(state_estimates, inputs)
+    
+    # Solve standard least squares: min ||D @ O - ddt||^2 + reg * ||O||^2
+    # Solution: O = (D'D + reg*I)^{-1} D' ddt
+    DtD = D.T @ D
+    reg_matrix = regularizer * np.eye(D.shape[1])
+    
+    operators = []
+    for i in range(len(gps)):
+        Dt_ddt = D.T @ ddt_estimates[i]
+        operator_row = la.solve(DtD + reg_matrix, Dt_ddt, assume_a='pos')
+        operators.append(operator_row)
+    
+    return np.array(operators)
+
+
 def _posterior_autoregularized_multisample(
     regularizer_grid: np.ndarray,
     time_domain: np.ndarray,
@@ -33,6 +81,8 @@ def _posterior_autoregularized_multisample(
     num_samples: int,
     lstsq_solver: wlstsq.WeightedLSTSQSolver,
     rom: opinf.models.ContinuousModel,
+    prior_mean: np.ndarray = None,
+    weighted_rhs: np.ndarray = None,
 ) -> bayes.BayesianROM:
     r"""Use an error-based optimization to select an appropriate regularization
     hyperparamter for the operator inference regression.
@@ -76,22 +126,54 @@ def _posterior_autoregularized_multisample(
         return np.any(np.abs(_solution - shift).max(axis=1) > limits)
 
     def get_bayesian_model(reg):
-        """Form and solve the regression for the given regularization value."""
-        # Posterior mean.
+        """Form and solve the regression for the given regularization value.
+        
+        If prior_mean is provided, uses Bayesian linear regression with:
+            Prior: O ~ N(prior_mean, (1/reg^2) * I)
+            Posterior mean: (D'WD + reg^2*I)^{-1} (D'W*ddt + reg^2 * prior_mean)
+        Otherwise uses zero prior mean (standard regularization).
+        """
         lstsq_solver.regularizer = reg
-        means = np.atleast_2d(lstsq_solver.solve())
-        rom._extract_operators(means)
-
-        # Posterior covariance.
-        precisions = []
         reg2 = lstsq_solver.regularizer**2
-        for subsolver, mean in zip(lstsq_solver.solvers, means):
-            # Raw precision matrix.
-            RsqrtD = subsolver.data_matrix  # = Rsqrt @ D
-            invSigma = (RsqrtD.T @ RsqrtD) + (reg2 * np.eye(mean.size))
-            precisions.append(invSigma)
+        
+        # If no prior mean, just use the standard solve
+        if prior_mean is None:
+            means = np.atleast_2d(lstsq_solver.solve())
+            rom._extract_operators(means)
+            
+            # Posterior covariance
+            precisions = []
+            for subsolver, mean in zip(lstsq_solver.solvers, means):
+                RsqrtD = subsolver.data_matrix  # = Rsqrt @ D
+                invSigma = (RsqrtD.T @ RsqrtD) + (reg2 * np.eye(mean.size))
+                precisions.append(invSigma)
+        else:
+            # With prior mean, we need to modify the posterior mean calculation
+            precisions = []
+            posterior_means = []
+            
+            for i, subsolver in enumerate(lstsq_solver.solvers):
+                # Precision matrix: D'WD + reg^2*I
+                RsqrtD = subsolver.data_matrix  # = Rsqrt @ D
+                invSigma = (RsqrtD.T @ RsqrtD) + (reg2 * np.eye(RsqrtD.shape[1]))
+                precisions.append(invSigma)
+                
+                # Posterior mean with prior
+                # Standard: mean = (D'WD + reg^2*I)^{-1} D'W*ddt
+                # With prior: mean = (D'WD + reg^2*I)^{-1} (D'W*ddt + reg^2 * prior_mean)
+                # weighted_rhs[i] = Rsqrt @ ddt[i], so RsqrtD.T @ weighted_rhs[i] = D'W*ddt
+                rhs_term = RsqrtD.T @ weighted_rhs[i]
+                
+                # Add prior contribution: reg^2 * prior_mean[i]
+                rhs_term = rhs_term + reg2 * prior_mean[i]
+                
+                mean_i = la.solve(invSigma, rhs_term, assume_a='pos')
+                posterior_means.append(mean_i)
+            
+            means = np.atleast_2d(np.array(posterior_means))
+            rom._extract_operators(means)
+
         try:
-            # TODO: fix this type issue here
             return bayes.BayesianROM(means, np.array(precisions), rom)
         except np.linalg.LinAlgError as ex:
             if ex.args[0] == "Matrix is not positive definite":
@@ -188,6 +270,8 @@ def estimate_posterior(
     time_domain: np.ndarray,
     gps: list,
     inputs: np.ndarray,
+    use_prior: bool = False,
+    prior_regularizer: float = 1e-6,
 ) -> bayes.BayesianROM:
     """Construct the posterior parameter distribution.
 
@@ -199,6 +283,14 @@ def estimate_posterior(
         Gaussian processes for each state variable, already fit to data.
     inputs : (k,) ndarray or None
         Inputs corresponding to the GP state estimates (if present).
+    use_prior : bool, optional
+        If True, use a deterministic OpInf solve as the prior mean.
+        This makes the method more comparable to Full Bayesian OpInf.
+        Default is False (zero prior mean).
+    prior_regularizer : float, optional
+        Regularization parameter for the deterministic solve used to 
+        compute the prior mean. Only used if use_prior=True.
+        Default is 1e-6.
 
     Returns
     -------
@@ -215,9 +307,24 @@ def estimate_posterior(
         rhs = np.array([gp.ddt_estimate for gp in gps])
         Rsqrts = np.array([gp.sqrtW for gp in gps])
 
+        # Compute weighted rhs: Rsqrt @ rhs for each mode
+        # This is needed when using a prior mean
+        weighted_rhs = np.array([Rsqrts[i] @ rhs[i] for i in range(len(gps))])
+
         # Pepare a solver and reduced-order model.
         lstsq_solver = wlstsq.WeightedLSTSQSolver(Rsqrts, 1)
         lstsq_solver.fit(D, rhs)
+
+        # Optionally compute prior mean from deterministic solve.
+        prior_mean = None
+        if use_prior:
+            logging.info("Computing deterministic operator for prior mean...")
+            prior_mean = compute_deterministic_operator(
+                gps=gps,
+                inputs=inputs,
+                regularizer=prior_regularizer,
+            )
+            logging.info(f"Prior mean shape: {prior_mean.shape}")
 
         # Choose the regularizer automatically through an optimization.
         return _posterior_autoregularized_multisample(
@@ -228,4 +335,6 @@ def estimate_posterior(
             num_samples=20,
             lstsq_solver=lstsq_solver,
             rom=rom,
+            prior_mean=prior_mean,
+            weighted_rhs=weighted_rhs if use_prior else None,
         )
