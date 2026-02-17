@@ -108,6 +108,7 @@ def compute_gp_derivatives(
     time_train: np.ndarray,
     time_eval: np.ndarray,
     y_train: np.ndarray,
+    Ns: Optional[np.ndarray] = None,
     jitter: float = 1e-5
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
@@ -125,6 +126,10 @@ def compute_gp_derivatives(
         Evaluation time points
     y_train : array (num_modes, n_train)
         Training observations
+    Ns : array (num_modes,), optional
+        Observation noise variances per mode. When provided, K_yy includes
+        the noise term so that derivatives are computed by conditioning on
+        noisy observations rather than interpolating through them.
     jitter : float
         Numerical stability term
         
@@ -141,8 +146,9 @@ def compute_gp_derivatives(
     for i in range(num_modes):
         ell2 = Ls[i]**2
         
-        # Kernel matrices
-        K_yy = rbf_eval(Ls[i], Vs[i], time_train, time_train) + jitter * jnp.eye(len(time_train))
+        # Kernel matrices — include observation noise if provided
+        noise_i = Ns[i] if Ns is not None else 0.0
+        K_yy = rbf_eval(Ls[i], Vs[i], time_train, time_train) + (noise_i + jitter) * jnp.eye(len(time_train))
         
         # Derivative kernel K_zy
         diff_zy = time_eval[:, None] - time_train[None, :]
@@ -448,6 +454,8 @@ def generate_gp_samples(
 # Bayesian Inference Model Builders
 # =============================================================================
 
+# TODO: Review this function as it uses the prior operator as the mean of a Gaussian likelihood.
+# Make sure that this function is only used when this is fixed
 def build_bayesian_opinf_model(
     prior_operator: np.ndarray,
     rom,
@@ -456,6 +464,7 @@ def build_bayesian_opinf_model(
     time_domain_sampled: np.ndarray,
     snapshots: np.ndarray,
     Xs_means: np.ndarray,
+    Ns_means: Optional[np.ndarray] = None,
     inputs_eval: Optional[np.ndarray] = None,
     data_scaler = None,
     sample_X: bool = False,
@@ -478,6 +487,9 @@ def build_bayesian_opinf_model(
         Training data
     Xs_means : array
         GP mean for latent states
+    Ns_means : array, optional
+        GP observation noise variances per mode (from MLE). Passed to
+        compute_gp_derivatives so that K_yy properly accounts for noise.
     inputs_eval : array, optional
         Inputs at eval times
     data_scaler : DataScaler, optional
@@ -540,7 +552,7 @@ def build_bayesian_opinf_model(
         
         # GP derivatives
         y_train = data_scaler.transform(snapshots) if use_scaled else snapshots
-        mu_z, cov_z = compute_gp_derivatives(Ls_means, Vs_means, time_domain_sampled, time, y_train)
+        mu_z, cov_z = compute_gp_derivatives(Ls_means, Vs_means, time_domain_sampled, time, y_train, Ns=Ns_means)
         
         # ODE constraints
         for i in range(num_modes):
@@ -589,6 +601,8 @@ def run_svi(
     """
     if guide is None:
         guide = autoguide.AutoDelta(model)
+    else:
+        guide = guide(model)
 
     optimizer = Adam(step_size=learning_rate)
     svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
@@ -607,17 +621,37 @@ def run_svi(
     )
     
     params = results.params
-    predictive = Predictive(model, guide=guide, params=params, num_samples=num_samples)
-    samples = predictive(
-        rng_key,
-        time=time_eval,
-        gamma=gamma,
-        gamma2=gamma2,
-        normalization=normalization
+
+    # Use guide.sample_posterior() to get latent samples with original site names.
+    # This works uniformly across all guide types (AutoDelta, AutoNormal,
+    # AutoDiagonalNormal, AutoMultivariateNormal, etc.), unlike Predictive
+    # which filters out latent sites already provided by the guide.
+    # We must pass the model's kwargs so that guides which internally call
+    # Predictive (e.g. AutoDelta for deterministic sites) can run the model.
+    model_kwargs = dict(
+        time=time_eval, gamma=gamma, gamma2=gamma2, normalization=normalization
     )
+    rng_key, sample_key, pred_key = jax.random.split(rng_key, 3)
+    posterior_samples = guide.sample_posterior(
+        sample_key, params, sample_shape=(num_samples,), **model_kwargs
+    )
+    
+    # For guides that don't return deterministic sites (e.g. AutoNormal),
+    # run the model with posterior samples to collect them.
+    has_deterministic = any(k.startswith('X') for k in posterior_samples)
+    if not has_deterministic:
+        predictive = Predictive(
+            model, posterior_samples=posterior_samples, num_samples=num_samples
+        )
+        model_output = predictive(pred_key, **model_kwargs)
+        # Merge: latent samples from guide + deterministic/observed sites from model
+        samples = {**posterior_samples, **model_output}
+    else:
+        samples = posterior_samples
     
     if verbose:
         print(f"✅ SVI complete! Final loss: {results.losses[-1]:.4f}")
+        print(f"   Sample keys: {sorted(samples.keys())}")
     
     return SVIResult(samples=samples, params=params, losses=list(results.losses))
 
@@ -700,6 +734,56 @@ def run_mcmc(
 # Prediction Utilities
 # =============================================================================
 
+def _find_operator_samples(samples: dict, site_name: str = "O") -> np.ndarray:
+    """
+    Robustly extract operator samples from a samples dict, regardless of
+    whether samples came from MCMC, SVI with any guide type, or raw params.
+    
+    Search order:
+      1. Exact match: "O"
+      2. AutoDelta/AutoNormal loc: "O_auto_loc"
+      3. Prefixed: "auto_O_auto_loc" or similar
+      4. Fuzzy: any key containing 'O' but not 'ode', 'X', 'constraint'
+    
+    Returns the array and raises KeyError with helpful diagnostics if not found.
+    """
+    # 1. Exact match (MCMC or properly merged SVI samples)
+    if site_name in samples:
+        return np.asarray(samples[site_name])
+    
+    # 2. AutoDelta / AutoNormal suffix pattern
+    auto_loc_key = f"{site_name}_auto_loc"
+    if auto_loc_key in samples:
+        return np.asarray(samples[auto_loc_key])
+    
+    # 3. Full prefixed pattern (raw SVI params)
+    prefixed_patterns = [
+        f"auto_{site_name}_auto_loc",
+        f"auto_{site_name}",
+    ]
+    for pattern in prefixed_patterns:
+        if pattern in samples:
+            return np.asarray(samples[pattern])
+    
+    # 4. Fuzzy match: find keys containing the site name
+    exclude = {'ode', 'constraint', 'latent'}
+    candidates = [
+        k for k in samples.keys()
+        if site_name in k and not any(ex in k.lower() for ex in exclude)
+    ]
+    if candidates:
+        # Prefer shortest key (most likely the right one)
+        best = min(candidates, key=len)
+        return np.asarray(samples[best])
+    
+    raise KeyError(
+        f"Cannot find operator '{site_name}' in samples.\n"
+        f"  Available keys: {sorted(samples.keys())}\n"
+        f"  Hint: If using SVI, ensure run_svi() merges guide.sample_posterior() "
+        f"output with model predictions."
+    )
+
+
 def generate_rom_predictions(
     samples: dict,
     rom,
@@ -713,6 +797,11 @@ def generate_rom_predictions(
     """
     Generate ROM predictions from posterior samples.
     
+    Handles sample dicts from any inference method:
+      - MCMC: keys are original site names ("O", "X0", ...)
+      - SVI + guide.sample_posterior(): same as MCMC
+      - SVI raw params: keys like "auto_O_auto_loc"
+    
     Returns
     -------
     Os : array
@@ -724,18 +813,8 @@ def generate_rom_predictions(
     """
     Os, Xs, rom_solves = [], [], []
     
-    # Handle different sample key formats (MCMC vs SVI AutoDelta)
-    if 'O' in samples:
-        O_samples = samples['O']
-    elif 'O_auto_loc' in samples:
-        O_samples = samples['O_auto_loc']
-    else:
-        # Try to find any key containing 'O'
-        O_keys = [k for k in samples.keys() if 'O' in k and 'ode' not in k.lower()]
-        if O_keys:
-            O_samples = samples[O_keys[0]]
-        else:
-            raise KeyError(f"Cannot find operator 'O' in samples. Available keys: {list(samples.keys())}")
+    # Robustly find operator samples
+    O_samples = _find_operator_samples(samples, "O")
     
     # If single sample (point estimate), expand to allow iteration
     if O_samples.ndim == 2:

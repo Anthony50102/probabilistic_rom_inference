@@ -1,18 +1,18 @@
-import importlib
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-import plotter
-importlib.reload(plotter)
-from plotter import Plotter
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import List
 
-from helpers.bgp_jax import BayesianGP
+from core import BayesianGP
+from core.plotting import Plotter
+
 
 class HeatPlotter(Plotter):
+    """Plotter for Heat equation experiments."""
+    
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.num_initial_conditions = self.snapshots_training.shape[1]

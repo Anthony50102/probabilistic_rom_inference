@@ -1,56 +1,19 @@
-import importlib
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-import plotter
-importlib.reload(plotter)
-from plotter import Plotter
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import List
-from helpers.bgp_jax import BayesianGP
 import jax.numpy as jnp
 
-def flatten_time(t: jnp.ndarray) -> jnp.ndarray:
-    """Return t with shape (n,) no matter if (n,), (n,1) or (1,n) was given."""
-    return jnp.ravel(t)
-
-def rbf_eval(lengthscale: float, variance: float, t: jnp.ndarray, t2: jnp.ndarray) -> jnp.ndarray:
-    """Full n×n RBF kernel matrix K_ij = variance * exp(-(t_i-t_j)^2 / (2*ell^2))."""
-    t = flatten_time(t)
-    t2 = flatten_time(t2)
-    diff = t[:, None] - t2[None, :]
-    ell2 = lengthscale ** 2
-    return variance * jnp.exp(-diff**2 / (2.0 * ell2))
-
-def compute_derivatives_fourth_order(snapshots, time_points):
-    """
-    Compute derivatives using 4th order finite differences.
-    Works best for uniformly spaced time points.
-    """
-    n_modes, n_time = snapshots.shape
-    derivatives = np.zeros_like(snapshots)
-    dt = time_points[1] - time_points[0]  # Assumes uniform spacing
-    
-    # 4th order central differences for interior points
-    for i in range(2, n_time - 2):
-        derivatives[:, i] = (-snapshots[:, i+2] + 8*snapshots[:, i+1] - 
-                            8*snapshots[:, i-1] + snapshots[:, i-2]) / (12 * dt)
-    
-    # Use 2nd order for near-boundary points
-    for i in [1, n_time-2]:
-        derivatives[:, i] = (snapshots[:, i+1] - snapshots[:, i-1]) / (2 * dt)
-    
-    # First and last points
-    derivatives[:, 0] = (snapshots[:, 1] - snapshots[:, 0]) / dt
-    derivatives[:, -1] = (snapshots[:, -1] - snapshots[:, -2]) / dt
-    
-    return derivatives
-
+from core import BayesianGP
+from core.plotting import Plotter, rbf_eval, flatten_time, compute_derivatives_fourth_order
 
 
 class EulerPlotter(Plotter):
+    """Plotter for Compressible Euler equation experiments."""
+    
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 

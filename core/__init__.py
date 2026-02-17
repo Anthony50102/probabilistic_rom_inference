@@ -19,6 +19,15 @@ from .bgp_jax import BayesianGP, RBFKernel, get_c_phi
 from .scaler import DataScaler
 from .utils import summarize_experiment, save_figure, generate_trajectory
 from . import pde_models
+from .plotting import (
+    Plotter,
+    plot_deterministic_rom_solves,
+    plot_gp_fit,
+    plot_full_order_error,
+    compute_derivatives_fourth_order,
+    rbf_eval as plotting_rbf_eval,
+    flatten_time as plotting_flatten_time,
+)
 
 # Full Bayesian OpInf utilities
 from .bayesian_opinf import (
@@ -43,6 +52,22 @@ from .bayesian_opinf import (
     binom,
     rbf_eval,
     flatten_time,
+)
+
+# Bayesian diagnostics
+from .diagnostics import (
+    DiagnosticReport,
+    run_diagnostics,
+    compute_posterior_correlation,
+    compute_ess,
+    compute_rhat,
+    detect_divergences,
+    compute_prior_posterior_overlap,
+    plot_correlation_matrix,
+    plot_ess,
+    plot_trace,
+    plot_rank,
+    plot_prior_posterior,
 )
 
 __all__ = [
@@ -83,4 +108,23 @@ __all__ = [
     "save_figure",
     "generate_trajectory",
     "pde_models",
+    # Plotting
+    "Plotter",
+    "plot_deterministic_rom_solves",
+    "plot_gp_fit",
+    "plot_full_order_error",
+    "compute_derivatives_fourth_order",
+    # Diagnostics
+    "DiagnosticReport",
+    "run_diagnostics",
+    "compute_posterior_correlation",
+    "compute_ess",
+    "compute_rhat",
+    "detect_divergences",
+    "compute_prior_posterior_overlap",
+    "plot_correlation_matrix",
+    "plot_ess",
+    "plot_trace",
+    "plot_rank",
+    "plot_prior_posterior",
 ]
