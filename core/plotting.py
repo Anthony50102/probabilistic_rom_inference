@@ -378,6 +378,7 @@ class Plotter:
                      max_num_samples: int = 1000,
                      plot_samples: bool = False,
                      plot_single: bool = False,
+                     training_span: Optional[Tuple[float, float]] = None,
                      save: bool = False,
                      save_path: str = "operator_inference_trajectories.png"
                      ):
@@ -446,31 +447,55 @@ class Plotter:
         print(f"Stable solves - Training: {len(rom_solves_training)}, Prediction: {len(rom_solves_prediction)}")
 
         if plot_single:
-            fig, ax = plt.subplots(self.numPODmodes, 1, figsize=figsize, sharey=False)
+            fig, ax = plt.subplots(self.numPODmodes, 1, figsize=figsize, sharey=False, sharex=True)
             if self.numPODmodes == 1:
                 ax = [ax]
             
             for i in range(self.numPODmodes):
-                ax[i].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
+                # Training span shading
+                if training_span is not None:
+                    ax[i].axvspan(training_span[0], training_span[1],
+                                  color='tab:blue', alpha=0.06, zorder=0)
+
+                # True solution
                 ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i],
-                          color='tab:gray', lw=2, label='Ground Truth')
+                          color='tab:gray', lw=2, label='True solution')
+
+                # Training snapshots
+                ax[i].plot(self.time_domain_training, self.snapshots_training[i],
+                          'k*', ms=5, label='Training data', zorder=5)
+
+                # ROM median
                 ax[i].plot(self.time_domain_eval_prediction, 
                           np.median(rom_solves_prediction[:, i, :], axis=0),
-                          alpha=0.8, linestyle='--', lw=2, label='Median')
+                          color='tab:blue', alpha=0.9, lw=2, label='ROM median')
+
+                # ROM 5-95% band
                 ax[i].fill_between(
                     self.time_domain_eval_prediction,
                     np.percentile(rom_solves_prediction[:, i, :], 5, axis=0),
                     np.percentile(rom_solves_prediction[:, i, :], 95, axis=0),
-                    alpha=0.2
+                    color='tab:blue', alpha=0.15, label='ROM 5\u201395%'
                 )
+
                 ax[i].set_ylabel(f'Mode {i+1}')
-                ax[i].legend()
+                ax[i].grid(True, alpha=0.3)
+                if i == 0:
+                    ax[i].legend(loc='upper right', fontsize=9)
+
+            ax[-1].set_xlabel('Time')
         else:
             fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
             if self.numPODmodes == 1:
                 ax = ax.reshape(1, -1)
 
             for i in range(self.numPODmodes):
+                # Training span shading on all columns
+                if training_span is not None:
+                    for j in range(3):
+                        ax[i, j].axvspan(training_span[0], training_span[1],
+                                         color='tab:blue', alpha=0.06, zorder=0)
+
                 ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
                 ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
                 ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], 
@@ -833,7 +858,7 @@ def plot_gp_fit(
         figsize = (14, 3 * num_modes) if not plot_derivatives else (14, 3 * num_modes)
     
     ncols = 2 if plot_derivatives else 1
-    fig, axes = plt.subplots(num_modes, ncols, figsize=figsize, squeeze=False)
+    fig, axes = plt.subplots(num_modes, ncols, figsize=figsize, squeeze=False, sharex="col")
     
     # Compute finite difference derivatives for comparison
     if plot_derivatives:
@@ -852,7 +877,7 @@ def plot_gp_fit(
         ax_state = axes[i, 0]
         
         # Training data
-        ax_state.plot(time_sampled, snapshots_compressed[i], 'ko', ms=5, 
+        ax_state.plot(time_sampled, snapshots_compressed[i], 'k*', ms=5, 
                      label='Training data', zorder=5)
         
         # GP mean prediction
@@ -1004,43 +1029,50 @@ def plot_full_order_error(
     rom_error_5 = np.percentile(rom_errors, 5, axis=0)
     rom_error_95 = np.percentile(rom_errors, 95, axis=0)
     
-    # Create plot
-    fig, ax = plt.subplots(1, 1, figsize=figsize)
-    
-    # Shade training region
-    ax.axvspan(training_span[0], training_span[1], color='tab:blue', alpha=0.1, 
-               label='Training region')
-    
-    # Plot projection error (baseline)
-    ax.plot(time_domain_eval, projection_error, 'k--', lw=2, 
-           label='Projection error (basis limit)')
-    
-    # Plot ROM prediction error with uncertainty
-    ax.plot(time_domain_eval, rom_error_median, 'tab:blue', lw=2, 
-           label='ROM error (median)')
-    ax.fill_between(time_domain_eval, rom_error_5, rom_error_95,
-                   color='tab:blue', alpha=0.3, label='ROM error (5-95%)')
-
-    # Plot the ROM mean error minus the projection error 
-    ax.plot(time_domain_eval, np.maximum(rom_error_median - projection_error, projection_error.min()), 'tab:purple', lw=2,
-            label='ROM error - projection error')
-    
-    # Also show mean
-    ax.plot(time_domain_eval, rom_error_mean, 'tab:orange', lw=1.5, 
-           linestyle=':', label='ROM error (mean)')
-    
-    # # Mark training end
-    # ax.axvline(training_span[1], color='tab:red', linestyle='--', lw=1.5, alpha=0.7,
-    #           label=f't_train_end = {training_span[1]:.3f}')
-    
-    ax.set_xlabel('Time')
+    # Create plot with 3 subplots sharing x-axis
+    fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True,
+                             gridspec_kw={'height_ratios': [1, 1, 1]})
     ylabel = 'Relative Error' if error_type == 'relative' else 'Absolute Error'
-    ax.set_ylabel(ylabel)
-    ax.set_title('Full Order Prediction Error Over Time')
-    ax.legend(loc='upper left', fontsize=9)
-    ax.grid(True, alpha=0.3)
-    ax.set_yscale('log')
-    
+
+    # --- Subplot 1: ROM prediction error ---
+    ax_rom = axes[0]
+    ax_rom.axvspan(training_span[0], training_span[1], color='tab:blue', alpha=0.1)
+    ax_rom.plot(time_domain_eval, rom_error_median, 'tab:blue', lw=2,
+                label='ROM error (median)')
+    ax_rom.fill_between(time_domain_eval, rom_error_5, rom_error_95,
+                        color='tab:blue', alpha=0.3, label='ROM error (5\u201395%)')
+    ax_rom.plot(time_domain_eval, rom_error_mean, 'tab:orange', lw=1.5,
+                linestyle=':', label='ROM error (mean)')
+    ax_rom.set_ylabel(ylabel)
+    ax_rom.set_title('ROM Prediction Error')
+    ax_rom.legend(loc='upper left', fontsize=9)
+    ax_rom.grid(True, alpha=0.3)
+    ax_rom.set_yscale('log')
+
+    # --- Subplot 2: Projection error (basis limit) ---
+    ax_proj = axes[1]
+    ax_proj.axvspan(training_span[0], training_span[1], color='tab:blue', alpha=0.1)
+    ax_proj.plot(time_domain_eval, projection_error, 'k--', lw=2,
+                 label='Projection error (basis limit)')
+    ax_proj.set_ylabel(ylabel)
+    ax_proj.set_title('Projection Error (Basis Limit)')
+    ax_proj.legend(loc='upper left', fontsize=9)
+    ax_proj.grid(True, alpha=0.3)
+    ax_proj.set_yscale('log')
+
+    # --- Subplot 3: ROM error minus projection error ---
+    ax_diff = axes[2]
+    ax_diff.axvspan(training_span[0], training_span[1], color='tab:blue', alpha=0.1)
+    rom_minus_proj = np.maximum(rom_error_median - projection_error, 1e-16)
+    ax_diff.plot(time_domain_eval, rom_minus_proj, 'tab:purple', lw=2,
+                 label='ROM error \u2212 projection error')
+    ax_diff.set_xlabel('Time')
+    ax_diff.set_ylabel(ylabel)
+    ax_diff.set_title('Excess ROM Error (Above Basis Limit)')
+    ax_diff.legend(loc='upper left', fontsize=9)
+    ax_diff.grid(True, alpha=0.3)
+    ax_diff.set_yscale('log')
+
     plt.tight_layout()
-    
-    return fig, ax
+
+    return fig, axes

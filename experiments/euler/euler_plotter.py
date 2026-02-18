@@ -142,14 +142,15 @@ class EulerPlotter(Plotter):
 
     def operator_plot(
                     self,
-                    # TODO: Add support for List q0
                     q0: np.ndarray | List,
                     operator_samples: np.ndarray | List,
                     latent_state_samples: np.ndarray | List,
                     rom,
                     figsize: tuple = (12, 8),
                     max_num_samples = 1000,
-                    plot_samples: bool = False
+                    plot_samples: bool = False,
+                    plot_single: bool = False,
+                    training_span: tuple = None,
                     ):
         plt.clf()
 
@@ -159,19 +160,16 @@ class EulerPlotter(Plotter):
         print(self.operator_samples.shape, self.latent_state_samples.shape)
         samples = min(self.operator_samples.shape[0], self.latent_state_samples.shape[0], max_num_samples)
 
-        fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
-
+        # Generate ROM solves
         rom_solves_training, rom_solves_prediction = [], []
         for i in range(samples):
             operator = self.operator_samples[i]
             rom.model._extract_operators(operator)
-            # TODO: Can't cheat like this with starting value
             rom.model.predict(state0=q0, t=self.time_domain_eval_training)
             if rom.model.predict_result_.y.shape[1] < self.time_domain_eval_training.size:
                 print("Bad solve within training domain, skipping", rom.model.predict_result_.y.shape)
                 continue
             rom_solves_training.append(rom.model.predict_result_.y)
-
 
             rom.model.predict(state0=q0, t=self.time_domain_eval_prediction)
             if rom.model.predict_result_.y.shape[1] < self.time_domain_eval_prediction.size:
@@ -182,7 +180,60 @@ class EulerPlotter(Plotter):
         rom_solves_training, rom_solves_prediction = np.array(rom_solves_training), np.array(rom_solves_prediction)
         print(rom_solves_training.shape, rom_solves_prediction.shape)
 
+        # --- Single-column layout ---
+        if plot_single:
+            fig, ax = plt.subplots(self.numPODmodes, 1, figsize=figsize, sharex=True)
+            if self.numPODmodes == 1:
+                ax = [ax]
+
+            for i in range(self.numPODmodes):
+                # Training span shading
+                if training_span is not None:
+                    ax[i].axvspan(training_span[0], training_span[1],
+                                  color='tab:blue', alpha=0.06, zorder=0)
+
+                # True solution
+                ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i],
+                           color='tab:gray', lw=2, label='True solution')
+
+                # Training snapshots
+                ax[i].plot(self.time_domain_training, self.snapshots_training[i],
+                           'k*', ms=5, label='Training data', zorder=5)
+
+                # ROM median
+                ax[i].plot(self.time_domain_eval_prediction,
+                           np.median(rom_solves_prediction[:, i, :], axis=0),
+                           color='tab:blue', alpha=0.9, lw=2, label='ROM median')
+
+                # ROM 5-95% band
+                ax[i].fill_between(
+                    self.time_domain_eval_prediction,
+                    np.percentile(rom_solves_prediction[:, i, :], 5, axis=0),
+                    np.percentile(rom_solves_prediction[:, i, :], 95, axis=0),
+                    color='tab:blue', alpha=0.15, label='ROM 5–95%'
+                )
+
+                ax[i].set_ylabel(f'Mode {i+1}')
+                ax[i].grid(True, alpha=0.3)
+                if i == 0:
+                    ax[i].legend(loc='upper right', fontsize=9)
+
+            ax[-1].set_xlabel('Time')
+            fig.suptitle("Operator Inference Trajectories", fontsize=16)
+            fig.tight_layout()
+            fig.show()
+            return
+
+        # --- Standard 3-column layout ---
+        fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
+
         for i in range(self.numPODmodes):
+            # Training span shading on all columns
+            if training_span is not None:
+                for j in range(3):
+                    ax[i, j].axvspan(training_span[0], training_span[1],
+                                     color='tab:blue', alpha=0.06, zorder=0)
+
             ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
             ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
             ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
