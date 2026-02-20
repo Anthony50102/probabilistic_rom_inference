@@ -88,10 +88,22 @@ class Basis(opinf.basis.PODBasis):
     """
 
     def fit(self, states):
-        """Construct the bases."""
+        """Construct the bases.
+
+        Only fits once; subsequent calls are a no-op so that
+        opinf.ROM.fit() does not silently overwrite the basis.
+        Call refit() to force re-fitting.
+        """
+        if self.entries is not None:
+            return self
         states = np.concatenate((states, states**2))
         states, self.shift_ = opinf.pre.shift(states)
         return super().fit(states)
+
+    def refit(self, states):
+        """Force re-fit (clears existing basis first)."""
+        self._LinearBasis__entries = None
+        return self.fit(states)
 
     def compress(self, states):
         """Map high-dimensional states to low-dimensional coordinates."""

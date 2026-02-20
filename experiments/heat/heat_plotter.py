@@ -1,363 +1,519 @@
+"""
+Plotting utilities for Cubic Heat equation experiments.
+
+Provides visualization methods for multi-trajectory ROM predictions
+with input support, matching the euler experiment plotting style.
+"""
+
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import List
+from typing import List, Optional, Tuple, Callable, Dict
 
-from core import BayesianGP
 from core.plotting import Plotter
 
 
+# =============================================================================
+# Standalone utility functions
+# =============================================================================
+
+def _generate_rom_solves(
+    operator_samples: np.ndarray,
+    rom,
+    q0: np.ndarray,
+    time_eval: np.ndarray,
+    input_func: Optional[Callable] = None,
+    max_samples: int = 200,
+) -> np.ndarray:
+    """
+    Generate ROM solves from operator samples for a single trajectory.
+
+    Parameters
+    ----------
+    operator_samples : np.ndarray, shape (num_samples, r, d)
+        Posterior operator samples.
+    rom : opinf.ROM
+        ROM model.
+    q0 : np.ndarray, shape (r,)
+        Initial condition.
+    time_eval : np.ndarray
+        Time grid for ROM evaluation.
+    input_func : callable, optional
+        Input function u(t).
+    max_samples : int
+        Max number of operator samples to try.
+
+    Returns
+    -------
+    np.ndarray, shape (n_stable, r, len(time_eval))
+    """
+    solves = []
+    n = min(len(operator_samples), max_samples)
+    for i in range(n):
+        rom.model._extract_operators(np.array(operator_samples[i]))
+        try:
+            if input_func is not None:
+                rom.model.predict(state0=q0, t=time_eval, input_func=input_func)
+            else:
+                rom.model.predict(state0=q0, t=time_eval)
+            if rom.model.predict_result_.y.shape[1] == len(time_eval):
+                solves.append(rom.model.predict_result_.y)
+        except Exception:
+            pass
+    if solves:
+        return np.array(solves)
+    return np.empty((0, len(q0), len(time_eval)))
+
+
+def compute_trajectory_errors(
+    rom_solves: np.ndarray,
+    true_compressed: np.ndarray,
+    time_eval: np.ndarray,
+    time_true: np.ndarray,
+    num_modes: int,
+) -> List[float]:
+    """
+    Compute relative errors for ROM solves against interpolated truth.
+
+    Parameters
+    ----------
+    rom_solves : np.ndarray, shape (n_stable, r, n_eval)
+    true_compressed : np.ndarray, shape (r, n_full)
+    time_eval : np.ndarray, shape (n_eval,)
+    time_true : np.ndarray, shape (n_full,)
+    num_modes : int
+
+    Returns
+    -------
+    errors : list of float
+        Relative error for each stable ROM solve.
+    """
+    truth_at_eval = np.array([
+        np.interp(time_eval, time_true, true_compressed[i])
+        for i in range(num_modes)
+    ])
+    errors = []
+    for sol in rom_solves:
+        err = np.linalg.norm(sol - truth_at_eval) / np.linalg.norm(truth_at_eval)
+        errors.append(err)
+    return errors
+
+
+def plot_heat_grid_search(
+    grid_search_result,
+    snapshots_compressed: np.ndarray,
+    time_sampled: np.ndarray,
+    time_eval_training: np.ndarray,
+    time_eval_prediction: np.ndarray,
+    num_modes: int,
+    input_func: Callable,
+    figsize: Optional[Tuple[float, float]] = None,
+):
+    """
+    Plot all stable deterministic ROM solves from grid search (with input support).
+
+    Matches the style of core.plotting.plot_deterministic_rom_solves but
+    supports input_func for systems with external inputs.
+
+    Parameters
+    ----------
+    grid_search_result : GridSearchResult
+        Result from grid_search_prior_operator.
+    snapshots_compressed : np.ndarray
+        Training snapshots in reduced space, shape (num_modes, num_samples).
+    time_sampled : np.ndarray
+        Subsampled training time points.
+    time_eval_training : np.ndarray
+        Dense time points for training domain evaluation.
+    time_eval_prediction : np.ndarray
+        Dense time points for prediction domain evaluation.
+    num_modes : int
+        Number of POD modes.
+    input_func : callable
+        Input function u(t) for ROM prediction.
+    figsize : tuple, optional
+
+    Returns
+    -------
+    fig, axes
+    """
+    if figsize is None:
+        figsize = (14, 3 * num_modes)
+
+    q0 = snapshots_compressed[:, 0]
+    fig, axes = plt.subplots(num_modes, 2, figsize=figsize, sharex='col')
+    if num_modes == 1:
+        axes = axes.reshape(1, -1)
+
+    for reg, error, operator, r in grid_search_result.stable_results:
+        r.model._extract_operators(operator)
+        is_best = np.allclose(operator, grid_search_result.operator)
+        color = 'tab:blue' if is_best else 'tab:orange'
+        alpha = 0.9 if is_best else 0.3
+        lw = 2.5 if is_best else 1.5
+
+        try:
+            r.model.predict(state0=q0, t=time_eval_training, input_func=input_func)
+            if r.model.predict_result_.y.shape[1] == len(time_eval_training):
+                for i in range(num_modes):
+                    label = ('Best (chosen)' if is_best else None) if i == 0 else None
+                    axes[i, 0].plot(time_eval_training, r.model.predict_result_.y[i],
+                                   color=color, alpha=alpha, lw=lw, label=label)
+        except Exception:
+            pass
+
+        try:
+            r.model.predict(state0=q0, t=time_eval_prediction, input_func=input_func)
+            if r.model.predict_result_.y.shape[1] == len(time_eval_prediction):
+                for i in range(num_modes):
+                    axes[i, 1].plot(time_eval_prediction, r.model.predict_result_.y[i],
+                                   color=color, alpha=alpha, lw=lw)
+        except Exception:
+            pass
+
+    for i in range(num_modes):
+        axes[i, 0].plot(time_sampled, snapshots_compressed[i], 'k*', ms=4,
+                       label='Training data', zorder=5)
+        axes[i, 0].set_ylabel(f'Mode {i+1}')
+        axes[i, 0].grid(True, alpha=0.3)
+        axes[i, 1].grid(True, alpha=0.3)
+        if i == 0:
+            axes[i, 0].set_title('Training Domain')
+            axes[i, 1].set_title('Prediction Domain')
+            axes[i, 0].legend(loc='upper right', fontsize=8)
+
+    axes[-1, 0].set_xlabel('Time')
+    axes[-1, 1].set_xlabel('Time')
+    fig.suptitle('Grid Search: Stable ROM Solves', fontsize=14)
+    fig.tight_layout()
+    return fig, axes
+
+
+# =============================================================================
+# HeatPlotter class
+# =============================================================================
+
 class HeatPlotter(Plotter):
-    """Plotter for Heat equation experiments."""
-    
+    """Plotter for Cubic Heat equation experiments.
+
+    Extends the base Plotter with multi-trajectory visualization methods
+    for systems with external inputs (multiple ICs / input parameters).
+    Styling matches the Euler experiment plotter for visual consistency.
+    """
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.num_initial_conditions = self.snapshots_training.shape[1]
-        self.snapshots_prediction_parameters = None
 
-    def gp_plot_state(self,
-                      samples,
-                      figsize=(20,12),
-                      ):
-        '''
-        Plot the GP state estimates in the training domain.
-        Rows per intial condition
-        '''
-        print(self.num_initial_conditions)
-        fig, ax = plt.subplots(self.num_initial_conditions, self.numPODmodes, figsize=figsize, sharex='col')
+    # -----------------------------------------------------------------
+    # Multi-trajectory plot (rows = trajectories, cols = modes)
+    # -----------------------------------------------------------------
+    def multi_trajectory_plot(
+        self,
+        operator_samples: np.ndarray,
+        rom,
+        trajectories: List[Dict],
+        time_eval: np.ndarray,
+        figsize: Optional[Tuple[float, float]] = None,
+        max_num_samples: int = 200,
+        training_span: Optional[Tuple[float, float]] = None,
+    ):
+        """
+        Plot ROM predictions for multiple trajectories in one figure.
 
-        gp = BayesianGP()
-        for j in range(self.num_initial_conditions):
-            gp.X_train = self.time_domain_training[j,][:,None]
+        Layout: one row per trajectory, one column per POD mode.
+        Style matches euler's single-column operator_plot.
 
-            Ls = np.array([samples[f'lengthscale{i}{j}'].mean() for i in range(self.numPODmodes)]) # i is POD mode j is intitial condition
-            Vs = np.array([samples[f'variance{i}{j}'].mean() for i in range(self.numPODmodes)])
-            Ns = np.array([samples[f'noise{i}{j}'].mean() for i in range(self.numPODmodes)])
-            # TODO: fix this to take actual samples
-            for k in range(self.numPODmodes):
-                gp.y_train = self.snapshots_training[j][k]
-                mean, std, _ = gp.predict_with_hypers(X_test=self.time_domain_eval_training[:,None], lengthscale=Ls[k], variance=Vs[k], noise=Ns[k])
-                ax[j][k].plot(self.time_domain_eval_training, mean)
-                ax[j][k].fill_between(self.time_domain_eval_training, mean-2*std, mean+2*std, alpha=0.3)
-                ax[j][k].plot(self.time_domain_training[j], self.snapshots_training[j][k], 'k*')
-    
-    def gp_plot_states_hyperparams(self,
-                                   lengthscales, # Shape (samples, num_initial_conditions, numPODmodes)
-                                   variances,    # Shape (samples, num_initial_conditions, numPODmodes)
-                                   noises,       # Shape (samples, num_initial_conditions, numPODmodes)
-                                   figsize=(20,12),
-                                ):
-        
-        samples = min(lengthscales.shape[0], variances.shape[0], noises.shape[0])
+        Parameters
+        ----------
+        operator_samples : np.ndarray, shape (num_samples, r, d)
+            Posterior operator samples.
+        rom : opinf.ROM
+            ROM model used for predictions.
+        trajectories : list of dict
+            Each dict contains:
+            - 'q0': np.ndarray shape (r,), initial condition
+            - 'input_func': callable, input function u(t)
+            - 'snapshots': np.ndarray shape (r, n) or None, noisy data
+            - 'time_snapshots': np.ndarray shape (n,) or None
+            - 'true_compressed': np.ndarray shape (r, n_full) or None
+            - 'time_true': np.ndarray shape (n_full,) or None
+            - 'label': str, row label
+        time_eval : np.ndarray
+            Time points for ROM evaluation.
+        figsize : tuple, optional
+        max_num_samples : int
+        training_span : tuple of (float, float), optional
+            If given, shade the training time region with a light background.
 
-        fig, ax = plt.subplots(self.num_initial_conditions, self.numPODmodes, figsize=figsize, sharex='col')
+        Returns
+        -------
+        fig, axes, all_rom_solves : list of np.ndarray per trajectory
+        """
+        n_traj = len(trajectories)
+        n_modes = self.numPODmodes
 
-        lengthscale_mean = lengthscales.mean(axis=0) # i is POD mode j is intitial condition
-        variance_mean = variances.mean(axis=0)
-        noise_mean = noises.mean(axis=0)
+        if figsize is None:
+            figsize = (4 * n_modes, 2.5 * n_traj)
 
-        means = np.zeros((samples, self.num_initial_conditions, self.numPODmodes, self.time_domain_eval_training.shape[0]))
+        fig, axes = plt.subplots(
+            n_traj, n_modes, figsize=figsize,
+            sharex=True, sharey='col', squeeze=False,
+        )
 
-        gp = BayesianGP()
-        for i in range(samples):
-            for j in range(self.num_initial_conditions):
-                gp.X_train = self.time_domain_training[j,][:,None]
-                # TODO: fix this to take actual samples
-                for k in range(self.numPODmodes):
-                    Ls = lengthscales[i][j][k]
-                    Vs = variances[i][j][k]
-                    Ns = noises[i][j][k]
-                    gp.y_train = self.snapshots_training[j][k]
-                    mean, std, _ = gp.predict_with_hypers(X_test=self.time_domain_eval_training[:,None], lengthscale=Ls, variance=Vs, noise=Ns)
-                    means[i][j][k] = mean
-                    ax[j][k].plot(self.time_domain_eval_training, mean)
-        
-        # compute the mean and std over the samples
-        means_mean = means.mean(axis=0)
-        means_std = means.std(axis=0)
+        all_rom_solves = []
 
-        for i in range(self.num_initial_conditions):
-            for j in range(self.numPODmodes):
-                ax[i][j].plot(self.time_domain_eval_training, means_mean[i][j], color='tab:orange', lw=2)
-                ax[i][j].fill_between(self.time_domain_eval_training, 
-                                     means_mean[i][j]-2*means_std[i][j], 
-                                     means_mean[i][j]+2*means_std[i][j], 
-                                     color='tab:orange', alpha=0.3)
-                ax[i][j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*')
-        
-        fig.show()
+        for row, traj in enumerate(trajectories):
+            rom_solves = _generate_rom_solves(
+                operator_samples, rom, traj['q0'], time_eval,
+                traj.get('input_func'), max_num_samples,
+            )
+            all_rom_solves.append(rom_solves)
+            n_stable = len(rom_solves)
+            n_tried = min(len(operator_samples), max_num_samples)
+            label = traj.get('label', f'Trajectory {row + 1}')
 
-    
-    def gp_plot_derivatives(self,
-                            figsize=(20,12),
-                            ):
-          '''
-          Plot the GP derivative estimates in the training domain.
-          Rows per intial condition
-          '''
-          fig, ax = plt.subplots(self.num_initial_conditions, self.numPODmodes, figsize=figsize, sharex='col')
-    
-          gp = BayesianGP()
-          for j in range(self.num_initial_conditions):
-                gp.X_train = self.time_domain_training[j,][:,None]
-    
-                Ls = np.array([self.lengthscales[i][j] for i in range(self.numPODmodes)]) # i is POD mode j is intitial condition
-                Vs = np.array([self.variances[i][j] for i in range(self.numPODmodes)])
-                Ns = np.array([self.noises[i][j] for i in range(self.numPODmodes)])
-    
-    def operator_plot(self,
-                  q0: np.ndarray | List,
-                  operator_samples: np.ndarray | List,
-                  latent_state_samples: np.ndarray | List,
-                  snapshots_training_prediction_parameters: np.ndarray | List,
-                  time_domain_training_prediction_parameters: np.ndarray | List,
-                  snapshots_prediction_new_initial: np.ndarray | List,
-                  rom,
-                  input_func,
-                  input_parameters_training: np.ndarray | List,
-                  input_parameters_prediction: np.ndarray | List,
-                  figsize=(20,12),
-                  max_num_samples = 100,
-                  plot_samples = False,
-                  plot_single = True,
-                  ):
-        plt.clf()
+            for col in range(n_modes):
+                ax = axes[row, col]
 
-        fig, ax = plt.subplots(self.num_initial_conditions + 1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col') 
+                # Training span shading
+                if training_span is not None:
+                    ax.axvspan(training_span[0], training_span[1],
+                               color='tab:blue', alpha=0.06, zorder=0)
 
-        rom_solves_training, rom_solves_prediction = [[] for _ in range(self.num_initial_conditions + 1)], [[] for _ in range(self.num_initial_conditions + 1)]
+                # True solution (clean, full resolution)
+                if traj.get('true_compressed') is not None and traj.get('time_true') is not None:
+                    ax.plot(
+                        traj['time_true'], traj['true_compressed'][col],
+                        color='tab:gray', lw=2,
+                        label='True solution' if (row == 0 and col == 0) else None,
+                    )
 
-        for i in range(self.num_initial_conditions + 1):
-            for j in range(min(max_num_samples, operator_samples.shape[0])):
+                # Training data (noisy, subsampled)
+                if traj.get('snapshots') is not None and traj.get('time_snapshots') is not None:
+                    ax.plot(
+                        traj['time_snapshots'], traj['snapshots'][col],
+                        'k*', ms=5, zorder=5,
+                        label='Training data' if (row == 0 and col == 0) else None,
+                    )
 
-                    O = operator_samples[j]
-                    rom._extract_operators(np.array(O))
+                # ROM predictions
+                if n_stable > 0:
+                    ax.plot(
+                        time_eval,
+                        np.median(rom_solves[:, col, :], axis=0),
+                        color='tab:blue', alpha=0.9, lw=2,
+                        label='ROM median' if (row == 0 and col == 0) else None,
+                        zorder=0
+                    )
+                    ax.fill_between(
+                        time_eval,
+                        np.percentile(rom_solves[:, col, :], 5, axis=0),
+                        np.percentile(rom_solves[:, col, :], 95, axis=0),
+                        color='tab:blue', alpha=0.15,
+                        label='ROM 5\u201395%' if (row == 0 and col == 0) else None,
+                        zorder=0
+                    )
 
-                    if i == self.num_initial_conditions:
-                        if self.snapshots_prediction_parameters is None:
-                            self.snapshots_prediction_parameters = snapshots_training_prediction_parameters
-                        rom.predict(state0=self.snapshots_prediction_parameters[:, 0], t=self.time_domain_eval_training, input_func=input_func(input_parameters_prediction))
+                ax.grid(True, alpha=0.3)
 
-                    else:
-                        rom.predict(state0=self.snapshots_training[i, :, 0], t=self.time_domain_eval_training, input_func=input_func(input_parameters_training[i]))
-                    if rom.predict_result_.y.shape[1] < self.time_domain_eval_training.size:
-                        print("Bad solve, skipping", rom.predict_result_.y.shape)
-                        continue
-                    rom_solves_training[i].append(rom.predict_result_.y)
+                # Column titles (top row)
+                if row == 0:
+                    ax.set_title(f'Mode {col + 1}')
+                # Row labels (left column)
+                if col == 0:
+                    ax.set_ylabel(f'{label}\n({n_stable}/{n_tried} stable)',
+                                  fontsize=9)
+                # X-axis label (bottom row)
+                if row == n_traj - 1:
+                    ax.set_xlabel('Time')
 
-                    if i == self.num_initial_conditions:
-                        rom.predict(state0=self.snapshots_prediction_parameters[:, 0], t=self.time_domain_eval_prediction, input_func=input_func(input_parameters_prediction))
-                    else:
-                        rom.predict(state0=self.snapshots_training[i, :, 0], t=self.time_domain_eval_prediction, input_func=input_func(input_parameters_training[i]))
-                    
-                    if rom.predict_result_.y.shape[1] < self.time_domain_eval_prediction.size:
-                        print("Bad solve, skipping", rom.predict_result_.y.shape)
-                        continue
-                    
-                    rom_solves_prediction[i].append(rom.predict_result_.y)
-            
-            rom_solves_training[i] = np.array(rom_solves_training[i])
-            print(rom_solves_training[i].shape)
-            rom_solves_prediction[i] = np.array(rom_solves_prediction[i]) 
-            print(rom_solves_prediction[i].shape)
-        
-        # Find minimum number of samples across all initial conditions
-        min_samples_training = min(arr.shape[0] for arr in rom_solves_training)
-        min_samples_prediction = min(arr.shape[0] for arr in rom_solves_prediction)
-        
-        # Truncate all arrays to the minimum sample count
-        rom_solves_training = [arr[:min_samples_training] for arr in rom_solves_training]
-        rom_solves_prediction = [arr[:min_samples_prediction] for arr in rom_solves_prediction]
-        
-        # Convert to numpy arrays and permute dimensions correctly
-        rom_solves_training = np.permute_dims(np.array(rom_solves_training), (1,0,2,3)) # (samples, initial conditions, POD modes, time)
-        rom_solves_prediction = np.permute_dims(np.array(rom_solves_prediction), (1,0,2,3)) # (samples, initial conditions, POD modes, time)
-        print(np.array(rom_solves_training).shape, np.array(rom_solves_prediction).shape)
+        # Single legend at the top
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc='upper center',
+                       ncol=len(handles), fontsize=9,
+                       bbox_to_anchor=(0.5, 1.02))
 
-        # Calculate statistics over the sample dimension (axis=0)
-        rom_solves_training_mean = rom_solves_training.mean(axis=0)  # (initial conditions, POD modes, time)
-        rom_solves_training_median = np.median(rom_solves_training, axis=0)
-        rom_solves_training_95 = np.percentile(rom_solves_training, 95, axis=0)
-        rom_solves_training_5 = np.percentile(rom_solves_training, 5, axis=0)
+        fig.suptitle('ROM Predictions: All Trajectories', fontsize=14, y=1.05)
+        fig.tight_layout()
+        return fig, axes, all_rom_solves
 
-        # Plot the within training domain
-        for i in range(self.num_initial_conditions + 1):
-            for j in range(self.numPODmodes):
-                # Plot the snapshots (truth data)
-                if i < self.num_initial_conditions:
-                    ax[i,j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*', label='Truth', alpha=0.5)
-                else:
-                    ax[i,j].plot(time_domain_training_prediction_parameters, self.snapshots_prediction_parameters[j], 'k*', label='Truth', alpha=0.5)
+    # -----------------------------------------------------------------
+    # Single-trajectory plot (rows = modes, single column)
+    # -----------------------------------------------------------------
+    def single_trajectory_plot(
+        self,
+        operator_samples: np.ndarray,
+        rom,
+        q0: np.ndarray,
+        time_eval: np.ndarray,
+        input_func: Optional[Callable] = None,
+        snapshots: Optional[np.ndarray] = None,
+        time_snapshots: Optional[np.ndarray] = None,
+        true_compressed: Optional[np.ndarray] = None,
+        time_true: Optional[np.ndarray] = None,
+        title: str = 'ROM Predictions',
+        figsize: Optional[Tuple[float, float]] = None,
+        max_num_samples: int = 200,
+        training_span: Optional[Tuple[float, float]] = None,
+    ):
+        """
+        Single-trajectory plot matching euler's single-column operator_plot.
 
-                # Plot the predictions means and stds
-                ax[i,j].plot(self.time_domain_eval_training, rom_solves_training_mean[i, j], '--', color='tab:orange', alpha=0.8, lw=2, label='Mean')
-                ax[i,j].plot(self.time_domain_eval_training, rom_solves_training_median[i, j], '-', color='tab:blue', alpha=0.8, lw=2, label='Median')
-                ax[i,j].fill_between(self.time_domain_eval_training, 
-                                    rom_solves_training_5[i, j], 
-                                    rom_solves_training_95[i, j], 
-                                    color='tab:blue', alpha=0.3, label='95% CI')
+        Modes as rows, single column.
 
-                ax[i,j].grid()
-        
-        if not plot_single:
-            fig.show()
+        Parameters
+        ----------
+        operator_samples : np.ndarray, shape (num_samples, r, d)
+        rom : opinf.ROM
+        q0 : np.ndarray, shape (r,)
+        time_eval : np.ndarray
+        input_func : callable, optional
+        snapshots : np.ndarray, optional, shape (r, n)
+        time_snapshots : np.ndarray, optional
+        true_compressed : np.ndarray, optional, shape (r, n_full)
+        time_true : np.ndarray, optional
+        title : str
+        figsize : tuple, optional
+        max_num_samples : int
 
-        # Create a new plot for the out-of-sample predictions
-        fig, ax = plt.subplots(self.num_initial_conditions + 1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
+        Returns
+        -------
+        fig, axes, rom_solves
+        """
+        n_modes = self.numPODmodes
+        if figsize is None:
+            figsize = (10, 2.5 * n_modes)
 
-        # Calculate statistics over the sample dimension (axis=0)
-        rom_solves_prediction_mean = rom_solves_prediction.mean(axis=0)  # (initial conditions, POD modes, time)
-        rom_solves_prediction_median = np.median(rom_solves_prediction, axis=0)
-        rom_solves_prediction_95 = np.percentile(rom_solves_prediction, 95, axis=0)
-        rom_solves_prediction_5 = np.percentile(rom_solves_prediction, 5, axis=0)
+        rom_solves = _generate_rom_solves(
+            operator_samples, rom, q0, time_eval,
+            input_func, max_num_samples,
+        )
 
-        for i in range(self.num_initial_conditions + 1):
-            for j in range(self.numPODmodes):
-                # Plot the snapshots (truth data) and the truth data
-                if i < self.num_initial_conditions:
-                    ax[i,j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*', label='Truth', alpha=0.5)
-                else:
-                    ax[i,j].plot(time_domain_training_prediction_parameters, self.snapshots_prediction_parameters[j], 'k*', label='Truth', alpha=0.5)
-                    # ax[i,j].plot(self.time_domain_prediction, snapshots_prediction_new_initial[j], color="tab:gray", label='Truth', alpha=0.5)
+        fig, axes = plt.subplots(n_modes, 1, figsize=figsize, sharex=True)
+        if n_modes == 1:
+            axes = [axes]
 
-                # Plot the predictions means and stds
-                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_mean[i, j], '--', color='tab:orange', alpha=0.8, lw=2, label='Mean')
-                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_median[i, j], '-', color='tab:blue', alpha=0.8, lw=2, label='Median')
-                ax[i,j].fill_between(self.time_domain_eval_prediction, 
-                                    rom_solves_prediction_5[i, j], 
-                                    rom_solves_prediction_95[i, j], 
-                                    color='tab:blue', alpha=0.3, label='95% CI')
-                
-                ax[i,j].grid()
-                ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
+        n_stable = len(rom_solves)
+        n_tried = min(len(operator_samples), max_num_samples)
 
-        fig.show()
+        for i in range(n_modes):
+            ax = axes[i]
 
-        # Create a new plot for the out-of-sample predictions
-        fig, ax = plt.subplots(self.num_initial_conditions + 1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
+            # Training span shading
+            if training_span is not None:
+                ax.axvspan(training_span[0], training_span[1],
+                           color='tab:blue', alpha=0.06, zorder=0)
 
-        for i in range(self.num_initial_conditions + 1):
-            for j in range(self.numPODmodes):
-                # Plot the snapshots (truth data) and the truth data
-                if i < self.num_initial_conditions:
-                    ax[i,j].plot(self.time_domain_prediction, self.snapshots_prediction[i][j], color="tab:gray", label='Truth', alpha=0.5)
-                else:
-                    ax[i,j].plot(self.time_domain_prediction, snapshots_prediction_new_initial[j], color="tab:gray", label='Truth', alpha=0.5)
+            # True solution
+            if true_compressed is not None and time_true is not None:
+                ax.plot(time_true, true_compressed[i],
+                        color='tab:gray', lw=2, label='True solution')
 
-                # Plot the predictions means and stds
-                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_mean[i, j], '--', color='tab:orange', alpha=0.8, lw=2, label='Mean')
-                ax[i,j].plot(self.time_domain_eval_prediction, rom_solves_prediction_median[i, j], '-', color='tab:blue', alpha=0.8, lw=2, label='Median')
-                ax[i,j].fill_between(self.time_domain_eval_prediction, 
-                                    rom_solves_prediction_5[i, j], 
-                                    rom_solves_prediction_95[i, j], 
-                                    color='tab:blue', alpha=0.3, label='95% CI')
+            # Training data
+            if snapshots is not None and time_snapshots is not None:
+                ax.plot(time_snapshots, snapshots[i],
+                        'k*', ms=5, label='Training data', zorder=5)
 
-                ax[i,j].grid()
-                ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
+            # ROM predictions
+            if n_stable > 0:
+                ax.plot(
+                    time_eval,
+                    np.median(rom_solves[:, i, :], axis=0),
+                    color='tab:blue', alpha=0.9, lw=2, label='ROM median',
+                )
+                ax.fill_between(
+                    time_eval,
+                    np.percentile(rom_solves[:, i, :], 5, axis=0),
+                    np.percentile(rom_solves[:, i, :], 95, axis=0),
+                    color='tab:blue', alpha=0.15, label='ROM 5\u201395%',
+                )
 
-        if not plot_single:
-            fig.show()
-        
-        plt.clf()
-    
-    def operator_plot_trajectories(
-            self,
-            snapshots_training_new_initial,
-            time_domain_training_new_initial,
-            draws_training,
-            draws_prediction,
-            time_domain_prediction,
-            time_domain_training_prediction_parameters,
-            true_states_compressed,
-            figsize=(20,12),
-            max_num_samples = 100,
-            plot_samples = False,
-            plot_single = True
-            ):
-        
-        plt.clf()
+            ax.set_ylabel(f'Mode {i + 1}')
+            ax.grid(True, alpha=0.3)
+            if i == 0:
+                ax.legend(loc='upper right', fontsize=9)
 
-        fig, ax = plt.subplots(self.num_initial_conditions+1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
+        axes[-1].set_xlabel('Time')
+        fig.suptitle(f'{title}  ({n_stable}/{n_tried} stable)', fontsize=14)
+        fig.tight_layout()
+        return fig, axes, rom_solves
 
-        for i in range(self.num_initial_conditions + 1):
-            for j in range(self.numPODmodes):
-                # Plot the snapshots (truth data)
-                if i < self.num_initial_conditions:
-                    ax[i,j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*', label='Truth', alpha=0.5)
-                else:
-                    ax[i,j].plot(time_domain_training_new_initial, snapshots_training_new_initial[j], 'k*', label='Truth', alpha=0.5)
 
-                # Plot the predictions means and stds
-                if plot_samples:
-                    for k in range(min(max_num_samples, draws_training.shape[0])):
-                        ax[i,j].plot(self.time_domain_eval_training, draws_training[k,i,j,:], color='tab:blue', alpha=0.1)
+# =============================================================================
+# Operator matrix heatmap comparison
+# =============================================================================
 
-                ax[i,j].plot(self.time_domain_eval_training, draws_training.mean(axis=0)[i,j,:], '--', color='tab:orange', alpha=0.8, lw=2, label='Mean')
-                ax[i,j].plot(self.time_domain_eval_training, np.median(draws_training, axis=0)[i,j,:], '-', color='tab:blue', alpha=0.8, lw=2, label='Median')
-                ax[i,j].fill_between(self.time_domain_eval_training, 
-                                    np.percentile(draws_training, 5, axis=0)[i,j,:], 
-                                    np.percentile(draws_training, 95, axis=0)[i,j,:], 
-                                    color='tab:blue', alpha=0.3, label='95% CI')
+def plot_operator_comparison(
+    deterministic_operator: np.ndarray,
+    posterior_mean: np.ndarray,
+    title: str = "Operator Comparison",
+    figsize: Optional[Tuple[float, float]] = None,
+):
+    """
+    Side-by-side heatmap comparison of operator matrices.
 
-                ax[i,j].grid()
+    Panels: deterministic (grid search) | posterior mean | difference.
 
-        if not plot_single:
-            fig.show()
+    Parameters
+    ----------
+    deterministic_operator : np.ndarray, shape (r, d)
+        Best operator from grid search.
+    posterior_mean : np.ndarray, shape (r, d)
+        Posterior mean operator from SVI or MCMC.
+    title : str
+        Figure suptitle.
+    figsize : tuple, optional
 
-        # Create a new plot for the out-of-sample predictions
-        fig, ax = plt.subplots(self.num_initial_conditions + 1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
+    Returns
+    -------
+    fig, axes
+    """
+    diff = posterior_mean - deterministic_operator
 
-        for i in range(self.num_initial_conditions + 1):
-            for j in range(self.numPODmodes):
-                # Plot the snapshots (truth data)
-                if i < self.num_initial_conditions:
-                    ax[i,j].plot(self.time_domain_training[i], self.snapshots_training[i][j], 'k*', label='Truth', alpha=0.5)
-                else:
-                    ax[i,j].plot(time_domain_training_new_initial, snapshots_training_new_initial[j], 'k*', label='Truth', alpha=0.5)
+    if figsize is None:
+        r, d = deterministic_operator.shape
+        figsize = (min(5 * 3, 18), max(r * 0.6, 3))
 
-                # Plot the predictions means and stds
-                if plot_samples:
-                    for k in range(min(max_num_samples, draws_prediction.shape[0])):
-                        ax[i,j].plot(self.time_domain_eval_prediction, draws_prediction[k,i,j,:], color='tab:blue', alpha=0.1)
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
 
-                ax[i,j].plot(self.time_domain_eval_prediction, draws_prediction.mean(axis=0)[i,j,:], '--', color='tab:orange', alpha=0.8, lw=2, label='Mean')
-                ax[i,j].plot(self.time_domain_eval_prediction, np.median(draws_prediction, axis=0)[i,j,:], '-', color='tab:blue', alpha=0.8, lw=2, label='Median')
-                ax[i,j].fill_between(self.time_domain_eval_prediction, 
-                                    np.percentile(draws_prediction, 5, axis=0)[i,j,:], 
-                                    np.percentile(draws_prediction, 95, axis=0)[i,j,:], 
-                                    color='tab:blue', alpha=0.3, label='95% CI')
+    # Shared colour scale for the two operator panels
+    vmax_op = max(np.abs(deterministic_operator).max(), np.abs(posterior_mean).max())
+    vmin_op = -vmax_op
 
-                ax[i,j].grid()
-                ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
+    im0 = axes[0].imshow(deterministic_operator, aspect='auto', cmap='RdBu_r',
+                          vmin=vmin_op, vmax=vmax_op)
+    axes[0].set_title('Deterministic\n(grid search)')
 
-        fig.show()
+    im1 = axes[1].imshow(posterior_mean, aspect='auto', cmap='RdBu_r',
+                          vmin=vmin_op, vmax=vmax_op)
+    axes[1].set_title('Posterior mean')
 
-        fig, ax = plt.subplots(self.num_initial_conditions + 1, self.numPODmodes, figsize=figsize, sharex='col', sharey='col')
+    # Difference panel with its own scale
+    vmax_d = np.abs(diff).max()
+    im2 = axes[2].imshow(diff, aspect='auto', cmap='RdBu_r',
+                          vmin=-vmax_d, vmax=vmax_d)
+    axes[2].set_title('Difference\n(posterior − det.)')
 
-        for i in range(self.num_initial_conditions + 1):
-            for j in range(self.numPODmodes):
-                # Plot the snapshots (truth data)
-                ax[i,j].plot(self.time_domain_prediction, true_states_compressed[i,j,:], color="tab:gray", label='Truth', alpha=0.5)
+    for ax in axes:
+        ax.set_xlabel('Operator column')
+        ax.set_ylabel('Mode')
 
-                # Plot the predictions means and stds
-                if plot_samples:
-                    for k in range(min(max_num_samples, draws_prediction.shape[0])):
-                        ax[i,j].plot(self.time_domain_eval_prediction, draws_prediction[k,i,j,:], color='tab:blue', alpha=0.1)
+    fig.colorbar(im1, ax=axes[:2].tolist(), shrink=0.8, label='Coefficient value')
+    fig.colorbar(im2, ax=axes[2], shrink=0.8, label='Difference')
 
-                ax[i,j].plot(self.time_domain_eval_prediction, draws_prediction.mean(axis=0)[i,j,:], '--', color='tab:orange', alpha=0.8, lw=2, label='Mean')
-                ax[i,j].plot(self.time_domain_eval_prediction, np.median(draws_prediction, axis=0)[i,j,:], '-', color='tab:blue', alpha=0.8, lw=2, label='Median')
-                ax[i,j].fill_between(self.time_domain_eval_prediction, 
-                                    np.percentile(draws_prediction, 5, axis=0)[i,j,:], 
-                                    np.percentile(draws_prediction, 95, axis=0)[i,j,:], 
-                                    color='tab:blue', alpha=0.3, label='95% CI')
+    # Annotate Frobenius norms
+    norm_det = np.linalg.norm(deterministic_operator)
+    norm_post = np.linalg.norm(posterior_mean)
+    norm_diff = np.linalg.norm(diff)
+    fig.text(0.5, -0.02,
+             f'‖Det‖_F = {norm_det:.3f}    ‖Post‖_F = {norm_post:.3f}    '
+             f'‖Diff‖_F = {norm_diff:.3f}  ({100*norm_diff/norm_det:.1f}% of det.)',
+             ha='center', fontsize=9, style='italic')
 
-                ax[i,j].grid()
-                ax[i,j].axvspan(self.time_domain_eval_training[0], self.time_domain_eval_training[-1], color='tab:blue', alpha=0.15)
-        
-        if not plot_single:
-            fig.show()
-        
-        plt.clf()
+    fig.suptitle(title, fontsize=13)
+    fig.tight_layout()
+    return fig, axes
