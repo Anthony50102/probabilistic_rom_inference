@@ -85,8 +85,6 @@ class FitzPlotter(Plotter):
             ax[i,1].set_title(f"Mode {i+1} Training Domain Increase Density")
             ax[i,0].legend()
             ax[i,1].legend()
-            ax[i,0].grid()
-            ax[i,1].grid()
 
         fig.suptitle("GP Hyperparameter Samples", fontsize=16)
         fig.tight_layout()
@@ -166,7 +164,6 @@ class FitzPlotter(Plotter):
                                 color='gray', alpha=0.3, label='Predicted Mean ± 2 Std Dev')
                 ax[i].set_title(f"Mode {i+1} Derivative Prediction on Eval Grid")
             ax[i].legend()
-            ax[i].grid()
         
         fig.tight_layout()
         fig.show()
@@ -235,15 +232,15 @@ class FitzPlotter(Plotter):
                 # ax[i].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), 
                 #           alpha=0.8, lw=2, label='Mean')
                 
-                # Plot the median
+                # Plot the median (dashed purple)
                 ax[i].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), 
-                          alpha=0.8, linestyle='--', lw=2, label='Median')
+                          color='tab:purple', linestyle='--', alpha=0.9, lw=2, label='Median')
                 
                 # Plot the 5th and 95th percentiles
                 ax[i].fill_between(self.time_domain_eval_prediction, 
                                   np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), 
                                   np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), 
-                                  alpha=0.2)
+                                  color='tab:purple', alpha=0.15)
                 
                 # Set y-limits based on ground truth
                 yvals = np.asarray(self.snapshots_prediction[i])
@@ -264,7 +261,6 @@ class FitzPlotter(Plotter):
                 ax[i].set_ylim(float(ymin), float(ymax))
                 ax[i].set_xlabel('Time')
                 ax[i].set_ylabel(f'Mode {i+1}')
-                # ax[i].grid()
                 ax[i].legend()
             
             fig.suptitle("Operator Inference Trajectories", fontsize=16)
@@ -282,20 +278,15 @@ class FitzPlotter(Plotter):
                     ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T, alpha = .3, lw=2)
                     ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T, alpha = .3, lw=2)
 
-                # Plot the mean
-                ax[i, 0].plot(self.time_domain_eval_training, rom_solves_training[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-                ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-                ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-
-                # Plot the median
-                ax[i, 0].plot(self.time_domain_eval_training, np.median(rom_solves_training[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
-                ax[i, 1].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
-                ax[i, 2].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
+                # Plot the median (dashed purple)
+                ax[i, 0].plot(self.time_domain_eval_training, np.median(rom_solves_training[:,i,:], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+                ax[i, 1].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+                ax[i, 2].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
 
                 # Plot the 5th and 95th percentiles
-                ax[i, 0].fill_between(self.time_domain_eval_training, np.percentile(rom_solves_training[:,i,:], 5, axis=0), np.percentile(rom_solves_training[:,i,:], 95, axis=0), alpha=.2)
-                ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
-                ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
+                ax[i, 0].fill_between(self.time_domain_eval_training, np.percentile(rom_solves_training[:,i,:], 5, axis=0), np.percentile(rom_solves_training[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
+                ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
+                ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
 
                 yvals = np.asarray(self.snapshots_prediction[i])
                 ymin = np.nanmin(yvals)
@@ -315,10 +306,6 @@ class FitzPlotter(Plotter):
                 ax[i, 0].set_ylim(float(ymin), float(ymax))
                 ax[i, 1].set_ylim(float(ymin), float(ymax))
                 ax[i, 2].set_ylim(float(ymin), float(ymax))
-
-                ax[i,0].grid()
-                ax[i,1].grid()
-                ax[i,2].grid()
 
             fig.suptitle("Operator Inference Trajectories", fontsize=16)
         
@@ -373,15 +360,15 @@ class FitzPlotter(Plotter):
                 ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i], 
                           color='tab:gray', lw=2, label='Ground Truth')
                 
-                # Plot the median
+                # Plot the median (dashed purple)
                 ax[i].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], 
-                          alpha=0.8, linestyle='--', lw=2, label='Median')
+                          color='tab:purple', linestyle='--', alpha=0.9, lw=2, label='Median')
                 
                 # Plot the 5th and 95th percentiles
                 ax[i].fill_between(time_domain_prediction, 
                                   np.percentile(draws_prediction_orig, 5, axis=0)[i], 
                                   np.percentile(draws_prediction_orig, 95, axis=0)[i], 
-                                  alpha=0.2)
+                                  color='tab:purple', alpha=0.15)
                 
                 # Set y-limits based on ground truth
                 yvals = np.asarray(self.snapshots_prediction[i])
@@ -414,20 +401,15 @@ class FitzPlotter(Plotter):
                 ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
                 ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
 
-                # Plot the mean
-                ax[i, 0].plot(time_domain_training, draws_training_orig.mean(axis=0)[i], alpha=0.8, lw=2)
-                ax[i, 1].plot(time_domain_prediction, draws_prediction_orig.mean(axis=0)[i], alpha=0.8, lw=2)
-                ax[i, 2].plot(time_domain_prediction, draws_prediction_orig.mean(axis=0)[i], alpha=0.8, lw=2)
-
-                # Plot the median
-                ax[i, 0].plot(time_domain_training, np.median(draws_training_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
-                ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2) 
-                ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
+                # Plot the median (dashed purple)
+                ax[i, 0].plot(time_domain_training, np.median(draws_training_orig, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+                ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2) 
+                ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction_orig, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2)
 
                 # Plot the 5th and 95th percentiles
-                ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training_orig, 5, axis=0)[i], np.percentile(draws_training_orig, 95, axis=0)[i], alpha=.2)
-                ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], alpha=.2)
-                ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], alpha=.2)
+                ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training_orig, 5, axis=0)[i], np.percentile(draws_training_orig, 95, axis=0)[i], color='tab:purple', alpha=0.15)
+                ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], color='tab:purple', alpha=0.15)
+                ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], color='tab:purple', alpha=0.15)
 
                 yvals = np.asarray(self.snapshots_prediction[i])
                 ymin = np.nanmin(yvals)
@@ -444,13 +426,8 @@ class FitzPlotter(Plotter):
                     ymin = ymin - abs(ymin) * 0.5
                     ymax = ymax * 1.5
 
-                ax[i, 0].set_ylim(float(ymin), float(ymax))
-                ax[i, 1].set_ylim(float(ymin), float(ymax))
-                ax[i, 2].set_ylim(float(ymin), float(ymax))
-
-                ax[i,0].grid()
-                ax[i,1].grid()
-                ax[i,2].grid()
+                for j in range(3):
+                    ax[i, j].set_ylim(float(ymin), float(ymax))
    
             fig.suptitle("Operator Inference Trajectories", fontsize=16)
         

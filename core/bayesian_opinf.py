@@ -454,115 +454,215 @@ def generate_gp_samples(
 # Bayesian Inference Model Builders
 # =============================================================================
 
-# TODO: Review this function as it uses the prior operator as the mean of a Gaussian likelihood.
-# Make sure that this function is only used when this is fixed
+def _wrap_single_ic(value, name=""):
+    """Wrap a single-IC value in a list for uniform multi-IC processing."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    # Arrays: if first dim doesn't look like a list of per-IC arrays, wrap
+    return [value]
+
+
 def build_bayesian_opinf_model(
     prior_operator: np.ndarray,
     rom,
-    Ls_means: np.ndarray,
-    Vs_means: np.ndarray,
-    time_domain_sampled: np.ndarray,
-    snapshots: np.ndarray,
-    Xs_means: np.ndarray,
-    Ns_means: Optional[np.ndarray] = None,
-    inputs_eval: Optional[np.ndarray] = None,
+    Ls_means,
+    Vs_means,
+    time_domain_sampled,
+    snapshots,
+    Xs_means,
+    Ns_means = None,
+    inputs_eval = None,
     data_scaler = None,
     sample_X: bool = False,
-    Xs_covs: Optional[np.ndarray] = None
+    Xs_covs = None,
+    reparameterize: bool = False,
+    svi_O_mean: Optional[np.ndarray] = None,
+    svi_O_std: Optional[np.ndarray] = None,
+    min_relative_std: float = 0.15,
+    min_absolute_std: float = 0.8,
 ):
     """
     Build a numpyro model for Bayesian operator inference.
-    
+
+    Supports multiple initial conditions (ICs). Each per-IC argument can be
+    either a single array (one IC) or a list of arrays (multiple ICs).
+    When multiple ICs are provided, ODE constraints are enforced for each
+    trajectory, giving the operator more data to learn from.
+
     Parameters
     ----------
-    prior_operator : array
-        Prior mean for operator
-    rom : OpInf model
-        ROM for data matrix assembly
-    Ls_means, Vs_means : arrays
-        GP hyperparameters
-    time_domain_sampled : array
-        Training time points
-    snapshots : array
-        Training data
-    Xs_means : array
-        GP mean for latent states
-    Ns_means : array, optional
-        GP observation noise variances per mode (from MLE). Passed to
-        compute_gp_derivatives so that K_yy properly accounts for noise.
-    inputs_eval : array, optional
-        Inputs at eval times
+    prior_operator : array (r, d)
+        Prior mean for operator (or zeros for zero-centered prior)
+    rom : opinf.ROM
+        ROM for data matrix assembly (rom.model must have _assemble_data_matrix)
+    Ls_means : array (n_modes,) or list of arrays
+        GP lengthscales per mode, per IC
+    Vs_means : array (n_modes,) or list of arrays
+        GP variances per mode, per IC
+    time_domain_sampled : array (n_train,) or list of arrays
+        Training time points, per IC
+    snapshots : array (n_modes, n_train) or list of arrays
+        Training data, per IC
+    Xs_means : array (n_modes, n_eval) or list of arrays
+        GP mean predictions at evaluation points, per IC
+    Ns_means : array (n_modes,) or list of arrays, optional
+        GP observation noise variances per mode (from MLE), per IC.
+        Passed to compute_gp_derivatives so K_yy accounts for noise.
+    inputs_eval : array (p, n_eval) or list of arrays, optional
+        Inputs at eval times, per IC
     data_scaler : DataScaler, optional
         For scaled data
     sample_X : bool
         Whether to sample X (True) or use deterministic (False)
-    Xs_covs : array, optional
-        GP covariance for latent states (required if sample_X=True)
-        
+    Xs_covs : array or list of arrays, optional
+        GP covariance for latent states (required if sample_X=True), per IC
+    reparameterize : bool
+        If True, use a non-centered parameterization for O. Requires
+        ``svi_O_mean`` and ``svi_O_std`` from a prior SVI run. The model
+        samples ``O_standardized ~ N(0, 1)`` and deterministically computes
+        ``O = mean + uncertainty * O_standardized``, which helps MCMC explore.
+    svi_O_mean : array, optional
+        Posterior mean of O from a previous SVI run (for reparameterization)
+    svi_O_std : array, optional
+        Posterior std of O from a previous SVI run (for reparameterization)
+    min_relative_std : float
+        Minimum relative std for reparameterization (fraction of |mean|)
+    min_absolute_std : float
+        Minimum absolute std for reparameterization
+
     Returns
     -------
     model : callable
-        Numpyro model function
+        NumPyro model function with signature
+        ``model(time, gamma, gamma2, normalization)``
     """
-    num_modes = len(Ls_means)
+    # --- Normalize all per-IC arguments to lists ---
+    Ls_list = _wrap_single_ic(Ls_means)
+    Vs_list = _wrap_single_ic(Vs_means)
+    time_list = _wrap_single_ic(time_domain_sampled)
+    snap_list = _wrap_single_ic(snapshots)
+    Xs_list = _wrap_single_ic(Xs_means)
+    Ns_list = _wrap_single_ic(Ns_means)
+    inputs_list = _wrap_single_ic(inputs_eval)
+    Xcov_list = _wrap_single_ic(Xs_covs)
+
+    num_ics = len(Xs_list)
+    num_modes = len(Ls_list[0])
     use_scaled = data_scaler is not None
-    
+
+    # Broadcast scalar lists to match num_ics
+    if len(Ls_list) == 1 and num_ics > 1:
+        Ls_list = Ls_list * num_ics
+    if len(Vs_list) == 1 and num_ics > 1:
+        Vs_list = Vs_list * num_ics
+    if len(time_list) == 1 and num_ics > 1:
+        time_list = time_list * num_ics
+    if len(snap_list) == 1 and num_ics > 1:
+        snap_list = snap_list * num_ics
+    if Ns_list is not None and len(Ns_list) == 1 and num_ics > 1:
+        Ns_list = Ns_list * num_ics
+    if inputs_list is not None and len(inputs_list) == 1 and num_ics > 1:
+        inputs_list = inputs_list * num_ics
+    if Xcov_list is not None and len(Xcov_list) == 1 and num_ics > 1:
+        Xcov_list = Xcov_list * num_ics
+
+    # Validate reparameterization args
+    if reparameterize and (svi_O_mean is None or svi_O_std is None):
+        raise ValueError(
+            "reparameterize=True requires svi_O_mean and svi_O_std from a prior SVI run"
+        )
+
     def model(time, gamma=1e-1, gamma2=1e2, normalization=1e-6):
         num_time_steps = time.shape[0]
-        
-        # Sample operator
-        O = numpyro.sample(
-            "O",
-            dist.Normal(loc=prior_operator, scale=gamma * jnp.ones_like(prior_operator))
-        )
-        
-        # Latent states
-        Xs = []
-        for i in range(num_modes):
-            if sample_X and Xs_covs is not None:
-                X = numpyro.sample(
-                    f"X{i}",
-                    dist.MultivariateNormal(
-                        loc=Xs_means[i],
-                        covariance_matrix=Xs_covs[i] + normalization * jnp.eye(Xs_covs[i].shape[0])
-                    )
-                )
-            else:
-                X = numpyro.deterministic(f"X{i}", Xs_means[i])
-            Xs.append(X)
-        Xs = jnp.array(Xs)
-        
-        # Transform to original space if scaled
-        if use_scaled:
-            Xs_original = jnp.array([
-                Xs[i] * data_scaler.stds_[i, 0] + data_scaler.means_[i, 0]
-                for i in range(num_modes)
-            ])
-        else:
-            Xs_original = Xs
-        
-        # Compute operator dynamics
-        f_Xi = rom.model._assemble_data_matrix(Xs_original, inputs=inputs_eval) @ O.T
-        
-        # Scale derivatives if needed
-        if use_scaled:
-            f_Xi_scaled = jnp.array([f_Xi.T[i] / data_scaler.stds_[i, 0] for i in range(num_modes)])
-        else:
-            f_Xi_scaled = f_Xi.T
-        
-        # GP derivatives
-        y_train = data_scaler.transform(snapshots) if use_scaled else snapshots
-        mu_z, cov_z = compute_gp_derivatives(Ls_means, Vs_means, time_domain_sampled, time, y_train, Ns=Ns_means)
-        
-        # ODE constraints
-        for i in range(num_modes):
-            constraint_cov = cov_z[i] + gamma2 * jnp.eye(num_time_steps)
-            numpyro.sample(
-                f'ode_constraint{i}',
-                dist.MultivariateNormal(f_Xi_scaled[i], constraint_cov),
-                obs=mu_z[i]
+
+        # --- Sample operator ---
+        if reparameterize:
+            O_uncertainty = jnp.maximum(
+                svi_O_std,
+                jnp.maximum(
+                    min_relative_std * jnp.abs(svi_O_mean),
+                    min_absolute_std,
+                ),
             )
-    
+            O_standardized = numpyro.sample(
+                "O_standardized",
+                dist.Normal(jnp.zeros_like(svi_O_mean), jnp.ones_like(svi_O_mean)),
+            )
+            O = numpyro.deterministic("O", svi_O_mean + O_uncertainty * O_standardized)
+        else:
+            O = numpyro.sample(
+                "O",
+                dist.Normal(
+                    loc=prior_operator,
+                    scale=gamma * jnp.ones_like(prior_operator),
+                ),
+            )
+
+        # --- Per-IC latent states and ODE constraints ---
+        for ic in range(num_ics):
+            Xs_means_ic = Xs_list[ic]
+            Ls_ic = Ls_list[ic]
+            Vs_ic = Vs_list[ic]
+            time_train_ic = time_list[ic]
+            snap_ic = snap_list[ic]
+            Ns_ic = Ns_list[ic] if Ns_list is not None else None
+            inputs_ic = inputs_list[ic] if inputs_list is not None else None
+            Xcov_ic = Xcov_list[ic] if Xcov_list is not None else None
+
+            # Latent states for this IC
+            Xs = []
+            for i in range(num_modes):
+                if sample_X and Xcov_ic is not None:
+                    X = numpyro.sample(
+                        f"X{ic}_{i}",
+                        dist.MultivariateNormal(
+                            loc=Xs_means_ic[i],
+                            covariance_matrix=Xcov_ic[i]
+                            + normalization * jnp.eye(Xcov_ic[i].shape[0]),
+                        ),
+                    )
+                else:
+                    X = numpyro.deterministic(f"X{ic}_{i}", Xs_means_ic[i])
+                Xs.append(X)
+            Xs = jnp.array(Xs)
+
+            # Transform to original space if scaled
+            if use_scaled:
+                Xs_original = jnp.array([
+                    Xs[i] * data_scaler.stds_[i, 0] + data_scaler.means_[i, 0]
+                    for i in range(num_modes)
+                ])
+            else:
+                Xs_original = Xs
+
+            # Compute operator dynamics: f(X) @ O^T
+            f_Xi = rom.model._assemble_data_matrix(Xs_original, inputs=inputs_ic) @ O.T
+
+            # Scale derivatives if needed
+            if use_scaled:
+                f_Xi_scaled = jnp.array([
+                    f_Xi.T[i] / data_scaler.stds_[i, 0] for i in range(num_modes)
+                ])
+            else:
+                f_Xi_scaled = f_Xi.T
+
+            # GP derivatives for this IC
+            y_train = data_scaler.transform(snap_ic) if use_scaled else snap_ic
+            mu_z, cov_z = compute_gp_derivatives(
+                Ls_ic, Vs_ic, time_train_ic, time, y_train, Ns=Ns_ic
+            )
+
+            # ODE constraints
+            for i in range(num_modes):
+                constraint_cov = cov_z[i] + gamma2 * jnp.eye(num_time_steps)
+                numpyro.sample(
+                    f"ode_constraint{ic}_{i}",
+                    dist.MultivariateNormal(f_Xi_scaled[i], constraint_cov),
+                    obs=mu_z[i],
+                )
+
     return model
 
 
@@ -638,6 +738,7 @@ def run_svi(
     
     # For guides that don't return deterministic sites (e.g. AutoNormal),
     # run the model with posterior samples to collect them.
+    # Support both naming conventions: X0 (legacy) and X0_0 (multi-IC)
     has_deterministic = any(k.startswith('X') for k in posterior_samples)
     if not has_deterministic:
         predictive = Predictive(
@@ -734,6 +835,32 @@ def run_mcmc(
 # Prediction Utilities
 # =============================================================================
 
+def find_latent_state_key(samples: dict, mode: int, ic: int = 0) -> Optional[str]:
+    """
+    Find the sample key for latent state X for a given mode and IC.
+
+    Tries multi-IC naming (``X{ic}_{mode}``) first, then legacy (``X{mode}``).
+
+    Parameters
+    ----------
+    samples : dict
+        Posterior samples dict
+    mode : int
+        POD mode index
+    ic : int
+        Initial condition index (default 0)
+
+    Returns
+    -------
+    str or None
+        The key if found, else None
+    """
+    for pattern in [f"X{ic}_{mode}", f"X{mode}"]:
+        if pattern in samples:
+            return pattern
+    return None
+
+
 def _find_operator_samples(samples: dict, site_name: str = "O") -> np.ndarray:
     """
     Robustly extract operator samples from a samples dict, regardless of
@@ -825,11 +952,15 @@ def generate_rom_predictions(
         Os.append(O)
         
         # Extract X samples - they're deterministic so should be in samples
+        # Support both old naming (X0, X1, ...) and multi-IC naming (X0_0, X0_1, ...)
         try:
             X_sampled = []
             for j in range(num_modes):
-                if f'X{j}' in samples:
-                    X_j = samples[f'X{j}']
+                key_multi = f'X0_{j}'  # Multi-IC: first IC
+                key_single = f'X{j}'   # Legacy single-IC
+                key = key_multi if key_multi in samples else key_single
+                if key in samples:
+                    X_j = samples[key]
                     # Handle batch dimension
                     X_j = X_j[i] if X_j.ndim > 1 else X_j
                 else:

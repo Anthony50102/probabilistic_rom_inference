@@ -178,11 +178,8 @@ def plot_heat_grid_search(
         axes[i, 0].plot(time_sampled, snapshots_compressed[i], 'k*', ms=4,
                        label='Training data', zorder=5)
         axes[i, 0].set_ylabel(f'Mode {i+1}')
-        axes[i, 0].grid(True, alpha=0.3)
-        axes[i, 1].grid(True, alpha=0.3)
         if i == 0:
             axes[i, 0].set_title('Training Domain')
-            axes[i, 1].set_title('Prediction Domain')
             axes[i, 0].legend(loc='upper right', fontsize=8)
 
     axes[-1, 0].set_xlabel('Time')
@@ -281,7 +278,7 @@ class HeatPlotter(Plotter):
                 # Training span shading
                 if training_span is not None:
                     ax.axvspan(training_span[0], training_span[1],
-                               color='tab:blue', alpha=0.06, zorder=0)
+                               color='gray', alpha=0.10, zorder=0)
 
                 # True solution (clean, full resolution)
                 if traj.get('true_compressed') is not None and traj.get('time_true') is not None:
@@ -304,7 +301,7 @@ class HeatPlotter(Plotter):
                     ax.plot(
                         time_eval,
                         np.median(rom_solves[:, col, :], axis=0),
-                        color='tab:blue', alpha=0.9, lw=2,
+                        color='tab:purple', linestyle='--', alpha=0.9, lw=2,
                         label='ROM median' if (row == 0 and col == 0) else None,
                         zorder=0
                     )
@@ -312,12 +309,10 @@ class HeatPlotter(Plotter):
                         time_eval,
                         np.percentile(rom_solves[:, col, :], 5, axis=0),
                         np.percentile(rom_solves[:, col, :], 95, axis=0),
-                        color='tab:blue', alpha=0.15,
+                        color='tab:purple', alpha=0.15,
                         label='ROM 5\u201395%' if (row == 0 and col == 0) else None,
                         zorder=0
                     )
-
-                ax.grid(True, alpha=0.3)
 
                 # Column titles (top row)
                 if row == 0:
@@ -406,7 +401,7 @@ class HeatPlotter(Plotter):
             # Training span shading
             if training_span is not None:
                 ax.axvspan(training_span[0], training_span[1],
-                           color='tab:blue', alpha=0.06, zorder=0)
+                           color='gray', alpha=0.10, zorder=0)
 
             # True solution
             if true_compressed is not None and time_true is not None:
@@ -423,17 +418,16 @@ class HeatPlotter(Plotter):
                 ax.plot(
                     time_eval,
                     np.median(rom_solves[:, i, :], axis=0),
-                    color='tab:blue', alpha=0.9, lw=2, label='ROM median',
+                    color='tab:purple', linestyle='--', alpha=0.9, lw=2, label='ROM median',
                 )
                 ax.fill_between(
                     time_eval,
                     np.percentile(rom_solves[:, i, :], 5, axis=0),
                     np.percentile(rom_solves[:, i, :], 95, axis=0),
-                    color='tab:blue', alpha=0.15, label='ROM 5\u201395%',
+                    color='tab:purple', alpha=0.15, label='ROM 5\u201395%',
                 )
 
             ax.set_ylabel(f'Mode {i + 1}')
-            ax.grid(True, alpha=0.3)
             if i == 0:
                 ax.legend(loc='upper right', fontsize=9)
 
@@ -515,5 +509,5 @@ def plot_operator_comparison(
              ha='center', fontsize=9, style='italic')
 
     fig.suptitle(title, fontsize=13)
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig, axes

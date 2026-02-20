@@ -891,7 +891,7 @@ class HeatBimodal(_BasePDE):
         # Add standard normal noise (except to auxiliary conditions).
         newinterior = np.random.normal(
             loc=interior,
-            scale=(noise_level * interior),
+            scale=(noise_level * np.abs(interior)),
             size=interior.shape,
         )
         return np.column_stack(

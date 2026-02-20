@@ -66,9 +66,21 @@ class Basis(opinf.basis.PODBasis):
         self.num_vectors = kwargs['num_vectors']
 
     def fit(self, states):
-        """Construct the bases."""
+        """Construct the bases.
+
+        Only fits once; subsequent calls are a no-op so that
+        opinf.ROM.fit() does not silently overwrite the basis.
+        Call refit() to force re-fitting.
+        """
+        if self.entries is not None:
+            return self
         q1, q2 = np.split(states, 2, axis=0)
         return super().fit(np.concatenate((q1, q2, q1**2)))
+
+    def refit(self, states):
+        """Force re-fit (clears existing basis first)."""
+        self._LinearBasis__entries = None
+        return self.fit(states)
 
     @override
     def compress(self, state: np.ndarray) -> np.ndarray:

@@ -18,8 +18,8 @@ import numpy as np
 import papermill as pm
 
 # ── Grid definition ──────────────────────────────────────────────────────────
-GAMMA_VALUES = [1e-1, 1e0, 1e1, 1e2, 1e3]
-GAMMA2_VALUES = [1e-1, 1e0, 1e1, 1e2, 1e3]
+GAMMA_VALUES = [1e-1, 1e0, 1e1, 1e2]
+GAMMA2_VALUES = [1e-1, 1e0, 1e1, 1e2]
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

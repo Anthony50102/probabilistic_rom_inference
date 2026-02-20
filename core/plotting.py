@@ -257,12 +257,10 @@ class Plotter:
 
             ax[i, 0].set_title(f"Mode {i+1} Training Domain")
             ax[i, 0].legend()
-            ax[i, 0].grid()
             
             if double:
                 ax[i, 1].set_title(f"Mode {i+1} Eval Grid")
                 ax[i, 1].legend()
-                ax[i, 1].grid()
 
         fig.suptitle("GP Hyperparameter Samples", fontsize=16)
         fig.tight_layout()
@@ -363,7 +361,6 @@ class Plotter:
                 )
             ax[i].set_title(f"Mode {i+1} Derivative")
             ax[i].legend()
-            ax[i].grid()
         
         fig.tight_layout()
         return fig, ax
@@ -455,7 +452,7 @@ class Plotter:
                 # Training span shading
                 if training_span is not None:
                     ax[i].axvspan(training_span[0], training_span[1],
-                                  color='tab:blue', alpha=0.06, zorder=0)
+                                  color='gray', alpha=0.10, zorder=0)
 
                 # True solution
                 ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i],
@@ -468,18 +465,17 @@ class Plotter:
                 # ROM median
                 ax[i].plot(self.time_domain_eval_prediction, 
                           np.median(rom_solves_prediction[:, i, :], axis=0),
-                          color='tab:blue', alpha=0.9, lw=2, label='ROM median')
+                          color='tab:purple', linestyle='--', alpha=0.9, lw=2, label='ROM median')
 
                 # ROM 5-95% band
                 ax[i].fill_between(
                     self.time_domain_eval_prediction,
                     np.percentile(rom_solves_prediction[:, i, :], 5, axis=0),
                     np.percentile(rom_solves_prediction[:, i, :], 95, axis=0),
-                    color='tab:blue', alpha=0.15, label='ROM 5\u201395%'
+                    color='tab:purple', alpha=0.15, label='ROM 5\u201395%'
                 )
 
                 ax[i].set_ylabel(f'Mode {i+1}')
-                ax[i].grid(True, alpha=0.3)
                 if i == 0:
                     ax[i].legend(loc='upper right', fontsize=9)
 
@@ -494,7 +490,7 @@ class Plotter:
                 if training_span is not None:
                     for j in range(3):
                         ax[i, j].axvspan(training_span[0], training_span[1],
-                                         color='tab:blue', alpha=0.06, zorder=0)
+                                         color='gray', alpha=0.10, zorder=0)
 
                 ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
                 ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
@@ -506,20 +502,15 @@ class Plotter:
                     ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:, i, :].T, alpha=0.3, lw=2)
                     ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:, i, :].T, alpha=0.3, lw=2)
 
-                # Mean
-                ax[i, 0].plot(self.time_domain_eval_training, rom_solves_training[:, i, :].T.mean(axis=1), alpha=0.8, lw=2)
-                ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:, i, :].T.mean(axis=1), alpha=0.8, lw=2)
-                ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:, i, :].T.mean(axis=1), alpha=0.8, lw=2)
-
-                # Median
-                ax[i, 0].plot(self.time_domain_eval_training, np.median(rom_solves_training[:, i, :], axis=0), alpha=0.8, linestyle='--', lw=2)
-                ax[i, 1].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:, i, :], axis=0), alpha=0.8, linestyle='--', lw=2)
-                ax[i, 2].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:, i, :], axis=0), alpha=0.8, linestyle='--', lw=2)
+                # Median (dashed purple)
+                ax[i, 0].plot(self.time_domain_eval_training, np.median(rom_solves_training[:, i, :], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+                ax[i, 1].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:, i, :], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+                ax[i, 2].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:, i, :], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
 
                 # 5th and 95th percentiles
-                ax[i, 0].fill_between(self.time_domain_eval_training, np.percentile(rom_solves_training[:, i, :], 5, axis=0), np.percentile(rom_solves_training[:, i, :], 95, axis=0), alpha=0.2)
-                ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:, i, :], 5, axis=0), np.percentile(rom_solves_prediction[:, i, :], 95, axis=0), alpha=0.2)
-                ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:, i, :], 5, axis=0), np.percentile(rom_solves_prediction[:, i, :], 95, axis=0), alpha=0.2)
+                ax[i, 0].fill_between(self.time_domain_eval_training, np.percentile(rom_solves_training[:, i, :], 5, axis=0), np.percentile(rom_solves_training[:, i, :], 95, axis=0), color='tab:purple', alpha=0.15)
+                ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:, i, :], 5, axis=0), np.percentile(rom_solves_prediction[:, i, :], 95, axis=0), color='tab:purple', alpha=0.15)
+                ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:, i, :], 5, axis=0), np.percentile(rom_solves_prediction[:, i, :], 95, axis=0), color='tab:purple', alpha=0.15)
 
                 # Set y-limits
                 yvals = np.asarray(self.snapshots_prediction[i])
@@ -534,9 +525,6 @@ class Plotter:
                 ax[i, 0].set_ylim(float(ymin), float(ymax))
                 ax[i, 1].set_ylim(float(ymin), float(ymax))
                 ax[i, 2].set_ylim(float(ymin), float(ymax))
-
-                for j in range(3):
-                    ax[i, j].grid()
 
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
         fig.tight_layout()
@@ -601,7 +589,7 @@ class Plotter:
                 ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i],
                           color='tab:gray', lw=2, label='Ground Truth')
                 ax[i].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i],
-                          alpha=0.8, linestyle='--', lw=2, label='Median')
+                          color='tab:purple', linestyle='--', alpha=0.9, lw=2, label='Median')
                 ax[i].fill_between(
                     time_domain_prediction,
                     np.percentile(draws_prediction, 5, axis=0)[i],
@@ -621,20 +609,15 @@ class Plotter:
                 ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], 
                              color='tab:gray', lw=2)
 
-                # Mean
-                ax[i, 0].plot(time_domain_training, draws_training.mean(axis=0)[i], alpha=0.8, lw=2)
-                ax[i, 1].plot(time_domain_prediction, draws_prediction.mean(axis=0)[i], alpha=0.8, lw=2)
-                ax[i, 2].plot(time_domain_prediction, draws_prediction.mean(axis=0)[i], alpha=0.8, lw=2)
-
-                # Median
-                ax[i, 0].plot(time_domain_training, np.median(draws_training, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
-                ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
-                ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
+                # Median (dashed purple)
+                ax[i, 0].plot(time_domain_training, np.median(draws_training, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+                ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+                ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2)
 
                 # Percentiles
-                ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training, 5, axis=0)[i], np.percentile(draws_training, 95, axis=0)[i], alpha=0.2)
-                ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], alpha=0.2)
-                ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], alpha=0.2)
+                ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training, 5, axis=0)[i], np.percentile(draws_training, 95, axis=0)[i], color='tab:purple', alpha=0.15)
+                ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], color='tab:purple', alpha=0.15)
+                ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], color='tab:purple', alpha=0.15)
 
                 # Y-limits
                 yvals = np.asarray(self.snapshots_prediction[i])
@@ -648,7 +631,6 @@ class Plotter:
                     ymax = ymax * 1.5
                 for j in range(3):
                     ax[i, j].set_ylim(float(ymin), float(ymax))
-                    ax[i, j].grid()
 
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
         fig.tight_layout()
@@ -773,7 +755,6 @@ def plot_deterministic_rom_solves(
                        label='Training data', zorder=5)
         
         axes[i, 0].set_ylabel(f'Mode {i+1}')
-        axes[i, 0].grid(True, alpha=0.3)
         if i == 0:
             axes[i, 0].legend(loc='upper right', fontsize=8)
             axes[i, 0].set_title('Training Domain')
@@ -800,7 +781,6 @@ def plot_deterministic_rom_solves(
         axes[i, 1].plot(time_sampled, snapshots_compressed[i], 'ko', ms=4, 
                        label='Training data', zorder=5)
         
-        axes[i, 1].grid(True, alpha=0.3)
         if i == 0:
             axes[i, 1].legend(loc='upper right', fontsize=8)
             axes[i, 1].set_title('Prediction Domain')
@@ -822,37 +802,74 @@ def plot_gp_fit(
     variances: np.ndarray,
     figsize: Optional[Tuple[float, float]] = None,
     plot_derivatives: bool = True,
+    all_snapshots_compressed: Optional[List[np.ndarray]] = None,
+    all_gp_models: Optional[List[List]] = None,
+    all_lengthscales: Optional[List[np.ndarray]] = None,
+    all_variances: Optional[List[np.ndarray]] = None,
+    trajectory_labels: Optional[List[str]] = None,
 ):
     """
     Plot GP fit quality for states and optionally derivatives.
     
-    Works with both MLE-fitted GPs (single hyperparameter values) and
-    Bayesian GPs (samples of hyperparameters).
+    Can display a single trajectory (default) or multiple trajectories
+    overlaid on the same axes when ``all_*`` parameters are provided.
     
     Parameters
     ----------
     gp_models : List
-        List of fitted GP models (one per mode), with predict method
+        List of fitted GP models for the *first* trajectory (one per mode)
     snapshots_compressed : np.ndarray
-        Compressed training snapshots, shape (num_modes, num_samples)
+        Compressed training snapshots for the first trajectory,
+        shape (num_modes, num_samples)
     time_sampled : np.ndarray
-        Training time points
+        Training time points (shared across trajectories)
     time_eval : np.ndarray
         Dense time points for GP evaluation
     lengthscales : np.ndarray
-        GP lengthscales, shape (num_modes,) for MLE or (num_modes, num_samples) for Bayesian
+        GP lengthscales for the first trajectory, shape (num_modes,)
     variances : np.ndarray
-        GP variances, shape (num_modes,) for MLE or (num_modes, num_samples) for Bayesian
+        GP variances for the first trajectory, shape (num_modes,)
     figsize : tuple, optional
         Figure size. Default computed from num_modes
     plot_derivatives : bool
         If True, also plot derivative predictions
+    all_snapshots_compressed : list of (num_modes, n_samples) arrays, optional
+        Per-trajectory compressed snapshots (including the first).
+        When provided, overlays all trajectories.
+    all_gp_models : list of lists of GP models, optional
+        Per-trajectory GP models. ``all_gp_models[ic][mode]``.
+    all_lengthscales : list of (num_modes,) arrays, optional
+        Per-trajectory lengthscales.
+    all_variances : list of (num_modes,) arrays, optional
+        Per-trajectory variances.
+    trajectory_labels : list of str, optional
+        Labels for each trajectory (e.g. ``["IC 1", "IC 2", ...]``).
         
     Returns
     -------
     fig, axes : matplotlib figure and axes
     """
     num_modes = snapshots_compressed.shape[0]
+
+    # Build lists for multi-trajectory plotting
+    if all_snapshots_compressed is not None:
+        n_trajs = len(all_snapshots_compressed)
+        snap_list = all_snapshots_compressed
+        gp_list = all_gp_models if all_gp_models is not None else [gp_models] * n_trajs
+        ls_list = all_lengthscales if all_lengthscales is not None else [lengthscales] * n_trajs
+        var_list = all_variances if all_variances is not None else [variances] * n_trajs
+    else:
+        n_trajs = 1
+        snap_list = [snapshots_compressed]
+        gp_list = [gp_models]
+        ls_list = [lengthscales]
+        var_list = [variances]
+
+    if trajectory_labels is None:
+        trajectory_labels = [f"IC {k+1}" for k in range(n_trajs)]
+
+    # Pick a color cycle for trajectories
+    traj_colors = plt.cm.tab10(np.linspace(0, 1, max(n_trajs, 10)))
     
     if figsize is None:
         figsize = (14, 3 * num_modes) if not plot_derivatives else (14, 3 * num_modes)
@@ -860,86 +877,104 @@ def plot_gp_fit(
     ncols = 2 if plot_derivatives else 1
     fig, axes = plt.subplots(num_modes, ncols, figsize=figsize, squeeze=False, sharex="col")
     
-    # Compute finite difference derivatives for comparison
-    if plot_derivatives:
-        fd_derivatives = compute_derivatives_fourth_order(snapshots_compressed, time_sampled)
-    
-    for i in range(num_modes):
-        gp = gp_models[i]
-        
-        # Get GP predictions on dense grid
-        mean_pred, std_pred = gp.predict(time_eval[:, None], return_std=True)
-        
-        # Get GP predictions on training points (for residual check)
-        mean_train, std_train = gp.predict(time_sampled[:, None], return_std=True)
-        
-        # === Left: State fit ===
-        ax_state = axes[i, 0]
-        
-        # Training data
-        ax_state.plot(time_sampled, snapshots_compressed[i], 'k*', ms=5, 
-                     label='Training data', zorder=5)
-        
-        # GP mean prediction
-        ax_state.plot(time_eval, mean_pred, 'tab:blue', lw=2, label='GP mean')
-        
-        # GP uncertainty (±2σ)
-        ax_state.fill_between(time_eval, 
-                             mean_pred - 2*std_pred, 
-                             mean_pred + 2*std_pred,
-                             color='tab:blue', alpha=0.2, label='±2σ')
-        
-        ax_state.set_ylabel(f'Mode {i+1}')
-        ax_state.grid(True, alpha=0.3)
-        if i == 0:
-            ax_state.legend(loc='upper right', fontsize=8)
-            ax_state.set_title('GP State Fit')
-        
-        # === Right: Derivative fit ===
+    for k in range(n_trajs):
+        snap_k = snap_list[k]
+        gps_k = gp_list[k]
+        ls_k = ls_list[k]
+        var_k = var_list[k]
+        color = traj_colors[k % len(traj_colors)]
+        label_prefix = trajectory_labels[k]
+
+        # Compute finite difference derivatives for comparison
         if plot_derivatives:
-            ax_deriv = axes[i, 1]
+            fd_derivatives = compute_derivatives_fourth_order(snap_k, time_sampled)
+
+        for i in range(num_modes):
+            gp = gps_k[i]
             
-            # Compute GP derivative prediction using kernel derivatives
-            ell = lengthscales[i] if lengthscales.ndim == 1 else lengthscales[i].mean()
-            var = variances[i] if variances.ndim == 1 else variances[i].mean()
-            ell2 = ell ** 2
+            # Get GP predictions on dense grid
+            mean_pred, std_pred = gp.predict(time_eval[:, None], return_std=True)
             
-            # Build kernel matrices for derivative prediction
-            # K_yy: state-state kernel at training points
-            rbf_yy = rbf_eval(ell, var, time_sampled, time_sampled)
-            K_yy = rbf_yy + 1e-6 * np.eye(len(time_sampled))
+            # === Left: State fit ===
+            ax_state = axes[i, 0]
             
-            # K_zy: derivative-state cross-kernel (eval points vs training points)
-            rbf_zy = rbf_eval(ell, var, time_eval, time_sampled)
-            diff_zy = time_eval[:, None] - time_sampled[None, :]
-            K_zy = -(diff_zy / ell2) * rbf_zy
+            # Training data — always black stars
+            ax_state.plot(time_sampled, snap_k[i], '*', color='k', ms=5,
+                         label=f'{label_prefix} data' if i == 0 else None, zorder=5,
+                         alpha=0.7 if n_trajs > 1 else 1.0)
             
-            # K_zz: derivative-derivative kernel at eval points
-            rbf_zz = rbf_eval(ell, var, time_eval, time_eval)
-            diff_zz = time_eval[:, None] - time_eval[None, :]
-            K_zz = ((1 - (diff_zz**2 / ell2)) / ell2) * rbf_zz
+            # GP mean prediction (dashed purple)
+            ax_state.plot(time_eval, mean_pred, color=color if n_trajs > 1 else 'tab:purple',
+                         lw=2, linestyle='--',
+                         label=f'{label_prefix} GP' if i == 0 else None,
+                         alpha=0.8 if n_trajs > 1 else 1.0)
             
-            # Derivative mean and variance
-            alpha = jnp.linalg.solve(K_yy, snapshots_compressed[i])
-            mu_deriv = K_zy @ alpha
-            cov_deriv = K_zz - K_zy @ jnp.linalg.solve(K_yy, K_zy.T)
-            std_deriv = jnp.sqrt(jnp.maximum(jnp.diag(cov_deriv), 1e-10))
+            # GP 95% CI (±1.96σ) — always show
+            ci_color = color if n_trajs > 1 else 'tab:purple'
+            ax_state.fill_between(time_eval, 
+                                 mean_pred - 1.96*std_pred, 
+                                 mean_pred + 1.96*std_pred,
+                                 color=ci_color, alpha=0.15,
+                                 label='95% CI' if (i == 0 and k == 0) else None)
             
-            # Finite difference derivatives (ground truth proxy)
-            ax_deriv.plot(time_sampled, fd_derivatives[i], 'ko', ms=5, 
-                         label='Finite diff', zorder=5)
-            
-            # GP derivative prediction
-            ax_deriv.plot(time_eval, mu_deriv, 'tab:orange', lw=2, label='GP derivative')
-            ax_deriv.fill_between(time_eval,
-                                 mu_deriv - 2*std_deriv,
-                                 mu_deriv + 2*std_deriv,
-                                 color='tab:orange', alpha=0.2, label='±2σ')
-            
-            ax_deriv.grid(True, alpha=0.3)
+            ax_state.set_ylabel(f'Mode {i+1}')
             if i == 0:
-                ax_deriv.legend(loc='upper right', fontsize=8)
-                ax_deriv.set_title('GP Derivative Fit')
+                ax_state.set_title('GP State Fit')
+            
+            # === Right: Derivative fit ===
+            if plot_derivatives:
+                ax_deriv = axes[i, 1]
+                
+                ell = ls_k[i] if ls_k.ndim == 1 else ls_k[i].mean()
+                var = var_k[i] if var_k.ndim == 1 else var_k[i].mean()
+                ell2 = ell ** 2
+                
+                rbf_yy = rbf_eval(ell, var, time_sampled, time_sampled)
+                K_yy = rbf_yy + 1e-6 * np.eye(len(time_sampled))
+                
+                rbf_zy = rbf_eval(ell, var, time_eval, time_sampled)
+                diff_zy = time_eval[:, None] - time_sampled[None, :]
+                K_zy = -(diff_zy / ell2) * rbf_zy
+                
+                rbf_zz = rbf_eval(ell, var, time_eval, time_eval)
+                diff_zz = time_eval[:, None] - time_eval[None, :]
+                K_zz = ((1 - (diff_zz**2 / ell2)) / ell2) * rbf_zz
+                
+                alpha_vec = jnp.linalg.solve(K_yy, snap_k[i])
+                mu_deriv = K_zy @ alpha_vec
+                cov_deriv = K_zz - K_zy @ jnp.linalg.solve(K_yy, K_zy.T)
+                std_deriv = jnp.sqrt(jnp.maximum(jnp.diag(cov_deriv), 1e-10))
+                
+                # Finite difference derivatives — always black dots
+                ax_deriv.plot(time_sampled, fd_derivatives[i], '.', color='k',
+                             ms=5, alpha=0.7 if n_trajs > 1 else 1.0,
+                             label=f'{label_prefix} FD' if i == 0 else None, zorder=5)
+                
+                # GP derivative prediction (dashed purple)
+                deriv_color = color if n_trajs > 1 else 'tab:purple'
+                ax_deriv.plot(time_eval, mu_deriv, color=deriv_color, lw=2, 
+                             linestyle='--',
+                             alpha=0.8 if n_trajs > 1 else 1.0,
+                             label=f'{label_prefix} GP deriv' if i == 0 else None)
+                # GP derivative 95% CI — always show
+                ax_deriv.fill_between(time_eval,
+                                     mu_deriv - 1.96*std_deriv,
+                                     mu_deriv + 1.96*std_deriv,
+                                     color=deriv_color, alpha=0.15,
+                                     label='95% CI' if (i == 0 and k == 0) else None)
+                
+                if i == 0:
+                    ax_deriv.set_title('GP Derivative Fit')
+
+    # Add legend to first row
+    if n_trajs > 1:
+        axes[0, 0].legend(loc='upper right', fontsize=7, ncol=min(n_trajs, 3))
+        if plot_derivatives:
+            axes[0, 1].legend(loc='upper right', fontsize=7, ncol=min(n_trajs, 3))
+    else:
+        axes[0, 0].legend(loc='upper right', fontsize=8)
+        if plot_derivatives:
+            axes[0, 1].legend(loc='upper right', fontsize=8)
     
     axes[-1, 0].set_xlabel('Time')
     if plot_derivatives:
@@ -1036,33 +1071,31 @@ def plot_full_order_error(
 
     # --- Subplot 1: ROM prediction error ---
     ax_rom = axes[0]
-    ax_rom.axvspan(training_span[0], training_span[1], color='tab:blue', alpha=0.1)
-    ax_rom.plot(time_domain_eval, rom_error_median, 'tab:blue', lw=2,
+    ax_rom.axvspan(training_span[0], training_span[1], color='gray', alpha=0.10)
+    ax_rom.plot(time_domain_eval, rom_error_median, color='tab:purple', linestyle='--', lw=2,
                 label='ROM error (median)')
     ax_rom.fill_between(time_domain_eval, rom_error_5, rom_error_95,
-                        color='tab:blue', alpha=0.3, label='ROM error (5\u201395%)')
+                        color='tab:purple', alpha=0.15, label='ROM error (5\u201395%)')
     ax_rom.plot(time_domain_eval, rom_error_mean, 'tab:orange', lw=1.5,
                 linestyle=':', label='ROM error (mean)')
     ax_rom.set_ylabel(ylabel)
     ax_rom.set_title('ROM Prediction Error')
     ax_rom.legend(loc='upper left', fontsize=9)
-    ax_rom.grid(True, alpha=0.3)
     ax_rom.set_yscale('log')
 
     # --- Subplot 2: Projection error (basis limit) ---
     ax_proj = axes[1]
-    ax_proj.axvspan(training_span[0], training_span[1], color='tab:blue', alpha=0.1)
+    ax_proj.axvspan(training_span[0], training_span[1], color='gray', alpha=0.10)
     ax_proj.plot(time_domain_eval, projection_error, 'k--', lw=2,
                  label='Projection error (basis limit)')
     ax_proj.set_ylabel(ylabel)
     ax_proj.set_title('Projection Error (Basis Limit)')
     ax_proj.legend(loc='upper left', fontsize=9)
-    ax_proj.grid(True, alpha=0.3)
     ax_proj.set_yscale('log')
 
     # --- Subplot 3: ROM error minus projection error ---
     ax_diff = axes[2]
-    ax_diff.axvspan(training_span[0], training_span[1], color='tab:blue', alpha=0.1)
+    ax_diff.axvspan(training_span[0], training_span[1], color='gray', alpha=0.10)
     rom_minus_proj = np.maximum(rom_error_median - projection_error, 1e-16)
     ax_diff.plot(time_domain_eval, rom_minus_proj, 'tab:purple', lw=2,
                  label='ROM error \u2212 projection error')
@@ -1070,7 +1103,6 @@ def plot_full_order_error(
     ax_diff.set_ylabel(ylabel)
     ax_diff.set_title('Excess ROM Error (Above Basis Limit)')
     ax_diff.legend(loc='upper left', fontsize=9)
-    ax_diff.grid(True, alpha=0.3)
     ax_diff.set_yscale('log')
 
     plt.tight_layout()

@@ -91,8 +91,19 @@ class Basis(opinf.basis.PODBasis):
         )
 
     def fit(self, states):
+        """Fit once; subsequent calls are a no-op so that
+        opinf.ROM.fit() does not silently overwrite the basis.
+        Call refit() to force re-fitting.
+        """
+        if self.entries is not None:
+            return self
         states, self.shift_ = opinf.pre.shift(states)
         return super().fit(self.nondimensionalize(states))
+
+    def refit(self, states):
+        """Force re-fit (clears existing basis first)."""
+        self._LinearBasis__entries = None
+        return self.fit(states)
 
     def compress(self, states):
         is_1d = states.ndim == 1

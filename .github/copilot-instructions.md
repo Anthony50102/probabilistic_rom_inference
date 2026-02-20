@@ -280,5 +280,9 @@ The current implementation simplifies the paper's Algorithm 1 in several ways:
 
 ### Implementation Notes
 
+- **~~`opinf.ROM.fit()` re-fits the basis~~** (FIXED): `opinf.ROM.fit(states=...)` calls `basis.fit(states)` internally, silently overwriting the multi-trajectory POD basis with single-trajectory data during the grid search. This caused `basis.compress(truth)` to use the wrong basis for all post-grid-search operations (plots, error computation). **Fix**: All `Basis.fit()` methods now guard with `if self.entries is not None: return self` to prevent re-fitting. Use `basis.refit(states)` to force re-fitting when needed.
 - **`compute_gp_derivatives` called inside numpyro model**: Since it depends only on fixed data (not on any `numpyro.sample` site), it returns identical values every call. When GP hyperparameters become sampled (full Bayesian Stage 1), this will need to depend on the sampled lengthscales/variances.
 - **`SimpleGPR.predict()` uses NumPy**: The GP prediction is NumPy-based, not JAX. Currently safe because X is `numpyro.deterministic`, but would break if X becomes a sampled variable requiring JAX tracing. Precomputing Xs_means outside the model (current approach) avoids this issue.
+
+### Human notes
+- Conda env that is being used in the this repo is `prob-rom-inf` 

@@ -67,8 +67,6 @@ class EulerPlotter(Plotter):
             ax[i,1].set_title(f"Mode {i+1} Training Domain Increase Density")
             ax[i,0].legend()
             ax[i,1].legend()
-            ax[i,0].grid()
-            ax[i,1].grid()
 
         fig.suptitle("GP Hyperparameter Samples", fontsize=16)
         fig.tight_layout()
@@ -135,7 +133,6 @@ class EulerPlotter(Plotter):
                                 color='gray', alpha=0.3, label='Predicted Mean ± 2 Std Dev')
                 ax[i].set_title(f"Mode {i+1} Derivative Prediction on Eval Grid")
             ax[i].legend()
-            ax[i].grid()
         
         fig.tight_layout()
         fig.show()
@@ -190,7 +187,7 @@ class EulerPlotter(Plotter):
                 # Training span shading
                 if training_span is not None:
                     ax[i].axvspan(training_span[0], training_span[1],
-                                  color='tab:blue', alpha=0.06, zorder=0)
+                                  color='gray', alpha=0.10, zorder=0)
 
                 # True solution
                 ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i],
@@ -203,18 +200,17 @@ class EulerPlotter(Plotter):
                 # ROM median
                 ax[i].plot(self.time_domain_eval_prediction,
                            np.median(rom_solves_prediction[:, i, :], axis=0),
-                           color='tab:blue', alpha=0.9, lw=2, label='ROM median')
+                           color='tab:purple', linestyle='--', alpha=0.9, lw=2, label='ROM median')
 
                 # ROM 5-95% band
                 ax[i].fill_between(
                     self.time_domain_eval_prediction,
                     np.percentile(rom_solves_prediction[:, i, :], 5, axis=0),
                     np.percentile(rom_solves_prediction[:, i, :], 95, axis=0),
-                    color='tab:blue', alpha=0.15, label='ROM 5–95%'
+                    color='tab:purple', alpha=0.15, label='ROM 5\u201395%'
                 )
 
                 ax[i].set_ylabel(f'Mode {i+1}')
-                ax[i].grid(True, alpha=0.3)
                 if i == 0:
                     ax[i].legend(loc='upper right', fontsize=9)
 
@@ -232,7 +228,7 @@ class EulerPlotter(Plotter):
             if training_span is not None:
                 for j in range(3):
                     ax[i, j].axvspan(training_span[0], training_span[1],
-                                     color='tab:blue', alpha=0.06, zorder=0)
+                                     color='gray', alpha=0.10, zorder=0)
 
             ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
             ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
@@ -243,20 +239,15 @@ class EulerPlotter(Plotter):
                 ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T, alpha = .3, lw=2)
                 ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T, alpha = .3, lw=2)
 
-            # Plot the mean
-            ax[i, 0].plot(self.time_domain_eval_training, rom_solves_training[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-            ax[i, 1].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-            ax[i, 2].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), alpha = .8, lw=2)
-
-            # Plot the median
-            ax[i, 0].plot(self.time_domain_eval_training, np.median(rom_solves_training[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
-            ax[i, 1].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
-            ax[i, 2].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), alpha = .8, linestyle='--', lw=2)
+            # Plot the median (dashed purple)
+            ax[i, 0].plot(self.time_domain_eval_training, np.median(rom_solves_training[:,i,:], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+            ax[i, 1].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+            ax[i, 2].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), color='tab:purple', linestyle='--', alpha=0.9, lw=2)
 
             # Plot the 5th and 95th percentiles
-            ax[i, 0].fill_between(self.time_domain_eval_training, np.percentile(rom_solves_training[:,i,:], 5, axis=0), np.percentile(rom_solves_training[:,i,:], 95, axis=0), alpha=.2)
-            ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
-            ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), alpha=.2)
+            ax[i, 0].fill_between(self.time_domain_eval_training, np.percentile(rom_solves_training[:,i,:], 5, axis=0), np.percentile(rom_solves_training[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
+            ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
+            ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
 
             yvals = np.asarray(self.snapshots_prediction[i])
             ymin = np.nanmin(yvals)
@@ -276,10 +267,6 @@ class EulerPlotter(Plotter):
             ax[i, 0].set_ylim(float(ymin), float(ymax))
             ax[i, 1].set_ylim(float(ymin), float(ymax))
             ax[i, 2].set_ylim(float(ymin), float(ymax))
-
-            ax[i,0].grid()
-            ax[i,1].grid()
-            ax[i,2].grid()
 
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
         fig.tight_layout()
@@ -313,20 +300,15 @@ class EulerPlotter(Plotter):
             ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
             ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
 
-            # Plot the mean
-            ax[i, 0].plot(time_domain_training, draws_training.mean(axis=0)[i], alpha=0.8, lw=2)
-            ax[i, 1].plot(time_domain_prediction, draws_prediction.mean(axis=0)[i], alpha=0.8, lw=2)
-            ax[i, 2].plot(time_domain_prediction, draws_prediction.mean(axis=0)[i], alpha=0.8, lw=2)
-
-            # Plot the median
-            ax[i, 0].plot(time_domain_training, np.median(draws_training, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
-            ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], alpha=0.8, linestyle='--', lw=2) 
-            ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], alpha=0.8, linestyle='--', lw=2)
+            # Plot the median (dashed purple)
+            ax[i, 0].plot(time_domain_training, np.median(draws_training, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+            ax[i, 1].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2)
+            ax[i, 2].plot(time_domain_prediction, np.median(draws_prediction, axis=0)[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2)
 
             # Plot the 5th and 95th percentiles
-            ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training, 5, axis=0)[i], np.percentile(draws_training, 95, axis=0)[i], alpha=.2)
-            ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], alpha=.2)
-            ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], alpha=.2)
+            ax[i, 0].fill_between(time_domain_training, np.percentile(draws_training, 5, axis=0)[i], np.percentile(draws_training, 95, axis=0)[i], color='tab:purple', alpha=0.15)
+            ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], color='tab:purple', alpha=0.15)
+            ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], color='tab:purple', alpha=0.15)
 
             yvals = np.asarray(self.snapshots_prediction[i])
             ymin = np.nanmin(yvals)
@@ -346,10 +328,6 @@ class EulerPlotter(Plotter):
             ax[i, 0].set_ylim(float(ymin), float(ymax))
             ax[i, 1].set_ylim(float(ymin), float(ymax))
             ax[i, 2].set_ylim(float(ymin), float(ymax))
-
-            ax[i,0].grid()
-            ax[i,1].grid()
-            ax[i,2].grid()
    
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
         fig.tight_layout()
