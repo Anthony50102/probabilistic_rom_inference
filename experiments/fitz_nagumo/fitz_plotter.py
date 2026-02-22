@@ -4,11 +4,91 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import List
+from typing import List, Optional, Tuple, Callable
 import jax.numpy as jnp
 
 from core import BayesianGP
 from core.plotting import Plotter, rbf_eval, flatten_time, compute_derivatives_fourth_order
+
+
+# =============================================================================
+# Standalone utility functions
+# =============================================================================
+
+def plot_fitz_grid_search(
+    grid_search_result,
+    snapshots_compressed: np.ndarray,
+    time_sampled: np.ndarray,
+    time_eval_training: np.ndarray,
+    time_eval_prediction: np.ndarray,
+    num_modes: int,
+    input_func: Callable,
+    time_full: Optional[np.ndarray] = None,
+    true_states_compressed: Optional[np.ndarray] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+):
+    """
+    Plot all stable deterministic ROM solves from grid search (with input support).
+
+    Matches the style of core.plotting.plot_deterministic_rom_solves but
+    supports input_func for systems with external inputs.
+    """
+    if figsize is None:
+        figsize = (14, 3 * num_modes)
+
+    q0 = snapshots_compressed[:, 0]
+    fig, axes = plt.subplots(num_modes, 2, figsize=figsize, sharex='col')
+    if num_modes == 1:
+        axes = axes.reshape(1, -1)
+
+    for reg, error, operator, r in grid_search_result.stable_results:
+        r.model._extract_operators(operator)
+        is_best = np.allclose(operator, grid_search_result.operator)
+        color = 'tab:blue' if is_best else 'tab:orange'
+        alpha = 0.9 if is_best else 0.3
+        lw = 2.5 if is_best else 1.5
+
+        try:
+            r.model.predict(state0=q0, t=time_eval_training, input_func=input_func)
+            if r.model.predict_result_.y.shape[1] == len(time_eval_training):
+                for i in range(num_modes):
+                    label = ('Best (chosen)' if is_best else None) if i == 0 else None
+                    axes[i, 0].plot(time_eval_training, r.model.predict_result_.y[i],
+                                   color=color, alpha=alpha, lw=lw, label=label)
+        except Exception:
+            pass
+
+        try:
+            r.model.predict(state0=q0, t=time_eval_prediction, input_func=input_func)
+            if r.model.predict_result_.y.shape[1] == len(time_eval_prediction):
+                for i in range(num_modes):
+                    axes[i, 1].plot(time_eval_prediction, r.model.predict_result_.y[i],
+                                   color=color, alpha=alpha, lw=lw)
+        except Exception:
+            pass
+
+    for i in range(num_modes):
+        axes[i, 0].plot(time_sampled, snapshots_compressed[i], 'k*', ms=4,
+                       label='Training data', zorder=5)
+        axes[i, 0].set_ylabel(f'Mode {i+1}')
+        if i == 0:
+            axes[i, 0].set_title('Training Domain')
+            axes[i, 0].legend(loc='upper right', fontsize=8)
+
+        # True trajectory on prediction side
+        if time_full is not None and true_states_compressed is not None:
+            axes[i, 1].plot(time_full, true_states_compressed[i],
+                           color='gray', lw=1.5, alpha=0.7,
+                           label='True trajectory' if i == 0 else None)
+        if i == 0:
+            axes[i, 1].set_title('Prediction Domain')
+            axes[i, 1].legend(loc='upper right', fontsize=8)
+
+    axes[-1, 0].set_xlabel('Time')
+    axes[-1, 1].set_xlabel('Time')
+    fig.suptitle('Grid Search: Stable ROM Solves', fontsize=14)
+    fig.tight_layout()
+    return fig, axes
 
 
 class FitzPlotter(Plotter):
@@ -180,6 +260,7 @@ class FitzPlotter(Plotter):
                     max_num_samples = 1000,
                     plot_samples: bool = False,
                     plot_single: bool = False,
+                    training_span: tuple = None,
                     save=False,
                     save_path: str = "operator_inference_trajectories.png"
                     ):
@@ -221,16 +302,17 @@ class FitzPlotter(Plotter):
                 ax = [ax]
             
             for i in range(self.numPODmodes):
+                # Training span shading
+                if training_span is not None:
+                    ax[i].axvspan(training_span[0], training_span[1],
+                                  color='gray', alpha=0.10, zorder=0)
+
                 # Plot training data
                 ax[i].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
                 
                 # Plot ground truth
                 ax[i].plot(self.time_domain_prediction, self.snapshots_prediction[i], 
                           color='tab:gray', lw=2, label='Ground Truth')
-                
-                # Plot the mean
-                # ax[i].plot(self.time_domain_eval_prediction, rom_solves_prediction[:,i,:].T.mean(axis=1), 
-                #           alpha=0.8, lw=2, label='Mean')
                 
                 # Plot the median (dashed purple)
                 ax[i].plot(self.time_domain_eval_prediction, np.median(rom_solves_prediction[:,i,:], axis=0), 
@@ -269,6 +351,12 @@ class FitzPlotter(Plotter):
             fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
 
             for i in range(self.numPODmodes):
+                # Training span shading on all columns
+                if training_span is not None:
+                    for j in range(3):
+                        ax[i, j].axvspan(training_span[0], training_span[1],
+                                         color='gray', alpha=0.10, zorder=0)
+
                 ax[i, 0].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
                 ax[i, 1].plot(self.time_domain_training, self.snapshots_training[i], 'k*')
                 ax[i, 2].plot(self.time_domain_prediction, self.snapshots_prediction[i], color='tab:gray', lw=2)
