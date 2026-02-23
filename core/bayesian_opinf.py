@@ -649,7 +649,9 @@ def build_bayesian_opinf_model(
                 f_Xi_scaled = f_Xi.T
 
             # GP derivatives for this IC
-            y_train = data_scaler.transform(snap_ic) if use_scaled else snap_ic
+            # snap_ic is already in the correct space (scaled if USE_SCALED_DATA,
+            # raw otherwise) — do NOT re-transform here.
+            y_train = snap_ic
             mu_z, cov_z = compute_gp_derivatives(
                 Ls_ic, Vs_ic, time_train_ic, time, y_train, Ns=Ns_ic
             )

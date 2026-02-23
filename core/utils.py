@@ -120,6 +120,7 @@ def save_figure(figname: str, figures_path: str = "figures", andopen: bool = Fal
 # =============================================================================
 def generate_trajectory(
     config,
+    prediction_time_domain: np.ndarray,
     training_span: tuple[float, float],
     num_samples: int,
     noiselevel: float = 0.0,
@@ -155,7 +156,7 @@ def generate_trajectory(
         model = config.FullOrderModel()
         true_states = model.solve(
             config.initial_conditions,
-            config.time_domain,
+            prediction_time_domain,
         )
 
         # Uniformly sample from the training span --> training time domain
@@ -177,7 +178,7 @@ def generate_trajectory(
 
         return (
             model,
-            config.time_domain,
+            prediction_time_domain,
             true_states,
             time_domain_sampled,
             snapshots_sampled,

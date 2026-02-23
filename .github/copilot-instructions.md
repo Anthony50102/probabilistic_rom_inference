@@ -6,6 +6,8 @@ This repository implements and compares two **Bayesian operator inference** meth
 
 The central idea: given noisy observations of a high-dimensional PDE system, use **Proper Orthogonal Decomposition (POD)** to reduce dimensionality, then infer the ROM operators in a Bayesian framework that provides uncertainty quantification (UQ) on the learned dynamics.
 
+This paper is still being written so the codebase is a work in progress. The current implementation focuses on the core Bayesian modeling and inference components, with some simplifications from the full algorithm described in the paper. The notebooks are structured to allow easy extension to the full method as development continues.
+
 ---
 
 ## Scientific Background

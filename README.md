@@ -66,6 +66,28 @@ probabilistic_rom_inference/
 - Implemented in JAX/NumPyro for efficient inference
 - More principled uncertainty quantification
 
+## Data Scaling
+
+When `USE_SCALED_DATA=True` in a notebook, each POD mode is standardized to zero mean and unit variance before GP fitting via `DataScaler` (`core/scaler.py`). This improves GP hyperparameter learning and numerical conditioning, especially when POD modes have very different magnitudes.
+
+### How scaling flows through the Bayesian model
+
+1. **GP fitting**: GPs are trained on scaled data $\tilde{q}_i = (\hat{q}_i - \mu_i) / \sigma_i$, so lengthscales, variances, and noise are all in scaled space.
+2. **Latent states**: `Xs_means` (GP predictions) live in scaled space.
+3. **Data matrix assembly**: States are unscaled back to original space ($\hat{q} = \sigma\tilde{q} + \mu$) before assembling the operator data matrix $d(\hat{q})$.
+4. **Operator dynamics**: $O \cdot d(\hat{q})$ is computed in original space, then divided by $\sigma_i$ to get the scaled-space derivative $d\tilde{q}_i/dt$.
+5. **ODE constraint**: The scaled operator dynamics are compared against GP derivative estimates (also in scaled space) via a multivariate normal likelihood.
+
+The operator $O$ is always learned and used for predictions in **original (unscaled) space**.
+
+### Implicit mode-dependent constraint scaling
+
+The ODE constraint slack `gamma2` is applied uniformly in scaled space:
+
+$$\frac{d\tilde{q}_i}{dt} \sim \mathcal{N}\!\left(\frac{[O \cdot d(\hat{q})]_i}{\sigma_i},\; \text{cov}_z^{(\text{scaled})}_i + \gamma_2 I\right)$$
+
+This means the effective constraint tolerance in original space is mode-dependent: $\gamma_{2,i}^{(\text{original})} = \sigma_i^2 \cdot \gamma_2$. Modes with larger amplitude get proportionally more slack, which acts as a natural regularization — all modes contribute comparably to the likelihood regardless of their raw scale.
+
 ## Requirements
 
 ```
