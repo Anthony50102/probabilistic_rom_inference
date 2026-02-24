@@ -477,7 +477,7 @@ def build_bayesian_opinf_model(
     data_scaler = None,
     sample_X: bool = False,
     Xs_covs = None,
-    reparameterize: bool = False,
+    reparam: Optional[str] = None,
     svi_O_mean: Optional[np.ndarray] = None,
     svi_O_std: Optional[np.ndarray] = None,
     min_relative_std: float = 0.15,
@@ -518,19 +518,31 @@ def build_bayesian_opinf_model(
         Whether to sample X (True) or use deterministic (False)
     Xs_covs : array or list of arrays, optional
         GP covariance for latent states (required if sample_X=True), per IC
-    reparameterize : bool
-        If True, use a non-centered parameterization for O. Requires
-        ``svi_O_mean`` and ``svi_O_std`` from a prior SVI run. The model
-        samples ``O_standardized ~ N(0, 1)`` and deterministically computes
-        ``O = mean + uncertainty * O_standardized``, which helps MCMC explore.
+    reparam : str, optional
+        Reparameterization strategy for the operator O. Options:
+
+        - ``None`` (default): Centered parameterization.
+          ``O ~ N(prior_operator, gamma * I)``
+
+        - ``"noncentered"``: Non-centered parameterization with the same
+          prior. Samples ``O_std ~ N(0, I)`` and computes
+          ``O = prior_operator + gamma * O_std``. Mathematically equivalent
+          to the centered form but can improve MCMC geometry.
+
+        - ``"shifted"``: Non-centered parameterization with the prior
+          shifted to the SVI posterior. Samples ``O_std ~ N(0, I)`` and
+          computes ``O = svi_O_mean + uncertainty * O_std``, where
+          ``uncertainty`` is derived from ``svi_O_std``. This changes the
+          effective prior to concentrate around the SVI result.
+          Requires ``svi_O_mean`` and ``svi_O_std``.
     svi_O_mean : array, optional
-        Posterior mean of O from a previous SVI run (for reparameterization)
+        Posterior mean of O from a previous SVI run (for ``"shifted"`` reparam)
     svi_O_std : array, optional
-        Posterior std of O from a previous SVI run (for reparameterization)
+        Posterior std of O from a previous SVI run (for ``"shifted"`` reparam)
     min_relative_std : float
-        Minimum relative std for reparameterization (fraction of |mean|)
+        Minimum relative std for ``"shifted"`` reparam (fraction of |mean|)
     min_absolute_std : float
-        Minimum absolute std for reparameterization
+        Minimum absolute std for ``"shifted"`` reparam
 
     Returns
     -------
@@ -569,16 +581,30 @@ def build_bayesian_opinf_model(
         Xcov_list = Xcov_list * num_ics
 
     # Validate reparameterization args
-    if reparameterize and (svi_O_mean is None or svi_O_std is None):
+    if reparam not in (None, "noncentered", "shifted"):
         raise ValueError(
-            "reparameterize=True requires svi_O_mean and svi_O_std from a prior SVI run"
+            f"reparam must be None, 'noncentered', or 'shifted', got '{reparam}'"
+        )
+    if reparam == "shifted" and (svi_O_mean is None or svi_O_std is None):
+        raise ValueError(
+            "reparam='shifted' requires svi_O_mean and svi_O_std from a prior SVI run"
         )
 
     def model(time, gamma=1e-1, gamma2=1e2, normalization=1e-6):
         num_time_steps = time.shape[0]
 
         # --- Sample operator ---
-        if reparameterize:
+        if reparam == "noncentered":
+            # Non-centered parameterization with same prior as centered form.
+            # O = prior_operator + gamma * O_std, where O_std ~ N(0, I).
+            O_std = numpyro.sample(
+                "O_standardized",
+                dist.Normal(jnp.zeros_like(prior_operator), jnp.ones_like(prior_operator)),
+            )
+            O = numpyro.deterministic("O", prior_operator + gamma * O_std)
+        elif reparam == "shifted":
+            # Non-centered parameterization with prior shifted to SVI posterior.
+            # O = svi_O_mean + uncertainty * O_std, where O_std ~ N(0, I).
             O_uncertainty = jnp.maximum(
                 svi_O_std,
                 jnp.maximum(
@@ -586,12 +612,13 @@ def build_bayesian_opinf_model(
                     min_absolute_std,
                 ),
             )
-            O_standardized = numpyro.sample(
+            O_std = numpyro.sample(
                 "O_standardized",
                 dist.Normal(jnp.zeros_like(svi_O_mean), jnp.ones_like(svi_O_mean)),
             )
-            O = numpyro.deterministic("O", svi_O_mean + O_uncertainty * O_standardized)
+            O = numpyro.deterministic("O", svi_O_mean + O_uncertainty * O_std)
         else:
+            # Centered parameterization (default).
             O = numpyro.sample(
                 "O",
                 dist.Normal(

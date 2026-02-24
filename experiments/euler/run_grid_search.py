@@ -38,6 +38,7 @@ def run_single(gamma: float, gamma2: float, output_dir: str) -> dict:
     params = {
         "GAMMA": gamma,
         "GAMMA2": gamma2,
+        "VERBOSE": False,
     }
 
     print(f"\n{'='*60}")

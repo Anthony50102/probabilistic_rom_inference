@@ -1,7 +1,8 @@
 """
 Generate paper figures for the Compressible Euler equation.
 
-Runs 02_full_bayesian.ipynb for three data regimes:
+Runs both 01_gpbayes_opinf.ipynb (baseline) and 02_full_bayesian.ipynb
+for three data regimes:
   1. Dense data, low noise    (250 samples, 3% noise)
   2. Sparse data, medium noise (55 samples, 5% noise)
   3. Dense data, high noise   (250 samples, 15% noise)
@@ -31,6 +32,10 @@ SCHEMAS = [
         "NUM_MODES": 6,
         "GAMMA": 1e1,
         "GAMMA2": 1e1,
+        # "GAMMA3": 1e1,
+        # "GAMMA4": 5e-1,
+        "GAMMA3": 1e2,
+        "GAMMA4": 1e-1,
     },
     {
         "name": "sparse_medium_noise",
@@ -41,6 +46,8 @@ SCHEMAS = [
         "NUM_MODES": 6,
         "GAMMA": 1e1,
         "GAMMA2": 1e1,
+        "GAMMA3": 1e2,
+        "GAMMA4": 1e-1,
     },
     {
         "name": "dense_high_noise",
@@ -51,12 +58,15 @@ SCHEMAS = [
         "NUM_MODES": 6,
         "GAMMA": 1e1,
         "GAMMA2": 1e1,
+        "GAMMA3": 1e2,
+        "GAMMA4": 1e-1,
     },
 ]
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-NOTEBOOK = os.path.join(SCRIPT_DIR, "02_full_bayesian.ipynb")
+NOTEBOOK_BAYESIAN = os.path.join(SCRIPT_DIR, "02_full_bayesian.ipynb")
+NOTEBOOK_GPBAYES = os.path.join(SCRIPT_DIR, "01_gpbayes_opinf.ipynb")
 OUTPUT_DIR = os.path.join(
     SCRIPT_DIR, "results", "paper_runs", datetime.now().strftime("%Y%m%d_%H%M%S")
 )
@@ -64,49 +74,18 @@ OUTPUT_DIR = os.path.join(
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-def run_schema(schema, output_dir):
-    """Execute the notebook with a single data-regime configuration."""
-    tag = schema["name"]
-    output_path = os.path.join(output_dir, f"{tag}.ipynb")
-
-    # Parameters injected into the notebook's config cell via papermill
-    params = {
-        "NUM_SAMPLES": schema["NUM_SAMPLES"],
-        "NOISE_LEVEL": schema["NOISE_LEVEL"],
-        "NUM_EVAL_POINTS": schema["NUM_EVAL_POINTS"],
-        "NUM_MODES": schema["NUM_MODES"],
-        "GAMMA": schema["GAMMA"],
-        "GAMMA2": schema["GAMMA2"],
-        "RUN_SVI": True,
-        "RUN_MCMC": False,
-    }
-
-    print(f"\n{'=' * 60}")
-    print(f"  Schema: {schema['label']}")
-    print(f"  NUM_SAMPLES={schema['NUM_SAMPLES']}, "
-          f"NOISE_LEVEL={schema['NOISE_LEVEL']:.3f}, "
-          f"NUM_EVAL_POINTS={schema['NUM_EVAL_POINTS']}")
-    print(f"  GAMMA={schema['GAMMA']:.1e}, GAMMA2={schema['GAMMA2']:.1e}")
-    print(f"  Output: {output_path}")
-    print(f"{'=' * 60}")
-
+def _execute_notebook(notebook_path, output_path, params):
+    """Execute a single notebook via papermill and return status info."""
     result = {
-        "schema": tag,
-        "label": schema["label"],
-        "num_samples": schema["NUM_SAMPLES"],
-        "noise_level": schema["NOISE_LEVEL"],
-        "gamma": schema["GAMMA"],
-        "gamma2": schema["GAMMA2"],
         "output_notebook": output_path,
         "status": "pending",
         "elapsed_s": None,
         "error": None,
     }
-
     t0 = time.time()
     try:
         pm.execute_notebook(
-            NOTEBOOK,
+            notebook_path,
             output_path,
             parameters=params,
             cwd=SCRIPT_DIR,
@@ -123,8 +102,73 @@ def run_schema(schema, output_dir):
         print(f"  !! Unexpected error: {exc}")
     finally:
         result["elapsed_s"] = round(time.time() - t0, 1)
-
     return result
+
+
+def run_schema(schema, output_dir):
+    """Execute both GP-Bayes and Full Bayesian notebooks for a data regime."""
+    tag = schema["name"]
+
+    print(f"\n{'=' * 60}")
+    print(f"  Schema: {schema['label']}")
+    print(f"  NUM_SAMPLES={schema['NUM_SAMPLES']}, "
+          f"NOISE_LEVEL={schema['NOISE_LEVEL']:.3f}, "
+          f"NUM_EVAL_POINTS={schema['NUM_EVAL_POINTS']}")
+    print(f"  GAMMA={schema['GAMMA']:.1e}, GAMMA2={schema['GAMMA2']:.1e}, "
+          f"GAMMA3={schema['GAMMA3']:.1e}, GAMMA4={schema['GAMMA4']:.1e}")
+    print(f"{'=' * 60}")
+
+    base_info = {
+        "schema": tag,
+        "label": schema["label"],
+        "num_samples": schema["NUM_SAMPLES"],
+        "noise_level": schema["NOISE_LEVEL"],
+        "gamma": schema["GAMMA"],
+        "gamma2": schema["GAMMA2"],
+        "gamma3": schema["GAMMA3"],
+        "gamma4": schema["GAMMA4"],
+    }
+
+    results = []
+
+    # --- GP-Bayes OpInf (baseline) ---
+    gpbayes_path = os.path.join(output_dir, f"{tag}_gpbayes.ipynb")
+    gpbayes_params = {
+        "num_samples": schema["NUM_SAMPLES"],
+        "noiselevel": schema["NOISE_LEVEL"],
+        "numPODmodes": schema["NUM_MODES"],
+        "VERBOSE": False,
+    }
+    print(f"  [GP-Bayes] Output: {gpbayes_path}")
+    gpbayes_result = {**base_info, "method": "gpbayes", **_execute_notebook(
+        NOTEBOOK_GPBAYES, gpbayes_path, gpbayes_params
+    )}
+    results.append(gpbayes_result)
+    print(f"  [GP-Bayes] -> {gpbayes_result['status']} ({gpbayes_result['elapsed_s']}s)")
+
+    # --- Full Bayesian ---
+    bayesian_path = os.path.join(output_dir, f"{tag}_bayesian.ipynb")
+    bayesian_params = {
+        "NUM_SAMPLES": schema["NUM_SAMPLES"],
+        "NOISE_LEVEL": schema["NOISE_LEVEL"],
+        "NUM_EVAL_POINTS": schema["NUM_EVAL_POINTS"],
+        "NUM_MODES": schema["NUM_MODES"],
+        "GAMMA": schema["GAMMA"],
+        "GAMMA2": schema["GAMMA2"],
+        "GAMMA3": schema["GAMMA3"],
+        "GAMMA4": schema["GAMMA4"],
+        "RUN_SVI": True,
+        "RUN_MCMC": True,
+        "VERBOSE": False,
+    }
+    print(f"  [Bayesian] Output: {bayesian_path}")
+    bayesian_result = {**base_info, "method": "bayesian", **_execute_notebook(
+        NOTEBOOK_BAYESIAN, bayesian_path, bayesian_params
+    )}
+    results.append(bayesian_result)
+    print(f"  [Bayesian] -> {bayesian_result['status']} ({bayesian_result['elapsed_s']}s)")
+
+    return results
 
 
 def main():
@@ -138,10 +182,9 @@ def main():
 
     results = []
     for i, schema in enumerate(SCHEMAS, 1):
-        print(f"\n[{i}/{len(SCHEMAS)}]", end="")
-        res = run_schema(schema, OUTPUT_DIR)
-        results.append(res)
-        print(f"  -> {res['status']} ({res['elapsed_s']}s)")
+        print(f"\n[{i}/{len(SCHEMAS)}]")
+        schema_results = run_schema(schema, OUTPUT_DIR)
+        results.extend(schema_results)
 
     # ── Save summary ─────────────────────────────────────────────────────
     summary_path = os.path.join(OUTPUT_DIR, "summary.json")
@@ -150,13 +193,14 @@ def main():
 
     csv_path = os.path.join(OUTPUT_DIR, "summary.csv")
     with open(csv_path, "w") as f:
-        f.write("schema,num_samples,noise_level,gamma,gamma2,status,elapsed_s,error\n")
+        f.write("schema,method,num_samples,noise_level,gamma,gamma2,gamma3,gamma4,status,elapsed_s,error\n")
         for r in results:
-            err = (r["error"] or "").replace(",", ";").replace("\n", " ")
+            err = (r.get("error") or "").replace(",", ";").replace("\n", " ")
             f.write(
-                f"{r['schema']},{r['num_samples']},{r['noise_level']},"
-                f"{r['gamma']},{r['gamma2']},{r['status']},"
-                f"{r['elapsed_s']},{err}\n"
+                f"{r['schema']},{r.get('method','')},{r['num_samples']},"
+                f"{r['noise_level']},{r['gamma']},{r['gamma2']},"
+                f"{r.get('gamma3','')},{r.get('gamma4','')},"
+                f"{r['status']},{r['elapsed_s']},{err}\n"
             )
 
     # ── Print summary ────────────────────────────────────────────────────
@@ -168,11 +212,12 @@ def main():
     print(f"  Summary: {summary_path}")
     print(f"  CSV:     {csv_path}")
     print()
-    print(f"  {'Schema':>25s}  {'Samples':>7s}  {'Noise':>7s}  "
+    print(f"  {'Schema':>25s}  {'Method':>10s}  {'Samples':>7s}  {'Noise':>7s}  "
           f"{'Status':>8s}  {'Time':>8s}")
-    print(f"  {'-' * 25}  {'-' * 7}  {'-' * 7}  {'-' * 8}  {'-' * 8}")
+    print(f"  {'-' * 25}  {'-' * 10}  {'-' * 7}  {'-' * 7}  {'-' * 8}  {'-' * 8}")
     for r in results:
-        print(f"  {r['label']:>25s}  {r['num_samples']:>7d}  "
+        print(f"  {r['label']:>25s}  {r.get('method',''):>10s}  "
+              f"{r['num_samples']:>7d}  "
               f"{r['noise_level']:>7.3f}  {r['status']:>8s}  "
               f"{r['elapsed_s']:>7.1f}s")
 
