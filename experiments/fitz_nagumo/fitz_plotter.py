@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple, Callable
 import jax.numpy as jnp
 
 from core import BayesianGP
-from core.plotting import Plotter, rbf_eval, flatten_time, compute_derivatives_fourth_order
+from core.plotting import Plotter, rbf_eval, flatten_time, compute_derivatives_fourth_order, _ylim_from_truth
 
 
 # =============================================================================
@@ -25,70 +25,29 @@ def plot_fitz_grid_search(
     input_func: Callable,
     time_full: Optional[np.ndarray] = None,
     true_states_compressed: Optional[np.ndarray] = None,
+    training_span: Optional[Tuple[float, float]] = None,
     figsize: Optional[Tuple[float, float]] = None,
 ):
     """
     Plot all stable deterministic ROM solves from grid search (with input support).
 
-    Matches the style of core.plotting.plot_deterministic_rom_solves but
-    supports input_func for systems with external inputs.
+    Uses operator_plot style: single column, modes as rows, purple
+    median + 5-95% band from all stable solves, gray true trajectory,
+    training span shading, best solve in blue.
     """
-    if figsize is None:
-        figsize = (14, 3 * num_modes)
-
-    q0 = snapshots_compressed[:, 0]
-    fig, axes = plt.subplots(num_modes, 2, figsize=figsize, sharex='col')
-    if num_modes == 1:
-        axes = axes.reshape(1, -1)
-
-    for reg, error, operator, r in grid_search_result.stable_results:
-        r.model._extract_operators(operator)
-        is_best = np.allclose(operator, grid_search_result.operator)
-        color = 'tab:blue' if is_best else 'tab:orange'
-        alpha = 0.9 if is_best else 0.3
-        lw = 2.5 if is_best else 1.5
-
-        try:
-            r.model.predict(state0=q0, t=time_eval_training, input_func=input_func)
-            if r.model.predict_result_.y.shape[1] == len(time_eval_training):
-                for i in range(num_modes):
-                    label = ('Best (chosen)' if is_best else None) if i == 0 else None
-                    axes[i, 0].plot(time_eval_training, r.model.predict_result_.y[i],
-                                   color=color, alpha=alpha, lw=lw, label=label)
-        except Exception:
-            pass
-
-        try:
-            r.model.predict(state0=q0, t=time_eval_prediction, input_func=input_func)
-            if r.model.predict_result_.y.shape[1] == len(time_eval_prediction):
-                for i in range(num_modes):
-                    axes[i, 1].plot(time_eval_prediction, r.model.predict_result_.y[i],
-                                   color=color, alpha=alpha, lw=lw)
-        except Exception:
-            pass
-
-    for i in range(num_modes):
-        axes[i, 0].plot(time_sampled, snapshots_compressed[i], 'k*', ms=4,
-                       label='Training data', zorder=5)
-        axes[i, 0].set_ylabel(f'Mode {i+1}')
-        if i == 0:
-            axes[i, 0].set_title('Training Domain')
-            axes[i, 0].legend(loc='upper right', fontsize=8)
-
-        # True trajectory on prediction side
-        if time_full is not None and true_states_compressed is not None:
-            axes[i, 1].plot(time_full, true_states_compressed[i],
-                           color='gray', lw=1.5, alpha=0.7,
-                           label='True trajectory' if i == 0 else None)
-        if i == 0:
-            axes[i, 1].set_title('Prediction Domain')
-            axes[i, 1].legend(loc='upper right', fontsize=8)
-
-    axes[-1, 0].set_xlabel('Time')
-    axes[-1, 1].set_xlabel('Time')
-    fig.suptitle('Grid Search: Stable ROM Solves', fontsize=14)
-    fig.tight_layout()
-    return fig, axes
+    from core.plotting import plot_deterministic_rom_solves
+    return plot_deterministic_rom_solves(
+        grid_search_result=grid_search_result,
+        snapshots_compressed=snapshots_compressed,
+        time_sampled=time_sampled,
+        time_eval_training=time_eval_training,
+        time_eval_prediction=time_eval_prediction,
+        time_full=time_full,
+        true_states_compressed=true_states_compressed,
+        input_func=input_func,
+        training_span=training_span,
+        figsize=figsize,
+    )
 
 
 class FitzPlotter(Plotter):
@@ -324,23 +283,7 @@ class FitzPlotter(Plotter):
                                   np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), 
                                   color='tab:purple', alpha=0.15)
                 
-                # Set y-limits based on ground truth
-                yvals = np.asarray(self.snapshots_prediction[i])
-                ymin = np.nanmin(yvals)
-                ymax = np.nanmax(yvals)
-                
-                if np.isclose(ymin, ymax):
-                    if np.isclose(ymax, 0.0):
-                        pad = 1.0
-                    else:
-                        pad = abs(ymax) * 0.75
-                        ymin -= pad
-                        ymax += pad
-                else:
-                    ymin = ymin - abs(ymin) * 0.75
-                    ymax = ymax * 1.75
-                
-                ax[i].set_ylim(float(ymin), float(ymax))
+                ax[i].set_ylim(*_ylim_from_truth(self.snapshots_prediction[i]))
                 ax[i].set_xlabel('Time')
                 ax[i].set_ylabel(f'Mode {i+1}')
                 ax[i].legend()
@@ -376,24 +319,11 @@ class FitzPlotter(Plotter):
                 ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
                 ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
 
-                yvals = np.asarray(self.snapshots_prediction[i])
-                ymin = np.nanmin(yvals)
-                ymax = np.nanmax(yvals)
+                ymin, ymax = _ylim_from_truth(self.snapshots_prediction[i])
 
-                if np.isclose(ymin, ymax):
-                    if np.isclose(ymax, 0.0):
-                        pad = 1.0  # arbitrary small window around zero
-                    else:
-                        pad = abs(ymax) * 0.75
-                        ymin -= pad
-                        ymax += pad
-                else:
-                    ymin = ymin - abs(ymin) * 0.75
-                    ymax = ymax * 1.75
-
-                ax[i, 0].set_ylim(float(ymin), float(ymax))
-                ax[i, 1].set_ylim(float(ymin), float(ymax))
-                ax[i, 2].set_ylim(float(ymin), float(ymax))
+                ax[i, 0].set_ylim(ymin, ymax)
+                ax[i, 1].set_ylim(ymin, ymax)
+                ax[i, 2].set_ylim(ymin, ymax)
 
             fig.suptitle("Operator Inference Trajectories", fontsize=16)
         
@@ -458,23 +388,7 @@ class FitzPlotter(Plotter):
                                   np.percentile(draws_prediction_orig, 95, axis=0)[i], 
                                   color='tab:purple', alpha=0.15)
                 
-                # Set y-limits based on ground truth
-                yvals = np.asarray(self.snapshots_prediction[i])
-                ymin = np.nanmin(yvals)
-                ymax = np.nanmax(yvals)
-                
-                if np.isclose(ymin, ymax):
-                    if np.isclose(ymax, 0.0):
-                        pad = 1.0
-                    else:
-                        pad = abs(ymax) * 0.5
-                        ymin -= pad
-                        ymax += pad
-                else:
-                    ymin = ymin - abs(ymin) * 0.5
-                    ymax = ymax * 1.5
-                
-                ax[i].set_ylim(float(ymin), float(ymax))
+                ax[i].set_ylim(*_ylim_from_truth(self.snapshots_prediction[i]))
                 ax[i].set_xlabel('Time')
                 ax[i].set_ylabel(f'Mode {i+1}')
                 ax[i].legend()
@@ -499,23 +413,10 @@ class FitzPlotter(Plotter):
                 ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], color='tab:purple', alpha=0.15)
                 ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction_orig, 5, axis=0)[i], np.percentile(draws_prediction_orig, 95, axis=0)[i], color='tab:purple', alpha=0.15)
 
-                yvals = np.asarray(self.snapshots_prediction[i])
-                ymin = np.nanmin(yvals)
-                ymax = np.nanmax(yvals)
-
-                if np.isclose(ymin, ymax):
-                    if np.isclose(ymax, 0.0):
-                        pad = 1.0  # arbitrary small window around zero
-                    else:
-                        pad = abs(ymax) * 0.5
-                        ymin -= pad
-                        ymax += pad
-                else:
-                    ymin = ymin - abs(ymin) * 0.5
-                    ymax = ymax * 1.5
+                ymin, ymax = _ylim_from_truth(self.snapshots_prediction[i])
 
                 for j in range(3):
-                    ax[i, j].set_ylim(float(ymin), float(ymax))
+                    ax[i, j].set_ylim(ymin, ymax)
    
             fig.suptitle("Operator Inference Trajectories", fontsize=16)
         

@@ -13,7 +13,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import gammaln
-from scipy.optimize import minimize
+from scipy.optimize import minimize, minimize_scalar
 from scipy.spatial.distance import cdist
 from typing import Callable, Optional, Tuple, List, Union
 from dataclasses import dataclass
@@ -247,10 +247,14 @@ def grid_search_prior_operator(
     inputs: Optional[np.ndarray] = None,
     input_func: Optional[Callable] = None,
     reg_values: Optional[List[float]] = None,
+    refine: bool = True,
     verbose: bool = True
 ) -> GridSearchResult:
     """
     Find optimal prior operator via regularization grid search.
+    
+    Uses a log-spaced coarse grid (like GP-Bayes OpInf) followed by
+    a bounded 1-D optimization to refine the best regularizer.
     
     Parameters
     ----------
@@ -269,7 +273,10 @@ def grid_search_prior_operator(
     input_func : callable, optional
         Input function for prediction
     reg_values : list, optional
-        Regularization values to test
+        Regularization values to test. Defaults to ``np.logspace(-16, 4, 81)``.
+    refine : bool
+        If True (default), follow grid search with scipy bounded optimization
+        around the best grid value.
     verbose : bool
         Print progress
         
@@ -279,16 +286,17 @@ def grid_search_prior_operator(
         Best operator and associated metadata
     """
     if reg_values is None:
-        reg_values = [1e-8, 1e-6, 1e-4, 1e-2, 1e-1, 5e-1, 1e0, 5e0, 1e1, 1e2, 1e3, 1e4]
+        reg_values = np.logspace(-16, 4, 81).tolist()
     
     best_reg, best_error = None, float('inf')
     best_operator, best_rom = None, None
     stable_results = []
     
     if verbose:
-        print(f"Testing {len(reg_values)} regularization values...")
+        print(f"Grid search: testing {len(reg_values)} regularization values...")
     
-    for reg in reg_values:
+    def _try_reg(reg):
+        """Fit and evaluate a single regularization value. Returns (error, operator, rom) or None."""
         try:
             rom = opinf.ROM(
                 basis=basis,
@@ -314,27 +322,66 @@ def grid_search_prior_operator(
             
             if sol.t.shape[0] == time_domain_sampled.shape[0]:
                 error = np.linalg.norm(pred - snapshots_compressed) / np.linalg.norm(snapshots_compressed)
-                stable_results.append((reg, error, operator, rom))
-                
-                if verbose:
-                    print(f"  reg={reg:.1e}: STABLE, error={error:.6f}")
-                
-                if error < best_error:
-                    best_error, best_reg = error, reg
-                    best_operator, best_rom = operator, rom
-            else:
-                if verbose:
-                    print(f"  reg={reg:.1e}: UNSTABLE")
-                    
-        except Exception as e:
+                return error, operator, rom
+        except Exception:
+            pass
+        return None
+
+    for reg in reg_values:
+        result = _try_reg(reg)
+        if result is not None:
+            error, operator, rom = result
+            stable_results.append((reg, error, operator, rom))
+            
             if verbose:
-                print(f"  reg={reg:.1e}: FAILED ({str(e)[:40]})")
+                print(f"  reg={reg:.1e}: STABLE, error={error:.6f}")
+            
+            if error < best_error:
+                best_error, best_reg = error, reg
+                best_operator, best_rom = operator, rom
+        else:
+            if verbose:
+                print(f"  reg={reg:.1e}: UNSTABLE")
     
     if best_operator is None:
         raise RuntimeError("No stable operator found!")
     
     if verbose:
-        print(f"\n✅ Best reg: {best_reg:.1e}, error: {best_error:.6f}")
+        print(f"\n✅ Best reg (grid): {best_reg:.1e}, error: {best_error:.6f}")
+
+    # --- Linear refinement via bounded optimization ---
+    if refine and len(stable_results) >= 2:
+        sorted_regs = sorted(r[0] for r in stable_results)
+        best_idx = sorted_regs.index(best_reg)
+        lb = sorted_regs[max(0, best_idx - 1)]
+        ub = sorted_regs[min(len(sorted_regs) - 1, best_idx + 1)]
+
+        if verbose:
+            print(f"\nRefining in [{lb:.1e}, {ub:.1e}]...")
+
+        def _objective(log_reg):
+            result = _try_reg(10**log_reg)
+            if result is None:
+                return 1e12
+            return result[0]
+
+        opt_result = minimize_scalar(
+            _objective, method='bounded',
+            bounds=(np.log10(lb), np.log10(ub))
+        )
+
+        if opt_result.success and opt_result.fun < best_error:
+            refined_reg = 10**opt_result.x
+            refined = _try_reg(refined_reg)
+            if refined is not None:
+                error, operator, rom = refined
+                stable_results.append((refined_reg, error, operator, rom))
+                best_error, best_reg = error, refined_reg
+                best_operator, best_rom = operator, rom
+                if verbose:
+                    print(f"✅ Best reg (refined): {best_reg:.1e}, error: {best_error:.6f}")
+        elif verbose:
+            print("  Refinement did not improve; keeping grid result.")
     
     return GridSearchResult(
         best_reg=best_reg,

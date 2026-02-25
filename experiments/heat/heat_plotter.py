@@ -110,83 +110,31 @@ def plot_heat_grid_search(
     time_eval_prediction: np.ndarray,
     num_modes: int,
     input_func: Callable,
+    time_full: Optional[np.ndarray] = None,
+    true_states_compressed: Optional[np.ndarray] = None,
+    training_span: Optional[Tuple[float, float]] = None,
     figsize: Optional[Tuple[float, float]] = None,
 ):
     """
     Plot all stable deterministic ROM solves from grid search (with input support).
 
-    Matches the style of core.plotting.plot_deterministic_rom_solves but
-    supports input_func for systems with external inputs.
-
-    Parameters
-    ----------
-    grid_search_result : GridSearchResult
-        Result from grid_search_prior_operator.
-    snapshots_compressed : np.ndarray
-        Training snapshots in reduced space, shape (num_modes, num_samples).
-    time_sampled : np.ndarray
-        Subsampled training time points.
-    time_eval_training : np.ndarray
-        Dense time points for training domain evaluation.
-    time_eval_prediction : np.ndarray
-        Dense time points for prediction domain evaluation.
-    num_modes : int
-        Number of POD modes.
-    input_func : callable
-        Input function u(t) for ROM prediction.
-    figsize : tuple, optional
-
-    Returns
-    -------
-    fig, axes
+    Uses operator_plot style: single column, modes as rows, purple
+    median + 5-95% band from all stable solves, gray true trajectory,
+    training span shading, best solve in blue.
     """
-    if figsize is None:
-        figsize = (14, 3 * num_modes)
-
-    q0 = snapshots_compressed[:, 0]
-    fig, axes = plt.subplots(num_modes, 2, figsize=figsize, sharex='col')
-    if num_modes == 1:
-        axes = axes.reshape(1, -1)
-
-    for reg, error, operator, r in grid_search_result.stable_results:
-        r.model._extract_operators(operator)
-        is_best = np.allclose(operator, grid_search_result.operator)
-        color = 'tab:blue' if is_best else 'tab:orange'
-        alpha = 0.9 if is_best else 0.3
-        lw = 2.5 if is_best else 1.5
-
-        try:
-            r.model.predict(state0=q0, t=time_eval_training, input_func=input_func)
-            if r.model.predict_result_.y.shape[1] == len(time_eval_training):
-                for i in range(num_modes):
-                    label = ('Best (chosen)' if is_best else None) if i == 0 else None
-                    axes[i, 0].plot(time_eval_training, r.model.predict_result_.y[i],
-                                   color=color, alpha=alpha, lw=lw, label=label)
-        except Exception:
-            pass
-
-        try:
-            r.model.predict(state0=q0, t=time_eval_prediction, input_func=input_func)
-            if r.model.predict_result_.y.shape[1] == len(time_eval_prediction):
-                for i in range(num_modes):
-                    axes[i, 1].plot(time_eval_prediction, r.model.predict_result_.y[i],
-                                   color=color, alpha=alpha, lw=lw)
-        except Exception:
-            pass
-
-    for i in range(num_modes):
-        axes[i, 0].plot(time_sampled, snapshots_compressed[i], 'k*', ms=4,
-                       label='Training data', zorder=5)
-        axes[i, 0].set_ylabel(f'Mode {i+1}')
-        if i == 0:
-            axes[i, 0].set_title('Training Domain')
-            axes[i, 0].legend(loc='upper right', fontsize=8)
-
-    axes[-1, 0].set_xlabel('Time')
-    axes[-1, 1].set_xlabel('Time')
-    fig.suptitle('Grid Search: Stable ROM Solves', fontsize=14)
-    fig.tight_layout()
-    return fig, axes
+    from core.plotting import plot_deterministic_rom_solves
+    return plot_deterministic_rom_solves(
+        grid_search_result=grid_search_result,
+        snapshots_compressed=snapshots_compressed,
+        time_sampled=time_sampled,
+        time_eval_training=time_eval_training,
+        time_eval_prediction=time_eval_prediction,
+        time_full=time_full,
+        true_states_compressed=true_states_compressed,
+        input_func=input_func,
+        training_span=training_span,
+        figsize=figsize,
+    )
 
 
 # =============================================================================
@@ -257,7 +205,7 @@ class HeatPlotter(Plotter):
 
         fig, axes = plt.subplots(
             n_traj, n_modes, figsize=figsize,
-            sharex=True, sharey='col', squeeze=False,
+            sharex=True, squeeze=False,
         )
 
         all_rom_solves = []
@@ -324,6 +272,11 @@ class HeatPlotter(Plotter):
                 # X-axis label (bottom row)
                 if row == n_traj - 1:
                     ax.set_xlabel('Time')
+
+                # Fix y-axis to truth for cross-method comparison
+                if traj.get('true_compressed') is not None:
+                    from core.plotting import _ylim_from_truth
+                    ax.set_ylim(*_ylim_from_truth(traj['true_compressed'][col]))
 
         # Single legend at the top
         handles, labels = axes[0, 0].get_legend_handles_labels()
@@ -430,6 +383,11 @@ class HeatPlotter(Plotter):
             ax.set_ylabel(f'Mode {i + 1}')
             if i == 0:
                 ax.legend(loc='upper right', fontsize=9)
+
+            # Fix y-axis to truth for cross-method comparison
+            if true_compressed is not None:
+                from core.plotting import _ylim_from_truth
+                ax.set_ylim(*_ylim_from_truth(true_compressed[i]))
 
         axes[-1].set_xlabel('Time')
         fig.suptitle(f'{title}  ({n_stable}/{n_tried} stable)', fontsize=14)

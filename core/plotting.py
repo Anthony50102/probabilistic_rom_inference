@@ -69,6 +69,30 @@ def compute_derivatives_fourth_order(snapshots: np.ndarray, time_points: np.ndar
     return derivatives
 
 
+def _ylim_from_truth(truth_values: np.ndarray, pad_frac: float = 0.25):
+    """Compute y-axis limits from ground-truth data with symmetric padding.
+
+    Parameters
+    ----------
+    truth_values : 1-D array
+        Ground-truth values for a single mode.
+    pad_frac : float
+        Fraction of the data range to add as padding on each side.
+
+    Returns
+    -------
+    (ymin, ymax) : tuple of float
+    """
+    ymin = float(np.nanmin(truth_values))
+    ymax = float(np.nanmax(truth_values))
+    span = ymax - ymin
+    if np.isclose(span, 0.0):
+        pad = max(abs(ymax) * 0.5, 1.0)
+    else:
+        pad = span * pad_frac
+    return ymin - pad, ymax + pad
+
+
 # =============================================================================
 # Base Plotter Class
 # =============================================================================
@@ -645,17 +669,16 @@ def plot_deterministic_rom_solves(
     time_eval_prediction: np.ndarray,
     time_full: Optional[np.ndarray] = None,
     true_states_compressed: Optional[np.ndarray] = None,
+    input_func: Optional[Callable] = None,
+    training_span: Optional[Tuple[float, float]] = None,
     figsize: Optional[Tuple[float, float]] = None,
-    alpha_all: float = 0.3,
-    alpha_best: float = 0.9,
-    lw_all: float = 1.5,
-    lw_best: float = 2.5,
 ):
     """
     Plot all stable deterministic ROM solves from grid search.
     
-    Displays all stable solves in orange with transparency and the chosen
-    best operator in blue with less transparency for visual debugging.
+    Uses the operator_plot style: single column, modes as rows, purple
+    median + 5-95% credible band from all stable solves, gray true
+    trajectory, training span shading, and the best solve in blue.
     
     Parameters
     ----------
@@ -673,16 +696,12 @@ def plot_deterministic_rom_solves(
         Full time domain for true trajectory (if available)
     true_states_compressed : np.ndarray, optional
         True compressed states over full time domain
+    input_func : callable, optional
+        Input function for ROM prediction (for systems with inputs)
+    training_span : tuple, optional
+        (t_start, t_end) for shading the training region
     figsize : tuple, optional
         Figure size. Default computed from num_modes
-    alpha_all : float
-        Transparency for all stable solves (default: 0.3)
-    alpha_best : float
-        Transparency for best solve (default: 0.9)
-    lw_all : float
-        Line width for all stable solves (default: 1.5)
-    lw_best : float
-        Line width for best solve (default: 2.5)
         
     Returns
     -------
@@ -692,102 +711,99 @@ def plot_deterministic_rom_solves(
     q0 = snapshots_compressed[:, 0]
     
     if figsize is None:
-        figsize = (14, 3 * num_modes)
+        figsize = (10, 2.5 * num_modes)
     
-    fig, axes = plt.subplots(num_modes, 2, figsize=figsize, sharex='col')
+    if training_span is None and len(time_sampled) > 0:
+        training_span = (time_sampled[0], time_sampled[-1])
+    
+    fig, axes = plt.subplots(num_modes, 1, figsize=figsize, sharex=True)
     if num_modes == 1:
-        axes = axes.reshape(1, -1)
+        axes = [axes]
     
-    # Collect all stable solves
-    training_solves = []
+    # Collect all stable prediction-domain solves
     prediction_solves = []
-    best_training_solve = None
     best_prediction_solve = None
-    
     stable_results = grid_search_result.stable_results
     best_operator = grid_search_result.operator
+    
+    def _predict(rom_obj, t):
+        """Run ROM prediction with optional input_func."""
+        if input_func is not None:
+            rom_obj.model.predict(state0=q0, t=t, input_func=input_func)
+        else:
+            rom_obj.model.predict(state0=q0, t=t)
     
     for reg, error, operator, rom in stable_results:
         rom.model._extract_operators(operator)
         
-        # Training domain solve
-        rom.model.predict(state0=q0, t=time_eval_training)
-        train_sol = rom.model.predict_result_.y
-        train_stable = train_sol.shape[1] == len(time_eval_training)
-        
-        # Prediction domain solve
-        rom.model.predict(state0=q0, t=time_eval_prediction)
-        pred_sol = rom.model.predict_result_.y
-        pred_stable = pred_sol.shape[1] == len(time_eval_prediction)
-        
-        if train_stable:
-            training_solves.append((train_sol, operator))
-        if pred_stable:
-            prediction_solves.append((pred_sol, operator))
-        
-        # Check if this is the best operator
-        if np.allclose(operator, best_operator):
-            if train_stable:
-                best_training_solve = train_sol
-            if pred_stable:
-                best_prediction_solve = pred_sol
+        try:
+            _predict(rom, time_eval_prediction)
+            pred_sol = rom.model.predict_result_.y
+            if pred_sol.shape[1] == len(time_eval_prediction):
+                prediction_solves.append(pred_sol)
+                if np.allclose(operator, best_operator):
+                    best_prediction_solve = pred_sol
+        except Exception:
+            pass
     
-    print(f"Stable training solves: {len(training_solves)}/{len(stable_results)}")
-    print(f"Stable prediction solves: {len(prediction_solves)}/{len(stable_results)}")
+    n_stable = len(prediction_solves)
+    n_total = len(stable_results)
     
-    # Plot each mode
     for i in range(num_modes):
-        # Left: Training domain
-        # Plot all stable solves in orange
-        for idx, (sol, _) in enumerate(training_solves):
-            label = 'Other stable solves' if idx == 0 else None
-            axes[i, 0].plot(time_eval_training, sol[i], color='tab:orange', 
-                           alpha=alpha_all, lw=lw_all, label=label)
+        ax = axes[i]
         
-        # Plot best solve in blue
-        if best_training_solve is not None:
-            axes[i, 0].plot(time_eval_training, best_training_solve[i], 
-                           color='tab:blue', alpha=alpha_best, lw=lw_best, 
-                           label='Best (chosen)')
+        # Training span shading
+        if training_span is not None:
+            ax.axvspan(training_span[0], training_span[1],
+                       color='gray', alpha=0.10, zorder=0)
         
-        # Plot training data points
-        axes[i, 0].plot(time_sampled, snapshots_compressed[i], 'k*', ms=4, 
-                       label='Training data', zorder=5)
-        
-        axes[i, 0].set_ylabel(f'Mode {i+1}')
-        if i == 0:
-            axes[i, 0].legend(loc='upper right', fontsize=8)
-            axes[i, 0].set_title('Training Domain')
-        
-        # Right: Prediction domain
-        # Plot true trajectory if available
+        # True solution
         if time_full is not None and true_states_compressed is not None:
-            axes[i, 1].plot(time_full, true_states_compressed[i], 
-                           color='gray', lw=1.5, alpha=0.7, label='True trajectory')
+            ax.plot(time_full, true_states_compressed[i],
+                    color='tab:gray', lw=2, label='True solution')
         
-        # Plot all stable solves in orange
-        for idx, (sol, _) in enumerate(prediction_solves):
-            label = 'Other stable solves' if idx == 0 else None
-            axes[i, 1].plot(time_eval_prediction, sol[i], color='tab:orange', 
-                           alpha=alpha_all, lw=lw_all, label=label)
+        # Training data
+        ax.plot(time_sampled, snapshots_compressed[i],
+                'k*', ms=5, label='Training data', zorder=5)
         
-        # Plot best solve in blue
+        # Stable solves: median + 5-95% band
+        if n_stable > 0:
+            solves_arr = np.array(prediction_solves)
+            ax.plot(
+                time_eval_prediction,
+                np.median(solves_arr[:, i, :], axis=0),
+                color='tab:purple', linestyle='--', alpha=0.9, lw=2,
+                label='Stable median',
+            )
+            ax.fill_between(
+                time_eval_prediction,
+                np.percentile(solves_arr[:, i, :], 5, axis=0),
+                np.percentile(solves_arr[:, i, :], 95, axis=0),
+                color='tab:purple', alpha=0.15,
+                label='Stable 5\u201395%',
+            )
+        
+        # Best solve highlighted
         if best_prediction_solve is not None:
-            axes[i, 1].plot(time_eval_prediction, best_prediction_solve[i], 
-                           color='tab:blue', alpha=alpha_best, lw=lw_best, 
-                           label='Best (chosen)')
+            ax.plot(
+                time_eval_prediction, best_prediction_solve[i],
+                color='tab:blue', alpha=0.9, lw=2,
+                label=f'Best (reg={grid_search_result.best_reg:.1e})',
+            )
         
-        # Plot training data points
-        axes[i, 1].plot(time_sampled, snapshots_compressed[i], 'ko', ms=4, 
-                       label='Training data', zorder=5)
-        
+        ax.set_ylabel(f'Mode {i + 1}')
         if i == 0:
-            axes[i, 1].legend(loc='upper right', fontsize=8)
-            axes[i, 1].set_title('Prediction Domain')
+            ax.legend(loc='upper right', fontsize=9)
+        
+        # Fix y-axis range to truth data for cross-method comparison
+        if true_states_compressed is not None:
+            ax.set_ylim(*_ylim_from_truth(true_states_compressed[i]))
     
-    axes[-1, 0].set_xlabel('Time')
-    axes[-1, 1].set_xlabel('Time')
-    fig.suptitle('Deterministic ROM Solves: Grid Search Results', fontsize=14, y=1.02)
+    axes[-1].set_xlabel('Time')
+    fig.suptitle(
+        f'Grid Search: Deterministic ROM Solves ({n_stable}/{n_total} stable)',
+        fontsize=14,
+    )
     plt.tight_layout()
     
     return fig, axes

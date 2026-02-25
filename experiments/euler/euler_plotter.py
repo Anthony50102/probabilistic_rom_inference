@@ -8,6 +8,7 @@ from typing import List
 import jax.numpy as jnp
 
 from core import BayesianGP
+from core.plotting import _ylim_from_truth
 from core.plotting import Plotter, rbf_eval, flatten_time, compute_derivatives_fourth_order
 
 
@@ -214,6 +215,8 @@ class EulerPlotter(Plotter):
                 if i == 0:
                     ax[i].legend(loc='upper right', fontsize=9)
 
+                ax[i].set_ylim(*_ylim_from_truth(self.snapshots_prediction[i]))
+
             ax[-1].set_xlabel('Time')
             fig.suptitle("Operator Inference Trajectories", fontsize=16)
             fig.tight_layout()
@@ -249,24 +252,11 @@ class EulerPlotter(Plotter):
             ax[i, 1].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
             ax[i, 2].fill_between(self.time_domain_eval_prediction, np.percentile(rom_solves_prediction[:,i,:], 5, axis=0), np.percentile(rom_solves_prediction[:,i,:], 95, axis=0), color='tab:purple', alpha=0.15)
 
-            yvals = np.asarray(self.snapshots_prediction[i])
-            ymin = np.nanmin(yvals)
-            ymax = np.nanmax(yvals)
+            ymin, ymax = _ylim_from_truth(self.snapshots_prediction[i])
 
-            if np.isclose(ymin, ymax):
-                if np.isclose(ymax, 0.0):
-                    pad = 1.0  # arbitrary small window around zero
-                else:
-                    pad = abs(ymax) * 0.75
-                    ymin -= pad
-                    ymax += pad
-            else:
-                ymin = ymin - abs(ymin) * 0.75
-                ymax = ymax * 1.75
-
-            ax[i, 0].set_ylim(float(ymin), float(ymax))
-            ax[i, 1].set_ylim(float(ymin), float(ymax))
-            ax[i, 2].set_ylim(float(ymin), float(ymax))
+            ax[i, 0].set_ylim(ymin, ymax)
+            ax[i, 1].set_ylim(ymin, ymax)
+            ax[i, 2].set_ylim(ymin, ymax)
 
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
         fig.tight_layout()
@@ -310,24 +300,11 @@ class EulerPlotter(Plotter):
             ax[i, 1].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], color='tab:purple', alpha=0.15)
             ax[i, 2].fill_between(time_domain_prediction, np.percentile(draws_prediction, 5, axis=0)[i], np.percentile(draws_prediction, 95, axis=0)[i], color='tab:purple', alpha=0.15)
 
-            yvals = np.asarray(self.snapshots_prediction[i])
-            ymin = np.nanmin(yvals)
-            ymax = np.nanmax(yvals)
+            ymin, ymax = _ylim_from_truth(self.snapshots_prediction[i])
 
-            if np.isclose(ymin, ymax):
-                if np.isclose(ymax, 0.0):
-                    pad = 1.0  # arbitrary small window around zero
-                else:
-                    pad = abs(ymax) * 0.5
-                    ymin -= pad
-                    ymax += pad
-            else:
-                ymin = ymin - abs(ymin) * 0.5
-                ymax = ymax * 1.5
-
-            ax[i, 0].set_ylim(float(ymin), float(ymax))
-            ax[i, 1].set_ylim(float(ymin), float(ymax))
-            ax[i, 2].set_ylim(float(ymin), float(ymax))
+            ax[i, 0].set_ylim(ymin, ymax)
+            ax[i, 1].set_ylim(ymin, ymax)
+            ax[i, 2].set_ylim(ymin, ymax)
    
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
         fig.tight_layout()
