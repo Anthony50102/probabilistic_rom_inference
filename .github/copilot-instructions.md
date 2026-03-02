@@ -277,8 +277,9 @@ The current implementation simplifies the paper's Algorithm 1 in several ways:
 4. **Stage 3 (latent states not sampled)**: Paper samples $X_i$ from Stage 2 posterior. Code uses `numpyro.deterministic` (fixed GP mean). The `build_bayesian_opinf_model` has a `sample_X` flag but it defaults to `False` and notebooks don't use it.
 5. **Derivative mean uses noisy data**: Paper computes $\mu_{z,i} = D_i X_i$ using the (sampled) latent states. Code calls `compute_gp_derivatives(..., y_train)` with the raw noisy observations. Even when `sample_X=True`, the derivative doesn't use the sampled X.
 6. **~~Missing noise in K_yy~~** (FIXED): `compute_gp_derivatives` now accepts an optional `Ns` parameter with per-mode observation noise variances. When provided, $K_{yy} = k(t,t) + (\nu_i + \varepsilon)I$.
-7. **SVI guide**: Paper recommends `AutoLowRankMultivariateNormal` for Stage 3. All notebooks use `AutoDelta` (MAP estimate).
-8. **FitzHugh-Nagumo notebook cruft**: Contains legacy model definitions below the active code (artifact of earlier development).
+7. **~~Missing noise in K_yy in plot_gp_fit~~** (FIXED): `plot_gp_fit` derivative plots now include observation noise in $K_{yy}$ via the `noise_variances` parameter (falls back to `gp.noise` from the fitted model). Previously used only $10^{-6}I$ jitter, causing misleading derivative oscillations.
+8. **SVI guide**: Paper recommends `AutoLowRankMultivariateNormal` for Stage 3. All notebooks use `AutoDelta` (MAP estimate).
+9. **FitzHugh-Nagumo notebook cruft**: Contains legacy model definitions below the active code (artifact of earlier development).
 
 ### Implementation Notes
 

@@ -221,7 +221,7 @@ class EulerPlotter(Plotter):
             fig.suptitle("Operator Inference Trajectories", fontsize=16)
             fig.tight_layout()
             fig.show()
-            return
+            return fig
 
         # --- Standard 3-column layout ---
         fig, ax = plt.subplots(self.numPODmodes, 3, figsize=figsize, sharey='row', sharex='col')
@@ -261,6 +261,7 @@ class EulerPlotter(Plotter):
         fig.suptitle("Operator Inference Trajectories", fontsize=16)
         fig.tight_layout()
         fig.show()
+        return fig
     
     def operator_plot_trajectories(
                     self,

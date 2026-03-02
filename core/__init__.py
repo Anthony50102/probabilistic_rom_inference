@@ -24,6 +24,7 @@ from .plotting import (
     plot_deterministic_rom_solves,
     plot_gp_fit,
     plot_full_order_error,
+    save_paper_figure,
     compute_derivatives_fourth_order,
     rbf_eval as plotting_rbf_eval,
     flatten_time as plotting_flatten_time,
@@ -115,6 +116,7 @@ __all__ = [
     "plot_deterministic_rom_solves",
     "plot_gp_fit",
     "plot_full_order_error",
+    "save_paper_figure",
     "compute_derivatives_fourth_order",
     # Diagnostics
     "DiagnosticReport",

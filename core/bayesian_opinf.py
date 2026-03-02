@@ -1023,7 +1023,13 @@ def generate_rom_predictions(
     if O_samples.ndim == 2:
         O_samples = O_samples[np.newaxis, ...]  # Add batch dimension
     
-    for i in range(min(num_pulls, len(O_samples))):
+    # Select indices uniformly across all samples (mixes chains evenly
+    # when MCMC concatenates chains sequentially).
+    n_total = len(O_samples)
+    n_use = min(num_pulls, n_total)
+    indices = np.linspace(0, n_total - 1, n_use, dtype=int)
+    
+    for i in indices:
         O = O_samples[i]
         Os.append(O)
         

@@ -331,6 +331,7 @@ class FitzPlotter(Plotter):
         if save:
             fig.savefig(save_path, dpi=300)
         fig.show()
+        return fig
     
     def operator_plot_trajectories(
                     self,

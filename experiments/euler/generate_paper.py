@@ -32,8 +32,6 @@ SCHEMAS = [
         "NUM_MODES": 6,
         "GAMMA": 1e1,
         "GAMMA2": 1e1,
-        # "GAMMA3": 1e1,
-        # "GAMMA4": 5e-1,
         "GAMMA3": 1e2,
         "GAMMA4": 1e-1,
     },

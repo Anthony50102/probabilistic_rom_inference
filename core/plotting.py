@@ -8,6 +8,7 @@ This module contains:
 - Functions for plotting deterministic and Bayesian ROM results
 """
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Optional, Callable
@@ -17,6 +18,25 @@ import jax.numpy as jnp
 # =============================================================================
 # Utility Functions
 # =============================================================================
+
+
+def save_paper_figure(fig, name: str, directory: str, dpi: int = 300):
+    """Save a figure for inclusion in the manuscript.
+
+    Parameters
+    ----------
+    fig : matplotlib Figure
+    name : str
+        Filename stem (without extension), e.g. ``"euler_dense_low_fb"``.
+    directory : str
+        Target directory (created if it does not exist).
+    dpi : int
+        Resolution.
+    """
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"{name}.png")
+    fig.savefig(path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
+    print(f"  \U0001F4C4 Saved paper figure: {path}")
 
 def flatten_time(t: jnp.ndarray) -> jnp.ndarray:
     """Return t with shape (n,) no matter if (n,), (n,1) or (1,n) was given."""
@@ -818,17 +838,22 @@ def plot_gp_fit(
     variances: np.ndarray,
     figsize: Optional[Tuple[float, float]] = None,
     plot_derivatives: bool = True,
+    noise_variances: Optional[np.ndarray] = None,
     all_snapshots_compressed: Optional[List[np.ndarray]] = None,
     all_gp_models: Optional[List[List]] = None,
     all_lengthscales: Optional[List[np.ndarray]] = None,
     all_variances: Optional[List[np.ndarray]] = None,
+    all_noise_variances: Optional[List[np.ndarray]] = None,
+    all_time_sampled: Optional[List[np.ndarray]] = None,
     trajectory_labels: Optional[List[str]] = None,
 ):
     """
     Plot GP fit quality for states and optionally derivatives.
     
-    Can display a single trajectory (default) or multiple trajectories
-    overlaid on the same axes when ``all_*`` parameters are provided.
+    For a single trajectory the layout is ``(num_modes, 1-or-2)`` with
+    state (and derivative) columns.  For multiple trajectories the layout
+    switches to a **grid** — one column per trajectory, one row per mode —
+    with a separate figure for derivatives when *plot_derivatives* is True.
     
     Parameters
     ----------
@@ -838,7 +863,7 @@ def plot_gp_fit(
         Compressed training snapshots for the first trajectory,
         shape (num_modes, num_samples)
     time_sampled : np.ndarray
-        Training time points (shared across trajectories)
+        Training time points for the first trajectory
     time_eval : np.ndarray
         Dense time points for GP evaluation
     lengthscales : np.ndarray
@@ -846,24 +871,40 @@ def plot_gp_fit(
     variances : np.ndarray
         GP variances for the first trajectory, shape (num_modes,)
     figsize : tuple, optional
-        Figure size. Default computed from num_modes
+        Figure size. Default computed from num_modes and num_trajectories
     plot_derivatives : bool
         If True, also plot derivative predictions
+    noise_variances : np.ndarray, optional
+        GP observation noise variances for the first trajectory, shape
+        (num_modes,).  When provided, K_yy includes the noise term so that
+        derivative plots condition on noisy observations (matching
+        ``compute_gp_derivatives``).  Falls back to ``gp.noise`` from
+        each fitted GP model when not provided.
     all_snapshots_compressed : list of (num_modes, n_samples) arrays, optional
         Per-trajectory compressed snapshots (including the first).
-        When provided, overlays all trajectories.
+        When provided **and** more than one trajectory, uses grid layout.
     all_gp_models : list of lists of GP models, optional
         Per-trajectory GP models. ``all_gp_models[ic][mode]``.
     all_lengthscales : list of (num_modes,) arrays, optional
         Per-trajectory lengthscales.
     all_variances : list of (num_modes,) arrays, optional
         Per-trajectory variances.
+    all_noise_variances : list of (num_modes,) arrays, optional
+        Per-trajectory observation noise variances.  Falls back to
+        ``noise_variances`` (or ``gp.noise``) for every trajectory.
+    all_time_sampled : list of np.ndarray, optional
+        Per-trajectory training time points (e.g. heat equation where each
+        trajectory may have different sample times).  Falls back to
+        ``time_sampled`` for every trajectory when not provided.
     trajectory_labels : list of str, optional
         Labels for each trajectory (e.g. ``["IC 1", "IC 2", ...]``).
         
     Returns
     -------
-    fig, axes : matplotlib figure and axes
+    If single trajectory: ``(fig, axes)``
+    If multiple trajectories and plot_derivatives:
+        ``(fig_state, axes_state, fig_deriv, axes_deriv)``
+    If multiple trajectories without derivatives: ``(fig, axes)``
     """
     num_modes = snapshots_compressed.shape[0]
 
@@ -874,132 +915,208 @@ def plot_gp_fit(
         gp_list = all_gp_models if all_gp_models is not None else [gp_models] * n_trajs
         ls_list = all_lengthscales if all_lengthscales is not None else [lengthscales] * n_trajs
         var_list = all_variances if all_variances is not None else [variances] * n_trajs
+        nv_list = all_noise_variances if all_noise_variances is not None else [noise_variances] * n_trajs
     else:
         n_trajs = 1
         snap_list = [snapshots_compressed]
         gp_list = [gp_models]
         ls_list = [lengthscales]
         var_list = [variances]
+        nv_list = [noise_variances]
+
+    # Per-trajectory time points (fall back to shared time_sampled)
+    if all_time_sampled is not None:
+        ts_list = all_time_sampled
+    else:
+        ts_list = [time_sampled] * n_trajs
 
     if trajectory_labels is None:
         trajectory_labels = [f"IC {k+1}" for k in range(n_trajs)]
 
-    # Pick a color cycle for trajectories
-    traj_colors = plt.cm.tab10(np.linspace(0, 1, max(n_trajs, 10)))
-    
+    # ---------- Multi-trajectory grid layout ----------
+    if n_trajs > 1:
+        return _plot_gp_fit_grid(
+            num_modes, n_trajs, snap_list, gp_list, ls_list, var_list,
+            nv_list, ts_list, time_eval, trajectory_labels,
+            plot_derivatives, figsize,
+        )
+
+    # ---------- Single-trajectory layout (unchanged) ----------
     if figsize is None:
-        figsize = (14, 3 * num_modes) if not plot_derivatives else (14, 3 * num_modes)
+        figsize = (14, 3 * num_modes)
     
     ncols = 2 if plot_derivatives else 1
     fig, axes = plt.subplots(num_modes, ncols, figsize=figsize, squeeze=False, sharex="col")
     
+    snap_k = snap_list[0]
+    gps_k = gp_list[0]
+    ls_k = ls_list[0]
+    var_k = var_list[0]
+    nv_k = nv_list[0]
+    ts_k = ts_list[0]
+
+    if plot_derivatives:
+        fd_derivatives = compute_derivatives_fourth_order(snap_k, ts_k)
+
+    for i in range(num_modes):
+        gp = gps_k[i]
+        mean_pred, std_pred = gp.predict(time_eval[:, None], return_std=True)
+        
+        ax_state = axes[i, 0]
+        ax_state.plot(ts_k, snap_k[i], '*', color='k', ms=5,
+                     label='data' if i == 0 else None, zorder=5)
+        ax_state.plot(time_eval, mean_pred, color='tab:purple', lw=2,
+                     linestyle='--', label='GP' if i == 0 else None)
+        ax_state.fill_between(time_eval,
+                             mean_pred - 1.96*std_pred,
+                             mean_pred + 1.96*std_pred,
+                             color='tab:purple', alpha=0.15,
+                             label='95% CI' if i == 0 else None)
+        ax_state.set_ylabel(f'Mode {i+1}')
+        if i == 0:
+            ax_state.set_title('GP State Fit')
+        
+        if plot_derivatives:
+            ax_deriv = axes[i, 1]
+            ell = ls_k[i] if ls_k.ndim == 1 else ls_k[i].mean()
+            var = var_k[i] if var_k.ndim == 1 else var_k[i].mean()
+            ell2 = ell ** 2
+
+            rbf_yy = rbf_eval(ell, var, ts_k, ts_k)
+            noise_i = nv_k[i] if nv_k is not None else gp.noise
+            K_yy = rbf_yy + (noise_i + 1e-6) * np.eye(len(ts_k))
+            rbf_zy = rbf_eval(ell, var, time_eval, ts_k)
+            diff_zy = time_eval[:, None] - ts_k[None, :]
+            K_zy = -(diff_zy / ell2) * rbf_zy
+            rbf_zz = rbf_eval(ell, var, time_eval, time_eval)
+            diff_zz = time_eval[:, None] - time_eval[None, :]
+            K_zz = ((1 - (diff_zz**2 / ell2)) / ell2) * rbf_zz
+
+            alpha_vec = jnp.linalg.solve(K_yy, snap_k[i])
+            mu_deriv = K_zy @ alpha_vec
+            cov_deriv = K_zz - K_zy @ jnp.linalg.solve(K_yy, K_zy.T)
+            std_deriv = jnp.sqrt(jnp.maximum(jnp.diag(cov_deriv), 1e-10))
+
+            ax_deriv.plot(ts_k, fd_derivatives[i], '.', color='k', ms=5,
+                         label='FD' if i == 0 else None, zorder=5)
+            ax_deriv.plot(time_eval, mu_deriv, color='tab:purple', lw=2,
+                         linestyle='--', label='GP deriv' if i == 0 else None)
+            ax_deriv.fill_between(time_eval,
+                                 mu_deriv - 1.96*std_deriv,
+                                 mu_deriv + 1.96*std_deriv,
+                                 color='tab:purple', alpha=0.15,
+                                 label='95% CI' if i == 0 else None)
+            if i == 0:
+                ax_deriv.set_title('GP Derivative Fit')
+
+    axes[0, 0].legend(loc='upper right', fontsize=8)
+    if plot_derivatives:
+        axes[0, 1].legend(loc='upper right', fontsize=8)
+    axes[-1, 0].set_xlabel('Time')
+    if plot_derivatives:
+        axes[-1, 1].set_xlabel('Time')
+    fig.suptitle('GP Fit Quality', fontsize=14, y=1.02)
+    plt.tight_layout()
+    return fig, axes
+
+
+def _plot_gp_fit_grid(
+    num_modes, n_trajs, snap_list, gp_list, ls_list, var_list,
+    nv_list, ts_list, time_eval, trajectory_labels, plot_derivatives, figsize,
+):
+    """Grid layout for multi-trajectory GP fits: rows=modes, cols=trajectories."""
+
+    col_width = max(4.0, 14.0 / n_trajs)
+    default_w = col_width * n_trajs
+    default_h = 3 * num_modes
+
+    # --- State figure ---
+    fs = figsize if figsize is not None else (default_w, default_h)
+    fig_s, ax_s = plt.subplots(num_modes, n_trajs, figsize=fs, squeeze=False)
+
+    for k in range(n_trajs):
+        snap_k = snap_list[k]
+        gps_k = gp_list[k]
+        ts_k = ts_list[k]
+        for i in range(num_modes):
+            ax = ax_s[i, k]
+            mean_pred, std_pred = gps_k[i].predict(time_eval[:, None], return_std=True)
+            ax.plot(ts_k, snap_k[i], '*', color='k', ms=4, label='data', zorder=5)
+            ax.plot(time_eval, mean_pred, color='tab:purple', lw=2,
+                    linestyle='--', label='GP')
+            ax.fill_between(time_eval,
+                            mean_pred - 1.96*std_pred,
+                            mean_pred + 1.96*std_pred,
+                            color='tab:purple', alpha=0.15, label='95% CI')
+            if k == 0:
+                ax.set_ylabel(f'Mode {i+1}')
+            if i == 0:
+                ax.set_title(trajectory_labels[k])
+            if i == num_modes - 1:
+                ax.set_xlabel('Time')
+            if i == 0 and k == 0:
+                ax.legend(loc='upper right', fontsize=7)
+
+    fig_s.suptitle('GP State Fit', fontsize=14, y=1.02)
+    fig_s.tight_layout()
+
+    if not plot_derivatives:
+        return fig_s, ax_s
+
+    # --- Derivative figure ---
+    fig_d, ax_d = plt.subplots(num_modes, n_trajs, figsize=fs, squeeze=False)
+
     for k in range(n_trajs):
         snap_k = snap_list[k]
         gps_k = gp_list[k]
         ls_k = ls_list[k]
         var_k = var_list[k]
-        color = traj_colors[k % len(traj_colors)]
-        label_prefix = trajectory_labels[k]
-
-        # Compute finite difference derivatives for comparison
-        if plot_derivatives:
-            fd_derivatives = compute_derivatives_fourth_order(snap_k, time_sampled)
+        nv_k = nv_list[k] if nv_list is not None else None
+        ts_k = ts_list[k]
+        fd_derivatives = compute_derivatives_fourth_order(snap_k, ts_k)
 
         for i in range(num_modes):
-            gp = gps_k[i]
-            
-            # Get GP predictions on dense grid
-            mean_pred, std_pred = gp.predict(time_eval[:, None], return_std=True)
-            
-            # === Left: State fit ===
-            ax_state = axes[i, 0]
-            
-            # Training data — always black stars
-            ax_state.plot(time_sampled, snap_k[i], '*', color='k', ms=5,
-                         label=f'{label_prefix} data' if i == 0 else None, zorder=5,
-                         alpha=0.7 if n_trajs > 1 else 1.0)
-            
-            # GP mean prediction (dashed purple)
-            ax_state.plot(time_eval, mean_pred, color=color if n_trajs > 1 else 'tab:purple',
-                         lw=2, linestyle='--',
-                         label=f'{label_prefix} GP' if i == 0 else None,
-                         alpha=0.8 if n_trajs > 1 else 1.0)
-            
-            # GP 95% CI (±1.96σ) — always show
-            ci_color = color if n_trajs > 1 else 'tab:purple'
-            ax_state.fill_between(time_eval, 
-                                 mean_pred - 1.96*std_pred, 
-                                 mean_pred + 1.96*std_pred,
-                                 color=ci_color, alpha=0.15,
-                                 label='95% CI' if (i == 0 and k == 0) else None)
-            
-            ax_state.set_ylabel(f'Mode {i+1}')
-            if i == 0:
-                ax_state.set_title('GP State Fit')
-            
-            # === Right: Derivative fit ===
-            if plot_derivatives:
-                ax_deriv = axes[i, 1]
-                
-                ell = ls_k[i] if ls_k.ndim == 1 else ls_k[i].mean()
-                var = var_k[i] if var_k.ndim == 1 else var_k[i].mean()
-                ell2 = ell ** 2
-                
-                rbf_yy = rbf_eval(ell, var, time_sampled, time_sampled)
-                K_yy = rbf_yy + 1e-6 * np.eye(len(time_sampled))
-                
-                rbf_zy = rbf_eval(ell, var, time_eval, time_sampled)
-                diff_zy = time_eval[:, None] - time_sampled[None, :]
-                K_zy = -(diff_zy / ell2) * rbf_zy
-                
-                rbf_zz = rbf_eval(ell, var, time_eval, time_eval)
-                diff_zz = time_eval[:, None] - time_eval[None, :]
-                K_zz = ((1 - (diff_zz**2 / ell2)) / ell2) * rbf_zz
-                
-                alpha_vec = jnp.linalg.solve(K_yy, snap_k[i])
-                mu_deriv = K_zy @ alpha_vec
-                cov_deriv = K_zz - K_zy @ jnp.linalg.solve(K_yy, K_zy.T)
-                std_deriv = jnp.sqrt(jnp.maximum(jnp.diag(cov_deriv), 1e-10))
-                
-                # Finite difference derivatives — always black dots
-                ax_deriv.plot(time_sampled, fd_derivatives[i], '.', color='k',
-                             ms=5, alpha=0.7 if n_trajs > 1 else 1.0,
-                             label=f'{label_prefix} FD' if i == 0 else None, zorder=5)
-                
-                # GP derivative prediction (dashed purple)
-                deriv_color = color if n_trajs > 1 else 'tab:purple'
-                ax_deriv.plot(time_eval, mu_deriv, color=deriv_color, lw=2, 
-                             linestyle='--',
-                             alpha=0.8 if n_trajs > 1 else 1.0,
-                             label=f'{label_prefix} GP deriv' if i == 0 else None)
-                # GP derivative 95% CI — always show
-                ax_deriv.fill_between(time_eval,
-                                     mu_deriv - 1.96*std_deriv,
-                                     mu_deriv + 1.96*std_deriv,
-                                     color=deriv_color, alpha=0.15,
-                                     label='95% CI' if (i == 0 and k == 0) else None)
-                
-                if i == 0:
-                    ax_deriv.set_title('GP Derivative Fit')
+            ax = ax_d[i, k]
+            ell = ls_k[i] if ls_k.ndim == 1 else ls_k[i].mean()
+            var = var_k[i] if var_k.ndim == 1 else var_k[i].mean()
+            ell2 = ell ** 2
 
-    # Add legend to first row
-    if n_trajs > 1:
-        axes[0, 0].legend(loc='upper right', fontsize=7, ncol=min(n_trajs, 3))
-        if plot_derivatives:
-            axes[0, 1].legend(loc='upper right', fontsize=7, ncol=min(n_trajs, 3))
-    else:
-        axes[0, 0].legend(loc='upper right', fontsize=8)
-        if plot_derivatives:
-            axes[0, 1].legend(loc='upper right', fontsize=8)
-    
-    axes[-1, 0].set_xlabel('Time')
-    if plot_derivatives:
-        axes[-1, 1].set_xlabel('Time')
-    
-    fig.suptitle('GP Fit Quality', fontsize=14, y=1.02)
-    plt.tight_layout()
-    
-    return fig, axes
+            rbf_yy = rbf_eval(ell, var, ts_k, ts_k)
+            noise_i = nv_k[i] if nv_k is not None else gps_k[i].noise
+            K_yy = rbf_yy + (noise_i + 1e-6) * np.eye(len(ts_k))
+            rbf_zy = rbf_eval(ell, var, time_eval, ts_k)
+            diff_zy = time_eval[:, None] - ts_k[None, :]
+            K_zy = -(diff_zy / ell2) * rbf_zy
+            rbf_zz = rbf_eval(ell, var, time_eval, time_eval)
+            diff_zz = time_eval[:, None] - time_eval[None, :]
+            K_zz = ((1 - (diff_zz**2 / ell2)) / ell2) * rbf_zz
+
+            alpha_vec = jnp.linalg.solve(K_yy, snap_k[i])
+            mu_deriv = K_zy @ alpha_vec
+            cov_deriv = K_zz - K_zy @ jnp.linalg.solve(K_yy, K_zy.T)
+            std_deriv = jnp.sqrt(jnp.maximum(jnp.diag(cov_deriv), 1e-10))
+
+            ax.plot(ts_k, fd_derivatives[i], '.', color='k', ms=4,
+                    label='FD', zorder=5)
+            ax.plot(time_eval, mu_deriv, color='tab:purple', lw=2,
+                    linestyle='--', label='GP deriv')
+            ax.fill_between(time_eval,
+                            mu_deriv - 1.96*std_deriv,
+                            mu_deriv + 1.96*std_deriv,
+                            color='tab:purple', alpha=0.15, label='95% CI')
+            if k == 0:
+                ax.set_ylabel(f'Mode {i+1}')
+            if i == 0:
+                ax.set_title(trajectory_labels[k])
+            if i == num_modes - 1:
+                ax.set_xlabel('Time')
+            if i == 0 and k == 0:
+                ax.legend(loc='upper right', fontsize=7)
+
+    fig_d.suptitle('GP Derivative Fit', fontsize=14, y=1.02)
+    fig_d.tight_layout()
+
+    return fig_s, ax_s, fig_d, ax_d
 
 
 def plot_full_order_error(
