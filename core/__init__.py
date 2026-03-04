@@ -23,6 +23,7 @@ from .plotting import (
     Plotter,
     plot_deterministic_rom_solves,
     plot_gp_fit,
+    plot_operator_derivative_fit,
     plot_full_order_error,
     save_paper_figure,
     compute_derivatives_fourth_order,
@@ -59,7 +60,9 @@ from .bayesian_opinf import (
 # Bayesian diagnostics
 from .diagnostics import (
     DiagnosticReport,
+    StabilityReport,
     run_diagnostics,
+    diagnose_stability,
     compute_posterior_correlation,
     compute_ess,
     compute_rhat,
@@ -115,12 +118,15 @@ __all__ = [
     "Plotter",
     "plot_deterministic_rom_solves",
     "plot_gp_fit",
+    "plot_operator_derivative_fit",
     "plot_full_order_error",
     "save_paper_figure",
     "compute_derivatives_fourth_order",
     # Diagnostics
     "DiagnosticReport",
+    "StabilityReport",
     "run_diagnostics",
+    "diagnose_stability",
     "compute_posterior_correlation",
     "compute_ess",
     "compute_rhat",

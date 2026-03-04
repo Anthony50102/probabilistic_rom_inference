@@ -17,7 +17,7 @@ Works with both SVI and MCMC results from the bayesian_opinf module.
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from typing import Optional, Dict, List, Tuple, Union
+from typing import Optional, Dict, List, Tuple, Union, Callable
 from dataclasses import dataclass, field
 
 
@@ -983,3 +983,380 @@ def _normal_pdf_binned(bins: np.ndarray, mu: float, sigma: float) -> np.ndarray:
     """Evaluate normal PDF at bin centers."""
     centers = 0.5 * (bins[:-1] + bins[1:])
     return _normal_pdf(centers, mu, sigma)
+
+
+# =============================================================================
+# Stability Diagnostics
+# =============================================================================
+
+def _compute_operator_blocks(
+    operators: str, num_modes: int, input_dim: int = 0,
+) -> Dict[str, Tuple[int, int]]:
+    """Return ``{block_name: (col_start, col_end)}`` for an OpInf operator string."""
+    col = 0
+    blocks = {}
+    for ch in operators:
+        if ch == "c":
+            w = 1
+        elif ch == "A":
+            w = num_modes
+        elif ch == "H":
+            w = num_modes * (num_modes + 1) // 2
+        elif ch == "G":
+            # cubic
+            w = num_modes * (num_modes + 1) * (num_modes + 2) // 6
+        elif ch == "B":
+            w = max(input_dim, 1)
+        elif ch == "N":
+            w = num_modes * max(input_dim, 1)
+        else:
+            raise ValueError(f"Unknown operator character '{ch}'")
+        blocks[ch] = (col, col + w)
+        col += w
+    return blocks
+
+
+@dataclass
+class StabilityReport:
+    """Container for stability diagnostic results."""
+
+    # MAP / mean operator
+    map_stable: Optional[bool] = None
+    prior_stable: Optional[bool] = None
+
+    # ELBO convergence
+    elbo_converged: Optional[bool] = None
+    elbo_final_slope: Optional[float] = None
+
+    # Prior-posterior shift
+    shift_norms_per_row: Optional[np.ndarray] = None
+    shift_relative_per_block: Optional[Dict[str, float]] = None
+
+    # Eigenvalue analysis (A block)
+    prior_A_eigenvalues: Optional[np.ndarray] = None
+    posterior_A_eigenvalues: Optional[np.ndarray] = None
+    prior_A_max_real: Optional[float] = None
+    posterior_A_max_real: Optional[float] = None
+
+    # Perturbation sensitivity
+    perturb_stable_fracs: Optional[Dict[str, float]] = None
+
+    # Overall
+    warnings: List[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        lines = []
+        lines.append("=" * 64)
+        lines.append("  STABILITY DIAGNOSTIC REPORT")
+        lines.append("=" * 64)
+
+        # MAP / prior stability
+        lines.append("\n--- Operator Stability ---")
+        if self.prior_stable is not None:
+            s = "STABLE" if self.prior_stable else "UNSTABLE"
+            lines.append(f"  Prior operator:     {s}")
+        if self.map_stable is not None:
+            s = "STABLE" if self.map_stable else "UNSTABLE"
+            lines.append(f"  Posterior MAP/mean: {s}")
+
+        # ELBO
+        if self.elbo_converged is not None:
+            lines.append("\n--- ELBO Convergence ---")
+            s = "converged" if self.elbo_converged else "NOT converged"
+            lines.append(f"  Status: {s}  (final slope = {self.elbo_final_slope:.2e})")
+
+        # Prior-posterior shift
+        if self.shift_norms_per_row is not None:
+            lines.append("\n--- Prior → Posterior Shift ---")
+            for i, norm in enumerate(self.shift_norms_per_row):
+                lines.append(f"  Mode {i}: ‖ΔO‖ = {norm:.4f}")
+        if self.shift_relative_per_block:
+            lines.append("  Per-block relative shift (‖Δblock‖/‖prior_block‖):")
+            for name, val in self.shift_relative_per_block.items():
+                lines.append(f"    {name}: {val:.4f}")
+
+        # Eigenvalue analysis
+        if self.prior_A_eigenvalues is not None:
+            lines.append("\n--- Linear Operator (A) Eigenvalues ---")
+            lines.append(f"  Prior  max Re(λ): {self.prior_A_max_real:+.6f}"
+                         f"  {'(unstable!)' if self.prior_A_max_real > 0 else '(stable)'}")
+            lines.append(f"  Post.  max Re(λ): {self.posterior_A_max_real:+.6f}"
+                         f"  {'(unstable!)' if self.posterior_A_max_real > 0 else '(stable)'}")
+
+        # Perturbation sensitivity
+        if self.perturb_stable_fracs is not None:
+            lines.append("\n--- Perturbation Sensitivity ---")
+            for name, frac in self.perturb_stable_fracs.items():
+                bar = "█" * int(frac * 20) + "░" * (20 - int(frac * 20))
+                lines.append(f"  Perturb {name:>1}: {bar} {frac:.0%} stable")
+
+        # Warnings
+        if self.warnings:
+            lines.append("\n--- ⚠  Warnings ---")
+            for w in self.warnings:
+                lines.append(f"  • {w}")
+
+        text = "\n".join(lines)
+        print(text)
+        return text
+
+
+def diagnose_stability(
+    posterior_operator: np.ndarray,
+    prior_operator: np.ndarray,
+    rom,
+    snapshots_compressed: np.ndarray,
+    time_eval: np.ndarray,
+    operators: str = "cAH",
+    input_func: Optional[Callable] = None,
+    input_dim: int = 0,
+    losses: Optional[List[float]] = None,
+    perturb_scale: float = 0.01,
+    perturb_trials: int = 100,
+    plot: bool = True,
+    verbose: bool = True,
+) -> StabilityReport:
+    """
+    Run stability diagnostics on a posterior operator.
+
+    Parameters
+    ----------
+    posterior_operator : array (r, d)
+        Posterior MAP/mean operator matrix.
+    prior_operator : array (r, d)
+        Prior operator matrix.
+    rom : opinf ROM
+        ROM object (must have ``model._extract_operators`` and ``model.predict``).
+    snapshots_compressed : array (r, n_time)
+        Compressed training snapshots (for initial condition).
+    time_eval : array (n_time,)
+        Time points for ROM integration.
+    operators : str
+        OpInf operator string (e.g. ``"cAH"``, ``"cAHBN"``).
+    input_func : callable, optional
+        Input function for systems with inputs.
+    input_dim : int
+        Input dimension (0 if no inputs).
+    losses : list of float, optional
+        SVI loss history for convergence check.
+    perturb_scale : float
+        Scale of Gaussian perturbation relative to each operator entry.
+    perturb_trials : int
+        Number of perturbation trials per block.
+    plot : bool
+        Whether to generate diagnostic plots.
+    verbose : bool
+        Whether to print the summary report.
+
+    Returns
+    -------
+    StabilityReport
+    """
+    report = StabilityReport()
+    num_modes = posterior_operator.shape[0]
+    blocks = _compute_operator_blocks(operators, num_modes, input_dim)
+
+    # ------------------------------------------------------------------
+    # 1. MAP / prior stability
+    # ------------------------------------------------------------------
+    def _is_stable(O):
+        rom.model._extract_operators(np.array(O))
+        try:
+            if input_func is not None:
+                rom.model.predict(
+                    state0=snapshots_compressed[:, 0],
+                    t=time_eval,
+                    input_func=input_func,
+                )
+            else:
+                rom.model.predict(
+                    state0=snapshots_compressed[:, 0],
+                    t=time_eval,
+                )
+            return rom.model.predict_result_.y.shape[1] >= time_eval.size
+        except Exception:
+            return False
+
+    report.prior_stable = _is_stable(prior_operator)
+    report.map_stable = _is_stable(posterior_operator)
+
+    if not report.prior_stable:
+        report.warnings.append(
+            "Prior operator is UNSTABLE — posterior has nowhere safe to start."
+        )
+    if not report.map_stable:
+        report.warnings.append(
+            "Posterior MAP/mean is UNSTABLE — SVI may not have converged "
+            "or GAMMA/GAMMA2 need tuning."
+        )
+
+    # ------------------------------------------------------------------
+    # 2. ELBO convergence
+    # ------------------------------------------------------------------
+    if losses is not None and len(losses) > 200:
+        tail = np.array(losses[-200:])
+        x = np.arange(len(tail), dtype=float)
+        slope = np.polyfit(x, tail, 1)[0]
+        report.elbo_final_slope = float(slope)
+        report.elbo_converged = abs(slope) < 0.1 * np.std(tail)
+        if not report.elbo_converged:
+            report.warnings.append(
+                f"ELBO may not have converged (final slope={slope:.2e})."
+            )
+
+    # ------------------------------------------------------------------
+    # 3. Prior → posterior shift
+    # ------------------------------------------------------------------
+    diff = posterior_operator - prior_operator
+    report.shift_norms_per_row = np.linalg.norm(diff, axis=1)
+
+    rel = {}
+    for name, (c0, c1) in blocks.items():
+        prior_block_norm = np.linalg.norm(prior_operator[:, c0:c1])
+        diff_block_norm = np.linalg.norm(diff[:, c0:c1])
+        rel[name] = (
+            diff_block_norm / prior_block_norm
+            if prior_block_norm > 1e-12
+            else float("inf")
+        )
+    report.shift_relative_per_block = rel
+
+    biggest = max(rel, key=rel.get)
+    if rel[biggest] > 1.0:
+        report.warnings.append(
+            f"Block '{biggest}' shifted more than 100% from prior "
+            f"(relative shift = {rel[biggest]:.2f})."
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Eigenvalue analysis of A block
+    # ------------------------------------------------------------------
+    if "A" in blocks:
+        c0, c1 = blocks["A"]
+        A_prior = prior_operator[:, c0:c1]
+        A_post = posterior_operator[:, c0:c1]
+        report.prior_A_eigenvalues = np.linalg.eigvals(A_prior)
+        report.posterior_A_eigenvalues = np.linalg.eigvals(A_post)
+        report.prior_A_max_real = float(np.max(report.prior_A_eigenvalues.real))
+        report.posterior_A_max_real = float(np.max(report.posterior_A_eigenvalues.real))
+
+        if report.posterior_A_max_real > 0:
+            report.warnings.append(
+                f"Posterior A has eigenvalue with Re(λ)={report.posterior_A_max_real:+.4f} "
+                f"— linear dynamics are unstable."
+            )
+
+    # ------------------------------------------------------------------
+    # 5. Perturbation sensitivity per block
+    # ------------------------------------------------------------------
+    perturb_fracs = {}
+    rng = np.random.RandomState(42)
+    for name, (c0, c1) in blocks.items():
+        stable_count = 0
+        for _ in range(perturb_trials):
+            O_pert = posterior_operator.copy()
+            block = O_pert[:, c0:c1]
+            scale = perturb_scale * (np.abs(block) + 1e-8)
+            O_pert[:, c0:c1] += rng.randn(*block.shape) * scale
+            if _is_stable(O_pert):
+                stable_count += 1
+        perturb_fracs[name] = stable_count / perturb_trials
+    report.perturb_stable_fracs = perturb_fracs
+
+    fragile = [n for n, f in perturb_fracs.items() if f < 0.5]
+    if fragile:
+        report.warnings.append(
+            f"Blocks {fragile} are fragile (<50% stable under {perturb_scale:.0%} perturbation)."
+        )
+
+    # ------------------------------------------------------------------
+    # Plots
+    # ------------------------------------------------------------------
+    if plot:
+        _plot_stability_diagnostics(
+            report, posterior_operator, prior_operator, blocks,
+            operators, losses,
+        )
+
+    if verbose:
+        report.summary()
+
+    return report
+
+
+def _plot_stability_diagnostics(
+    report: StabilityReport,
+    posterior_operator: np.ndarray,
+    prior_operator: np.ndarray,
+    blocks: Dict[str, Tuple[int, int]],
+    operators: str,
+    losses: Optional[List[float]],
+):
+    """Generate stability diagnostic plots."""
+    num_modes = posterior_operator.shape[0]
+    has_eig = report.prior_A_eigenvalues is not None
+    has_losses = losses is not None and len(losses) > 0
+    ncols = 2 + int(has_eig) + int(has_losses)
+
+    fig, axes = plt.subplots(1, ncols, figsize=(5 * ncols, 4))
+    axes = np.atleast_1d(axes)
+    ax_idx = 0
+
+    # --- ELBO loss curve ---
+    if has_losses:
+        ax = axes[ax_idx]; ax_idx += 1
+        ax.plot(losses, color='tab:blue', lw=0.5)
+        ax.set_xlabel("SVI step")
+        ax.set_ylabel("ELBO loss")
+        ax.set_title("ELBO Convergence")
+        ax.set_yscale("symlog")
+
+    # --- Prior-posterior shift heatmap ---
+    ax = axes[ax_idx]; ax_idx += 1
+    diff = posterior_operator - prior_operator
+    vmax = np.max(np.abs(diff))
+    im = ax.imshow(diff, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
+    ax.set_xlabel("Operator column")
+    ax.set_ylabel("Mode")
+    ax.set_yticks(range(num_modes))
+    ax.set_yticklabels([f"Mode {i+1}" for i in range(num_modes)])
+    ax.set_title("O_posterior − O_prior")
+    plt.colorbar(im, ax=ax, shrink=0.8)
+    # Block separators
+    for name, (c0, c1) in blocks.items():
+        if c0 > 0:
+            ax.axvline(c0 - 0.5, color="k", lw=0.8, ls="--")
+        ax.text((c0 + c1) / 2 - 0.5, -0.7, name, ha="center", fontsize=9,
+                fontweight="bold")
+
+    # --- Eigenvalue plot ---
+    if has_eig:
+        ax = axes[ax_idx]; ax_idx += 1
+        eig_pr = report.prior_A_eigenvalues
+        eig_po = report.posterior_A_eigenvalues
+        ax.scatter(eig_pr.real, eig_pr.imag, marker="o", s=80,
+                   edgecolors="tab:blue", facecolors="none", label="Prior A", zorder=5)
+        ax.scatter(eig_po.real, eig_po.imag, marker="x", s=80,
+                   color="tab:red", label="Posterior A", zorder=5)
+        ax.axvline(0, color="k", lw=0.5, ls="--")
+        ax.set_xlabel("Re(λ)")
+        ax.set_ylabel("Im(λ)")
+        ax.set_title("A Eigenvalues")
+        ax.legend(fontsize=8)
+
+    # --- Perturbation bar chart ---
+    if report.perturb_stable_fracs is not None:
+        ax = axes[ax_idx]; ax_idx += 1
+        names = list(report.perturb_stable_fracs.keys())
+        fracs = [report.perturb_stable_fracs[n] for n in names]
+        colors = ["tab:green" if f >= 0.8 else "tab:orange" if f >= 0.5 else "tab:red"
+                  for f in fracs]
+        ax.barh(names, fracs, color=colors)
+        ax.set_xlim(0, 1)
+        ax.set_xlabel("Fraction stable")
+        ax.set_title("Perturbation Sensitivity")
+        ax.axvline(0.5, color="k", lw=0.5, ls="--")
+
+    fig.suptitle("Stability Diagnostics", fontsize=14, y=1.02)
+    fig.tight_layout()
+    return fig

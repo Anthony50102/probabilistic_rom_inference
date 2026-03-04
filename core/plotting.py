@@ -421,7 +421,8 @@ class Plotter:
                      plot_single: bool = False,
                      training_span: Optional[Tuple[float, float]] = None,
                      save: bool = False,
-                     save_path: str = "operator_inference_trajectories.png"
+                     save_path: str = "operator_inference_trajectories.png",
+                     ivp_method: Optional[str] = None,
                      ):
         """
         Plot operator inference trajectories from posterior samples.
@@ -460,6 +461,9 @@ class Plotter:
         samples = min(operator_samples.shape[0], latent_state_samples.shape[0], max_num_samples)
 
         # Generate ROM solves
+        predict_kwargs = {}
+        if ivp_method is not None:
+            predict_kwargs['method'] = ivp_method
         rom_solves_training, rom_solves_prediction = [], []
         for i in range(samples):
             operator = operator_samples[i]
@@ -467,18 +471,18 @@ class Plotter:
             
             # Training domain
             if input_func is not None:
-                rom.model.predict(state0=q0, t=self.time_domain_eval_training, input_func=input_func)
+                rom.model.predict(state0=q0, t=self.time_domain_eval_training, input_func=input_func, **predict_kwargs)
             else:
-                rom.model.predict(state0=q0, t=self.time_domain_eval_training)
+                rom.model.predict(state0=q0, t=self.time_domain_eval_training, **predict_kwargs)
             if rom.model.predict_result_.y.shape[1] < self.time_domain_eval_training.size:
                 continue
             rom_solves_training.append(rom.model.predict_result_.y)
 
             # Prediction domain
             if input_func is not None:
-                rom.model.predict(state0=q0, t=self.time_domain_eval_prediction, input_func=input_func)
+                rom.model.predict(state0=q0, t=self.time_domain_eval_prediction, input_func=input_func, **predict_kwargs)
             else:
-                rom.model.predict(state0=q0, t=self.time_domain_eval_prediction)
+                rom.model.predict(state0=q0, t=self.time_domain_eval_prediction, **predict_kwargs)
             if rom.model.predict_result_.y.shape[1] < self.time_domain_eval_prediction.size:
                 continue
             rom_solves_prediction.append(rom.model.predict_result_.y)
@@ -692,6 +696,7 @@ def plot_deterministic_rom_solves(
     input_func: Optional[Callable] = None,
     training_span: Optional[Tuple[float, float]] = None,
     figsize: Optional[Tuple[float, float]] = None,
+    ivp_method: Optional[str] = None,
 ):
     """
     Plot all stable deterministic ROM solves from grid search.
@@ -748,10 +753,13 @@ def plot_deterministic_rom_solves(
     
     def _predict(rom_obj, t):
         """Run ROM prediction with optional input_func."""
+        predict_kwargs = {}
+        if ivp_method is not None:
+            predict_kwargs['method'] = ivp_method
         if input_func is not None:
-            rom_obj.model.predict(state0=q0, t=t, input_func=input_func)
+            rom_obj.model.predict(state0=q0, t=t, input_func=input_func, **predict_kwargs)
         else:
-            rom_obj.model.predict(state0=q0, t=t)
+            rom_obj.model.predict(state0=q0, t=t, **predict_kwargs)
     
     for reg, error, operator, rom in stable_results:
         rom.model._extract_operators(operator)
@@ -1117,6 +1125,124 @@ def _plot_gp_fit_grid(
     fig_d.tight_layout()
 
     return fig_s, ax_s, fig_d, ax_d
+
+
+def plot_operator_derivative_fit(
+    operator: np.ndarray,
+    rom,
+    Xs_means: np.ndarray,
+    time_eval: np.ndarray,
+    Ls: np.ndarray,
+    Vs: np.ndarray,
+    time_train: np.ndarray,
+    snapshots: np.ndarray,
+    Ns: Optional[np.ndarray] = None,
+    inputs_eval: Optional[np.ndarray] = None,
+    data_scaler=None,
+    title: str = "Operator Derivative Fit",
+    figsize: Optional[Tuple[float, float]] = None,
+):
+    """
+    Compare the operator-predicted derivatives against GP and FD derivatives.
+
+    For each mode plots:
+    - FD derivatives (from training data)
+    - GP derivative mean μ_z (what the ODE constraint targets)
+    - Operator prediction f(X) @ O^T (what the learned operator produces)
+
+    This reveals whether the operator is matching, overfitting, or ignoring
+    the GP derivative signal.
+
+    Parameters
+    ----------
+    operator : array (r, d)
+        Operator matrix (posterior mean or single sample).
+    rom : opinf ROM
+        ROM with ``model._assemble_data_matrix``.
+    Xs_means : array (r, n_eval)
+        Latent state means at evaluation points.
+    time_eval : array (n_eval,)
+        Evaluation time points (where ODE constraints are enforced).
+    Ls, Vs : arrays (r,)
+        GP lengthscales and variances per mode.
+    time_train : array (n_train,)
+        Training time points.
+    snapshots : array (r, n_train)
+        Training data (in the same space as GP was fitted — scaled or raw).
+    Ns : array (r,), optional
+        Observation noise variances per mode.
+    inputs_eval : array (p, n_eval), optional
+        Input values at evaluation times.
+    data_scaler : DataScaler, optional
+        If data is scaled, used to transform Xs to original space for the
+        operator and to scale the operator output back.
+    title : str
+        Figure suptitle.
+    figsize : tuple, optional
+        Figure size.
+
+    Returns
+    -------
+    fig, axes
+    """
+    from .bayesian_opinf import compute_gp_derivatives
+
+    num_modes = operator.shape[0]
+    if figsize is None:
+        figsize = (14, 3 * num_modes)
+
+    # --- Compute GP derivative mean ---
+    mu_z, cov_z = compute_gp_derivatives(
+        Ls, Vs, time_train, time_eval, snapshots, Ns=Ns,
+    )
+
+    # --- Compute operator-predicted derivatives: f(X) @ O^T ---
+    Xs = jnp.array(Xs_means)
+    if data_scaler is not None:
+        Xs_original = jnp.array([
+            Xs[i] * data_scaler.stds_[i, 0] + data_scaler.means_[i, 0]
+            for i in range(num_modes)
+        ])
+    else:
+        Xs_original = Xs
+
+    f_Xi = rom.model._assemble_data_matrix(Xs_original, inputs=inputs_eval) @ jnp.array(operator).T
+
+    if data_scaler is not None:
+        f_Xi_scaled = jnp.array([
+            f_Xi.T[i] / data_scaler.stds_[i, 0] for i in range(num_modes)
+        ])
+    else:
+        f_Xi_scaled = f_Xi.T
+
+    # --- FD derivatives from training data ---
+    fd_derivatives = compute_derivatives_fourth_order(snapshots, time_train)
+
+    # --- Plot ---
+    fig, axes = plt.subplots(num_modes, 1, figsize=figsize, squeeze=False)
+
+    for i in range(num_modes):
+        ax = axes[i, 0]
+        ax.plot(time_train, fd_derivatives[i], '.', color='k', ms=3,
+                alpha=0.4, label='FD' if i == 0 else None, zorder=3)
+        ax.plot(time_eval, np.array(mu_z[i]), color='tab:purple', lw=1.5,
+                linestyle='--', label='GP deriv (μ_z)' if i == 0 else None,
+                alpha=0.7, zorder=4)
+        gp_std = jnp.sqrt(jnp.maximum(jnp.diag(cov_z[i]), 1e-10))
+        ax.fill_between(time_eval,
+                         np.array(mu_z[i] - 1.96 * gp_std),
+                         np.array(mu_z[i] + 1.96 * gp_std),
+                         color='tab:purple', alpha=0.1)
+        ax.plot(time_eval, np.array(f_Xi_scaled[i]), color='tab:red', lw=2,
+                label='f(X)Oᵀ (operator)' if i == 0 else None, zorder=5)
+        ax.set_ylabel(f'Mode {i+1}')
+        if i == num_modes - 1:
+            ax.set_xlabel('Time')
+
+    axes[0, 0].legend(loc='upper right', fontsize=8)
+    fig.suptitle(title, fontsize=14, y=1.02)
+    fig.tight_layout()
+    return fig, axes
 
 
 def plot_full_order_error(

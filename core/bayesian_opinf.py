@@ -199,11 +199,28 @@ class SimpleGPR:
         except np.linalg.LinAlgError:
             return 1e10
     
-    def fit(self, X, y, verbose=False):
-        """Fit GP hyperparameters via MLE."""
+    def fit(self, X, y, verbose=False, bounds=None):
+        """Fit GP hyperparameters via MLE.
+
+        Parameters
+        ----------
+        X : array (n, 1)
+            Training inputs.
+        y : array (n,)
+            Training targets.
+        verbose : bool
+            Print fitted hyperparameters.
+        bounds : list of (low, high) or None, optional
+            Bounds for ``[log(ls), log(var), log(noise)]``.  Each element
+            is a ``(low, high)`` pair or ``None`` for unbounded.  When the
+            outer value is ``None`` (default), no bounds are used.
+        """
         self.X_train, self.y_train = X, y
         init = np.log([self.length_scale, self.variance, self.noise])
-        result = minimize(self.neg_log_marginal_likelihood, init, method='L-BFGS-B')
+        result = minimize(
+            self.neg_log_marginal_likelihood, init,
+            method='L-BFGS-B', bounds=bounds,
+        )
         self.length_scale, self.variance, self.noise = np.exp(result.x)
         
         if verbose:
@@ -248,7 +265,8 @@ def grid_search_prior_operator(
     input_func: Optional[Callable] = None,
     reg_values: Optional[List[float]] = None,
     refine: bool = True,
-    verbose: bool = True
+    verbose: bool = True,
+    ivp_method: Optional[str] = None,
 ) -> GridSearchResult:
     """
     Find optimal prior operator via regularization grid search.
@@ -279,6 +297,10 @@ def grid_search_prior_operator(
         around the best grid value.
     verbose : bool
         Print progress
+    ivp_method : str, optional
+        ODE solver method for stability testing (e.g., ``"Radau"`` for stiff
+        systems). Passed to ``rom.model.predict(method=...)``. If None,
+        uses scipy's default (RK45).
         
     Returns
     -------
@@ -313,10 +335,13 @@ def grid_search_prior_operator(
             rom.model._extract_operators(np.array(operator))
             
             # Test stability
+            predict_kwargs = {}
+            if ivp_method is not None:
+                predict_kwargs['method'] = ivp_method
             if input_func is not None:
-                pred = rom.model.predict(state0=snapshots_compressed[:, 0], t=time_domain_sampled, input_func=input_func)
+                pred = rom.model.predict(state0=snapshots_compressed[:, 0], t=time_domain_sampled, input_func=input_func, **predict_kwargs)
             else:
-                pred = rom.model.predict(state0=snapshots_compressed[:, 0], t=time_domain_sampled)
+                pred = rom.model.predict(state0=snapshots_compressed[:, 0], t=time_domain_sampled, **predict_kwargs)
             
             sol = rom.model.predict_result_
             
@@ -400,7 +425,8 @@ def fit_gp_hyperparameters_mle(
     time_domain: np.ndarray,
     snapshots: np.ndarray,
     time_range_factor: float = 10.0,
-    verbose: bool = True
+    verbose: bool = True,
+    lengthscale_bounds: Optional[Tuple[float, float]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[SimpleGPR]]:
     """
     Fit GP hyperparameters via MLE for each mode.
@@ -415,6 +441,11 @@ def fit_gp_hyperparameters_mle(
         Initial lengthscale = time_range / factor
     verbose : bool
         Print progress
+    lengthscale_bounds : (float, float) or None, optional
+        Lower and upper bounds on the lengthscale (in original space,
+        not log-space).  Useful when MLE fits pathologically short
+        lengthscales that cause noisy derivatives.  When ``None``
+        (default), the lengthscale is unconstrained.
         
     Returns
     -------
@@ -430,11 +461,20 @@ def fit_gp_hyperparameters_mle(
     num_modes = snapshots.shape[0]
     time_range = time_domain.max() - time_domain.min()
     
+    # Build L-BFGS-B bounds in log-space: [log(ls), log(var), log(noise)]
+    if lengthscale_bounds is not None:
+        ls_lo, ls_hi = np.log(lengthscale_bounds[0]), np.log(lengthscale_bounds[1])
+        opt_bounds = [(ls_lo, ls_hi), (None, None), (None, None)]
+    else:
+        opt_bounds = None
+    
     Ls, Vs, Ns = [], [], []
     gp_models = []
     
     if verbose:
         print("Fitting GP hyperparameters via MLE...")
+        if lengthscale_bounds is not None:
+            print(f"  Lengthscale bounds: [{lengthscale_bounds[0]:.4f}, {lengthscale_bounds[1]:.4f}]")
     
     for i in range(num_modes):
         gp = SimpleGPR(
@@ -442,7 +482,8 @@ def fit_gp_hyperparameters_mle(
             variance_init=np.var(snapshots[i]),
             noise_init=0.01
         )
-        gp.fit(time_domain[:, None], snapshots[i], verbose=verbose)
+        gp.fit(time_domain[:, None], snapshots[i], verbose=verbose,
+               bounds=opt_bounds)
         gp_models.append(gp)
         
         Ls.append(gp.length_scale)
@@ -529,6 +570,9 @@ def build_bayesian_opinf_model(
     svi_O_std: Optional[np.ndarray] = None,
     min_relative_std: float = 0.15,
     min_absolute_std: float = 0.8,
+    relative_gamma: bool = False,
+    gamma_floor: float = 0.5,
+    relative_gamma2: bool = False,
 ):
     """
     Build a numpyro model for Bayesian operator inference.
@@ -590,6 +634,21 @@ def build_bayesian_opinf_model(
         Minimum relative std for ``"shifted"`` reparam (fraction of |mean|)
     min_absolute_std : float
         Minimum absolute std for ``"shifted"`` reparam
+    relative_gamma : bool
+        When True, the prior scale for each operator entry is
+        ``gamma * max(|prior_operator_ij|, gamma_floor)`` instead of a
+        uniform ``gamma``.  This gives larger entries proportionally more
+        room to move while keeping a floor for near-zero entries.
+    gamma_floor : float
+        Minimum absolute prior scale when ``relative_gamma=True``.
+        Prevents near-zero prior entries from having vanishing prior std.
+    relative_gamma2 : bool
+        When True, the ODE constraint slack for each mode is scaled by the
+        variance of that mode's GP derivative mean.  The constraint
+        covariance becomes ``cov_z[i] + gamma2 * var(mu_z[i]) * I``
+        instead of ``cov_z[i] + gamma2 * I``.  This ensures modes with
+        large derivatives (e.g. Mode 0 in FitzHugh-Nagumo) get
+        proportionally more slack.
 
     Returns
     -------
@@ -637,18 +696,44 @@ def build_bayesian_opinf_model(
             "reparam='shifted' requires svi_O_mean and svi_O_std from a prior SVI run"
         )
 
+    # Precompute per-element prior scale for relative_gamma mode.
+    # gamma_scale_matrix has shape (r, d); actual scale = gamma * gamma_scale_matrix.
+    if relative_gamma:
+        _gamma_scale_matrix = jnp.maximum(
+            jnp.abs(jnp.array(prior_operator)), gamma_floor
+        )
+    else:
+        _gamma_scale_matrix = jnp.ones_like(prior_operator)
+
+    # Precompute per-mode derivative variance scales for relative_gamma2.
+    # _gamma2_scales[ic] is an array of shape (num_modes,) with the variance
+    # of each mode's GP derivative mean.  Computed once from fixed GP params.
+    if relative_gamma2:
+        _gamma2_scales = []
+        for ic in range(num_ics):
+            mu_z_ic, _ = compute_gp_derivatives(
+                Ls_list[ic], Vs_list[ic], time_list[ic], time_list[ic],
+                snap_list[ic], Ns=Ns_list[ic] if Ns_list is not None else None,
+            )
+            # Per-mode variance of the derivative mean; floor at 1.0
+            scales_ic = jnp.maximum(jnp.var(mu_z_ic, axis=1), 1.0)
+            _gamma2_scales.append(scales_ic)
+    else:
+        _gamma2_scales = None
+
     def model(time, gamma=1e-1, gamma2=1e2, normalization=1e-6):
         num_time_steps = time.shape[0]
+        gamma_scale = gamma * _gamma_scale_matrix
 
         # --- Sample operator ---
         if reparam == "noncentered":
             # Non-centered parameterization with same prior as centered form.
-            # O = prior_operator + gamma * O_std, where O_std ~ N(0, I).
+            # O = prior_operator + scale * O_std, where O_std ~ N(0, I).
             O_std = numpyro.sample(
                 "O_standardized",
                 dist.Normal(jnp.zeros_like(prior_operator), jnp.ones_like(prior_operator)),
             )
-            O = numpyro.deterministic("O", prior_operator + gamma * O_std)
+            O = numpyro.deterministic("O", prior_operator + gamma_scale * O_std)
         elif reparam == "shifted":
             # Non-centered parameterization with prior shifted to SVI posterior.
             # O = svi_O_mean + uncertainty * O_std, where O_std ~ N(0, I).
@@ -670,7 +755,7 @@ def build_bayesian_opinf_model(
                 "O",
                 dist.Normal(
                     loc=prior_operator,
-                    scale=gamma * jnp.ones_like(prior_operator),
+                    scale=gamma_scale,
                 ),
             )
 
@@ -732,7 +817,8 @@ def build_bayesian_opinf_model(
 
             # ODE constraints
             for i in range(num_modes):
-                constraint_cov = cov_z[i] + gamma2 * jnp.eye(num_time_steps)
+                g2_i = gamma2 * _gamma2_scales[ic][i] if _gamma2_scales is not None else gamma2
+                constraint_cov = cov_z[i] + g2_i * jnp.eye(num_time_steps)
                 numpyro.sample(
                     f"ode_constraint{ic}_{i}",
                     dist.MultivariateNormal(f_Xi_scaled[i], constraint_cov),
@@ -812,19 +898,16 @@ def run_svi(
         sample_key, params, sample_shape=(num_samples,), **model_kwargs
     )
     
-    # For guides that don't return deterministic sites (e.g. AutoNormal),
-    # run the model with posterior samples to collect them.
-    # Support both naming conventions: X0 (legacy) and X0_0 (multi-IC)
-    has_deterministic = any(k.startswith('X') for k in posterior_samples)
-    if not has_deterministic:
-        predictive = Predictive(
-            model, posterior_samples=posterior_samples, num_samples=num_samples
-        )
-        model_output = predictive(pred_key, **model_kwargs)
-        # Merge: latent samples from guide + deterministic/observed sites from model
-        samples = {**posterior_samples, **model_output}
-    else:
-        samples = posterior_samples
+    # Always run Predictive to collect deterministic sites (e.g. "O" from
+    # shifted reparam, "X0_0" from deterministic latent states).
+    # guide.sample_posterior() only returns sample sites, not deterministic ones.
+    predictive = Predictive(
+        model, posterior_samples=posterior_samples, num_samples=num_samples,
+        return_sites=None,  # return all sites
+    )
+    model_output = predictive(pred_key, **model_kwargs)
+    # Merge: guide's latent samples take priority, model fills in deterministic sites
+    samples = {**model_output, **posterior_samples}
     
     if verbose:
         print(f"✅ SVI complete! Final loss: {results.losses[-1]:.4f}")
@@ -969,7 +1052,7 @@ def _find_operator_samples(samples: dict, site_name: str = "O") -> np.ndarray:
             return np.asarray(samples[pattern])
     
     # 4. Fuzzy match: find keys containing the site name
-    exclude = {'ode', 'constraint', 'latent'}
+    exclude = {'ode', 'constraint', 'latent', 'standardized'}
     candidates = [
         k for k in samples.keys()
         if site_name in k and not any(ex in k.lower() for ex in exclude)
@@ -995,7 +1078,8 @@ def generate_rom_predictions(
     num_modes: int,
     num_pulls: int = 200,
     input_func: Optional[Callable] = None,
-    data_scaler = None
+    data_scaler = None,
+    ivp_method: Optional[str] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Generate ROM predictions from posterior samples.
@@ -1061,10 +1145,13 @@ def generate_rom_predictions(
         rom.model._extract_operators(np.array(O))
         
         try:
+            predict_kwargs = {}
+            if ivp_method is not None:
+                predict_kwargs['method'] = ivp_method
             if input_func is not None:
-                rom.model.predict(state0=snapshots_compressed[:, 0], t=time_eval, input_func=input_func)
+                rom.model.predict(state0=snapshots_compressed[:, 0], t=time_eval, input_func=input_func, **predict_kwargs)
             else:
-                rom.model.predict(state0=snapshots_compressed[:, 0], t=time_eval)
+                rom.model.predict(state0=snapshots_compressed[:, 0], t=time_eval, **predict_kwargs)
             
             if rom.model.predict_result_.y.shape[1] >= time_eval.size:
                 rom_solves.append(rom.model.predict_result_.y)

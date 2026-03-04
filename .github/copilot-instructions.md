@@ -147,7 +147,11 @@ Each PDE system has its own directory with:
 - $K_{z,z}$ uses $\partial^2 k / \partial t_1 \partial t_2$ (mixed second derivative)
 - These serve as the "observed" derivatives in the Bayesian ODE constraint likelihood
 - GP densification (`NUM_EVAL_POINTS`) allows evaluating ODE constraints at more points than training samples
-- **Note**: currently `K_yy` does NOT include observation noise — only a small jitter (1e-5). This is consistent with the paper's formulation when conditioning on latent states $X_i$, but the code conditions on noisy `y_train` instead.
+
+### GP Hyperparameter Fitting
+- `fit_gp_hyperparameters_mle` fits lengthscale, variance, and noise per mode via MLE (L-BFGS-B on negative log marginal likelihood)
+- **`lengthscale_bounds`**: optional `(lower, upper)` bounds on the lengthscale in original space.  Prevents MLE from fitting pathologically short lengthscales that absorb observation noise into kernel wiggle instead of the noise term.  The FitzHugh-Nagumo notebook uses `(0.05, 1.5)` as a safety net.
+- **MLE pathology warning**: For systems with sharp transitions (e.g. FitzHugh-Nagumo), MLE often prefers a very short lengthscale + near-zero noise (SNR > 10,000) over a longer lengthscale + realistic noise.  This causes the GP to interpolate through noise, producing poor derivatives.  Mitigation options: lengthscale bounds, Bayesian GP hyperparameters (paper's Stage 1), or lengthscale priors/penalties.
 
 ### Kernel derivative functions (`bgp_jax.py`)
 - `get_c_phi(ℓ, σ², t)`: $C_\phi = k(t,t) + \varepsilon I$ (kernel matrix + nugget)
@@ -168,6 +172,14 @@ Each PDE system has its own directory with:
 - Selects the operator that produces the most stable ROM (longest integration before blowup)
 - This deterministic estimate becomes the **prior mean** in the Bayesian model (differs from paper's $O \sim N(0, 10I)$)
 - ROM stability is assessed by attempting `model.predict()` and checking for solver success
+
+### Operator Prior Scaling
+- **`relative_gamma=False`** (default): uniform prior std `gamma` for all entries, i.e. `O ~ N(prior, gamma * I)`.
+- **`relative_gamma=True`**: per-entry prior std `gamma * max(|prior_ij|, gamma_floor)`. Large operator entries get proportionally more room to move; near-zero entries are floored at `gamma_floor` (default 0.5) to avoid vanishing prior std. The FitzHugh-Nagumo notebook uses this mode because operator entries span 0.03–10 and a uniform prior makes no physical sense.
+
+### ODE Constraint Scaling
+- **`relative_gamma2=False`** (default): uniform ODE constraint slack `gamma2 * I` for all modes.
+- **`relative_gamma2=True`**: per-mode constraint slack `gamma2 * var(mu_z_i) * I`, where `var(mu_z_i)` is the variance of the GP derivative mean for mode $i$.  Modes with large derivatives (e.g. Mode 0 in FitzHugh-Nagumo with var ~5500) get proportionally more slack than modes with small derivatives (Mode 2 with var ~130).  Scales are precomputed from fixed GP parameters and floored at 1.0.  The FitzHugh-Nagumo notebook uses this mode via `RELATIVE_GAMMA2 = True`.
 
 ### Inference Guides (SVI)
 - `AutoDelta`: MAP estimate (point estimate, fast) — **currently used in all notebooks**

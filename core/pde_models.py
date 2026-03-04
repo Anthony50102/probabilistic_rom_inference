@@ -1182,6 +1182,144 @@ class CubicHeatBimodal(HeatBimodal):
         return HeatBimodal.derivative(self, t, state) - state**3
 
 
+# Viscous Burgers equation ====================================================
+class Burgers(_BasePDE):
+    """Full-order solver for the one-dimensional viscous Burgers equation
+    with periodic boundary conditions:
+
+        du/dt + u * du/dx = nu * d²u/dx²   on [0, L), periodic.
+
+    The solver uses second-order central finite differences for both the
+    diffusion and convection terms.
+
+    Parameters
+    ----------
+    spatial_domain : (N,) ndarray
+        Uniform grid points (NOT including the duplicate periodic endpoint).
+    nu : float
+        Viscosity coefficient.
+    """
+
+    num_variables = 1
+
+    # Initialization ----------------------------------------------------------
+    def __init__(self, spatial_domain: np.ndarray, nu: float = 0.01):
+        """Initialize the spatial domain and build the diffusion matrix."""
+        self.__x = np.asarray(spatial_domain)
+        N = self.__x.size
+        dx = np.diff(self.__x)
+        if not np.allclose(dx, dx[0]):
+            raise ValueError("nonuniform spatial domain not supported")
+        self.__dx = dx[0]
+        self.__nu = nu
+
+        # Diffusion matrix: nu * d²u/dx² with periodic BC.
+        dx2inv = nu / (self.__dx ** 2)
+        diags = np.array([1, -2, 1]) * dx2inv
+        A = sparse.diags(diags, [-1, 0, 1], (N, N)).todok()
+        A[0, -1] = dx2inv      # periodic wrap
+        A[-1, 0] = dx2inv      # periodic wrap
+        self.__A = A.tocsr()
+
+    # Properties --------------------------------------------------------------
+    @property
+    def spatial_domain(self):
+        """Spatial domain."""
+        return self.__x
+
+    @property
+    def x(self):
+        """Spatial domain."""
+        return self.__x
+
+    @property
+    def N(self):
+        """Number of degrees of freedom."""
+        return self.__x.size
+
+    @property
+    def dx(self):
+        """Spatial resolution."""
+        return self.__dx
+
+    @property
+    def nu(self):
+        """Viscosity coefficient."""
+        return self.__nu
+
+    # Solving -----------------------------------------------------------------
+    def derivative(self, t: float, state: np.ndarray) -> np.ndarray:
+        """Compute the state derivative.
+
+        Parameters
+        ----------
+        t : float
+            Time (unused — autonomous system).
+        state : (N,) ndarray
+            State at time t.
+
+        Returns
+        -------
+        (N,) ndarray
+            State derivative at time t.
+        """
+        # Diffusion: nu * d²u/dx².
+        diffusion = self.__A @ state
+        # Convection: -u * du/dx (central difference, periodic via roll).
+        convection = -state * (
+            np.roll(state, -1) - np.roll(state, 1)
+        ) / (2 * self.__dx)
+        return diffusion + convection
+
+    # Auxiliary conditions ----------------------------------------------------
+    @staticmethod
+    def initial_conditions(spatial_domain: np.ndarray) -> np.ndarray:
+        """Single-period sinusoidal initial condition.
+
+        Parameters
+        ----------
+        spatial_domain : (N,) ndarray
+            Spatial grid points.
+
+        Returns
+        -------
+        (N,) ndarray
+            Initial state.
+        """
+        x = np.asarray(spatial_domain)
+        dx = x[1] - x[0]
+        L = x[-1] - x[0] + dx
+        return np.sin(2 * np.pi * x / L)
+
+    @staticmethod
+    def noise(states, noise_level=0):
+        """Add multiplicative Gaussian noise to the solution.
+
+        Parameters
+        ----------
+        states : (N, k) ndarray
+            Solution to the PDE over the discretized space-time domain.
+        noise_level : float
+            Noise percentage to add to the solution.
+
+        Returns
+        -------
+        (N, k) ndarray
+            Solution array with added noise.
+        """
+        if not noise_level:
+            return states
+        return np.random.normal(
+            loc=states,
+            scale=np.abs(states * noise_level),
+            size=states.shape,
+        )
+
+    # Inference ---------------------------------------------------------------
+    num_inputs = 0
+    input_func = None
+
+
 # FitzHugh-Nagumo system ======================================================
 class FitzHughNagumo(_BasePDE):
     """Full-order solver and plotting tools for one-dimensional
