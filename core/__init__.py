@@ -57,6 +57,15 @@ from .bayesian_opinf import (
     flatten_time,
 )
 
+# Joint Bayesian OpInf (single-SVI full posterior)
+from .joint_bayesian import (
+    build_joint_bayesian_model,
+    run_joint_svi,
+    extract_gp_posterior,
+    extract_derivative_posterior,
+    gp_based_opinf_baseline,
+)
+
 # Bayesian diagnostics
 from .diagnostics import (
     DiagnosticReport,
@@ -122,6 +131,12 @@ __all__ = [
     "plot_full_order_error",
     "save_paper_figure",
     "compute_derivatives_fourth_order",
+    # Joint Bayesian
+    "build_joint_bayesian_model",
+    "run_joint_svi",
+    "extract_gp_posterior",
+    "extract_derivative_posterior",
+    "gp_based_opinf_baseline",
     # Diagnostics
     "DiagnosticReport",
     "StabilityReport",
