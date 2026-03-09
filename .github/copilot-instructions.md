@@ -84,6 +84,9 @@ Key hyperparameters:
 
 ## Repository Structure
 
+### `GP-Bayes-Refactor` - Overleaf project cloned as a git repo
+inside this directory the current draft of the paper is in the works `manuscript/mainGPBayes.tex`.
+
 ### `core/` — Shared Library
 
 | File | Purpose |
