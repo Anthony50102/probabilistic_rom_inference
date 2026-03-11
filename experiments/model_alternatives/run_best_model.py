@@ -139,9 +139,9 @@ def build_dual_constraint_model(
 
 
 def run_experiment(noise_level=0.03, num_samples=250, num_modes=6,
-                   gamma=2.0, gamma2=0.5, window_size=10,
+                   gamma=2.0, gamma2=2.0, window_size=10,
                    deriv_weight=1.0, integral_weight=1.0,
-                   num_steps=5000, learning_rate=5e-3,
+                   num_steps=10000, learning_rate=3e-3,
                    num_posterior_samples=500, seed=42):
     """Run full experiment with given settings."""
     np.random.seed(seed)
@@ -303,17 +303,17 @@ def run_experiment(noise_level=0.03, num_samples=250, num_modes=6,
         'O_ls': O_ls, 'rom': rom, 'basis': basis,
         'snaps_comp': snaps_comp, 'true_comp': true_comp,
         't_full': t_full, 't_pred': t_pred, 'rom_solves': rom_solves,
+        't_samp': t_samp, 'training_span': TRAINING_SPAN,
     }
 
 
 if __name__ == "__main__":
-    # Default run (matches Model C from comparison)
+    from experiment_utils import plot_experiment_results
+
+    # Default run with optimal settings from experiment log
     result = run_experiment()
+    plot_experiment_results(result, prefix="best_model_3pct")
 
-    print(f"\n{'='*70}")
-    print(f"Testing noise robustness...")
-    print(f"{'='*70}")
-
-    # Test with different noise levels
-    for noise in [0.01, 0.05, 0.10, 0.15]:
-        r = run_experiment(noise_level=noise, num_steps=5000)
+    # Quick sanity check at low noise
+    r = run_experiment(noise_level=0.01, num_steps=10000)
+    plot_experiment_results(r, prefix="best_model_1pct")

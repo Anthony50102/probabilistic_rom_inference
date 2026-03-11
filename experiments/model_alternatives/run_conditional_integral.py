@@ -419,57 +419,77 @@ def run_experiment(
         'O_ls_norm': float(np.linalg.norm(O_ls)),
         'runtime': runtime,
         'samples': samples, 'losses': all_losses,
+        # Data needed for plotting
+        'rom_solves': rom_solves, 'snaps_comp': snaps_comp,
+        'true_comp': true_comp, 't_full': t_full, 't_pred': t_pred,
+        't_samp': t_samp, 'training_span': TRAINING_SPAN,
     }
 
 
 if __name__ == "__main__":
+    from experiment_utils import plot_experiment_results
+
     print("=" * 70)
-    print("EXPERIMENT: Conditional GP + Integral Form (no latent X)")
+    print("EXPERIMENT: Conditional GP + Integral Form — 3 Regimes")
     print("=" * 70)
 
-    configs = [
-        # A: MLL weight = 1.0 (full marginal likelihood)
-        dict(gamma=2.0, gamma2=0.5, deriv_weight=1.0, integral_weight=1.0,
-             mll_weight=1.0, gp_prior_scale=0.3,
-             num_steps=5000, learning_rate=3e-3,
-             label="[A] Full MLL + dual constraint"),
-
-        # B: MLL weight = 0.1 (downweighted marginal likelihood)
-        dict(gamma=2.0, gamma2=0.5, deriv_weight=1.0, integral_weight=1.0,
-             mll_weight=0.1, gp_prior_scale=0.3,
-             num_steps=5000, learning_rate=3e-3,
-             label="[B] MLL=0.1 + dual constraint"),
-
-        # C: No MLL (physics-only GP hyper learning)
-        dict(gamma=2.0, gamma2=0.5, deriv_weight=1.0, integral_weight=1.0,
-             mll_weight=0.0, gp_prior_scale=0.1,
-             num_steps=5000, learning_rate=3e-3,
-             label="[C] No MLL, tight GP prior"),
-
-        # D: Stronger integral, moderate MLL
-        dict(gamma=2.0, gamma2=0.5, deriv_weight=1.0, integral_weight=3.0,
-             mll_weight=0.1, gp_prior_scale=0.3,
-             num_steps=5000, learning_rate=3e-3,
-             label="[D] MLL=0.1 + strong integral"),
+    regimes = [
+        {
+            "name": "dense_low_noise",
+            "label": "Dense data, low noise (250 samples, 3%)",
+            "noise_level": 0.03,
+            "num_samples": 250,
+            "num_eval_points": 400,
+        },
+        {
+            "name": "sparse_medium_noise",
+            "label": "Sparse data, medium noise (55 samples, 5%)",
+            "noise_level": 0.05,
+            "num_samples": 55,
+            "num_eval_points": 200,
+        },
+        {
+            "name": "dense_high_noise",
+            "label": "Dense data, high noise (250 samples, 15%)",
+            "noise_level": 0.15,
+            "num_samples": 250,
+            "num_eval_points": 400,
+        },
     ]
 
+    # Shared best hyperparameters from experiment log
+    shared_kwargs = dict(
+        gamma=2.0, gamma2=2.0,
+        deriv_weight=1.0, integral_weight=1.0,
+        mll_weight=0.1, gp_prior_scale=0.1,
+        num_steps=10000, learning_rate=3e-3,
+        num_posterior_samples=500,
+    )
+
     results = []
-    for cfg in configs:
-        label = cfg.pop('label')
-        r = run_experiment(label=label, num_eval_points=200, num_posterior_samples=200, **cfg)
-        r['label'] = label
+    for regime in regimes:
+        print(f"\n{'='*70}")
+        print(f"REGIME: {regime['label']}")
+        print(f"{'='*70}")
+
+        r = run_experiment(
+            noise_level=regime["noise_level"],
+            num_samples=regime["num_samples"],
+            num_eval_points=regime["num_eval_points"],
+            label=regime["label"],
+            **shared_kwargs,
+        )
+        plot_experiment_results(r, prefix=f"cond_integral_{regime['name']}")
+        r["regime"] = regime["name"]
         results.append(r)
-        print(f"\n>>> {label}: stab={r['stability_pct']:.0f}%, "
-              f"train={r['train_error']:.2%}, pred={r['pred_error']:.2%}, "
-              f"O_norm={r['O_norm']:.1f}, v_drift={r['mean_v_drift']:.1f}%")
 
     print(f"\n\n{'='*90}")
-    print(f"SUMMARY TABLE")
+    print(f"SUMMARY TABLE — Conditional GP + Integral Form")
     print(f"{'='*90}")
-    print(f"{'Config':<40s} {'Stab':>5s} {'Train':>8s} {'Pred':>8s} {'O_norm':>7s} {'σ²_drift':>8s} {'Time':>6s}")
-    print(f"{'-'*40} {'-'*5} {'-'*8} {'-'*8} {'-'*7} {'-'*8} {'-'*6}")
+    print(f"{'Regime':<35s} {'Stab':>5s} {'Train':>8s} {'Pred':>8s} {'O_norm':>7s} {'σ²_drift':>8s} {'Time':>6s}")
+    print(f"{'-'*35} {'-'*5} {'-'*8} {'-'*8} {'-'*7} {'-'*8} {'-'*6}")
     for r in results:
-        print(f"{r['label']:<40s} {r['stability_pct']:>4.0f}% "
+        print(f"{r['regime']:<35s} {r['stability_pct']:>4.0f}% "
               f"{r['train_error']:>7.2%} {r['pred_error']:>7.2%} "
               f"{r['O_norm']:>7.1f} {r['mean_v_drift']:>7.1f}% "
               f"{r['runtime']:>5.0f}s")

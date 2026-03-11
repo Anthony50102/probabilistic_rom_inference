@@ -2,7 +2,7 @@
 Shared experiment utilities for model comparison.
 
 Handles data generation, POD reduction, GP warm-start, evaluation,
-and text-based diagnostic output (no plots needed).
+diagnostic output, and result visualization.
 """
 
 import sys
@@ -435,3 +435,206 @@ def run_warm_start_svi(
     samples = {**model_output, **posterior_samples}
 
     return SVIResult(samples=samples, params=params, losses=all_losses)
+
+
+# =============================================================================
+# Plotting utilities
+# =============================================================================
+
+
+def plot_experiment_results(
+    result: Dict[str, Any],
+    cfg: Optional[ExperimentConfig] = None,
+    save_dir: Optional[str] = None,
+    prefix: str = "best_model",
+    show: bool = False,
+):
+    """
+    Generate and save diagnostic plots from experiment results.
+
+    Produces three figures:
+    1. ROM trajectory plot (3-column: training / prediction / full span)
+       with median (dashed purple), 90% CI (shaded), observations (black
+       stars), and ground truth (gray).
+    2. Operator trace plot — sampled values over sample index + marginal
+       histograms for selected operator matrix entries.
+    3. Loss convergence plot — ELBO loss over SVI iterations.
+
+    Parameters
+    ----------
+    result : dict
+        Return value from ``run_experiment()`` (keys: samples, losses, O_ls,
+        rom, basis, snaps_comp, true_comp, t_full, t_pred, rom_solves,
+        and optionally t_samp, training_span).
+    cfg : ExperimentConfig, optional
+        Experiment configuration (used for spans / num_modes).
+    save_dir : str, optional
+        Directory for saved figures. Defaults to ``figures/`` next to calling
+        script.
+    prefix : str
+        Filename prefix for saved figures.
+    show : bool
+        If True, call ``plt.show()`` after plotting.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from core.diagnostics import plot_trace
+    from scipy.interpolate import interp1d
+
+    if save_dir is None:
+        save_dir = os.path.join(os.path.dirname(__file__), "figures")
+    os.makedirs(save_dir, exist_ok=True)
+
+    samples = result["samples"]
+    losses = result["losses"]
+    rom_solves = result["rom_solves"]
+    snaps_comp = result["snaps_comp"]
+    true_comp = result["true_comp"]
+    t_full = result["t_full"]
+    t_pred = result["t_pred"]
+    t_samp = result.get("t_samp")
+    training_span = result.get("training_span", (0, 0.08))
+    num_modes = snaps_comp.shape[0]
+
+    if len(rom_solves) == 0:
+        print("⚠ No stable ROM solves — skipping ROM trajectory plot")
+    else:
+        # ── 1. ROM Trajectory Plot (3-column) ──────────────────────────
+        rom_arr = np.array(rom_solves)  # (n_stable, num_modes, n_time)
+        rom_med = np.median(rom_arr, axis=0)
+        rom_q05 = np.percentile(rom_arr, 5, axis=0)
+        rom_q95 = np.percentile(rom_arr, 95, axis=0)
+
+        true_interp = interp1d(
+            t_full, true_comp, kind="cubic", fill_value="extrapolate"
+        )
+        true_at_pred = true_interp(t_pred)
+
+        train_end = training_span[1]
+        train_mask = t_pred <= train_end
+        pred_mask = t_pred > train_end
+
+        t_train_win = t_pred[train_mask]
+        t_pred_win = t_pred[pred_mask]
+
+        fig, ax = plt.subplots(
+            num_modes, 3, figsize=(15, 2.5 * num_modes),
+            sharey="row", sharex="col",
+        )
+        if num_modes == 1:
+            ax = ax.reshape(1, -1)
+
+        for i in range(num_modes):
+            # ── Column 0: Training window ──
+            if t_samp is not None:
+                ax[i, 0].plot(t_samp, snaps_comp[i], "k*", ms=3, label="Obs")
+            ax[i, 0].plot(
+                t_train_win, true_at_pred[i, train_mask],
+                color="tab:gray", lw=1.5, label="Truth",
+            )
+            ax[i, 0].plot(
+                t_train_win, rom_med[i, train_mask],
+                color="tab:purple", ls="--", lw=2, alpha=0.9, label="Median",
+            )
+            ax[i, 0].fill_between(
+                t_train_win,
+                rom_q05[i, train_mask], rom_q95[i, train_mask],
+                color="tab:purple", alpha=0.15, label="90% CI",
+            )
+            ax[i, 0].set_ylabel(f"Mode {i}")
+
+            # ── Column 1: Prediction window ──
+            ax[i, 1].plot(
+                t_pred_win, true_at_pred[i, pred_mask],
+                color="tab:gray", lw=1.5,
+            )
+            ax[i, 1].plot(
+                t_pred_win, rom_med[i, pred_mask],
+                color="tab:purple", ls="--", lw=2, alpha=0.9,
+            )
+            ax[i, 1].fill_between(
+                t_pred_win,
+                rom_q05[i, pred_mask], rom_q95[i, pred_mask],
+                color="tab:purple", alpha=0.15,
+            )
+
+            # ── Column 2: Full span ──
+            if t_samp is not None:
+                ax[i, 2].plot(t_samp, snaps_comp[i], "k*", ms=3)
+            ax[i, 2].plot(
+                t_pred, true_at_pred[i],
+                color="tab:gray", lw=1.5,
+            )
+            ax[i, 2].plot(
+                t_pred, rom_med[i],
+                color="tab:purple", ls="--", lw=2, alpha=0.9,
+            )
+            ax[i, 2].fill_between(
+                t_pred,
+                rom_q05[i], rom_q95[i],
+                color="tab:purple", alpha=0.15,
+            )
+            ax[i, 2].axvline(
+                train_end, color="k", ls=":", lw=0.8, alpha=0.5,
+            )
+
+            # y-limits from ground truth
+            yvals = true_at_pred[i]
+            ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
+            pad = max(abs(ymax - ymin) * 0.3, 1e-6)
+            for j in range(3):
+                ax[i, j].set_ylim(ymin - pad, ymax + pad)
+
+        ax[0, 0].set_title("Training Window")
+        ax[0, 1].set_title("Prediction Window")
+        ax[0, 2].set_title("Full Span")
+        ax[0, 0].legend(fontsize=7, loc="upper right")
+        for j in range(3):
+            ax[-1, j].set_xlabel("Time")
+
+        fig.suptitle("ROM Coefficient Trajectories", fontsize=14)
+        fig.tight_layout()
+        path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
+        fig.savefig(path, dpi=200, bbox_inches="tight")
+        print(f"  📊 Saved ROM trajectory plot: {path}")
+        if show:
+            plt.show()
+        plt.close(fig)
+
+    # ── 2. Operator Trace Plot ─────────────────────────────────────
+    try:
+        fig_trace, _ = plot_trace(samples, param_name="O", n_random=6)
+        path = os.path.join(save_dir, f"{prefix}_operator_traces.png")
+        fig_trace.savefig(path, dpi=200, bbox_inches="tight")
+        print(f"  📊 Saved operator trace plot: {path}")
+        if show:
+            plt.show()
+        plt.close(fig_trace)
+    except Exception as e:
+        print(f"  ⚠ Could not generate operator trace plot: {e}")
+
+    # ── 3. Loss Convergence Plot ───────────────────────────────────
+    fig_loss, ax_loss = plt.subplots(1, 2, figsize=(12, 4))
+
+    ax_loss[0].plot(losses, lw=0.8, color="tab:blue")
+    ax_loss[0].set_xlabel("SVI Iteration")
+    ax_loss[0].set_ylabel("ELBO Loss")
+    ax_loss[0].set_title("Loss Convergence")
+    ax_loss[0].grid(True, alpha=0.3)
+
+    # Zoomed view of last 50%
+    half = len(losses) // 2
+    ax_loss[1].plot(range(half, len(losses)), losses[half:], lw=0.8, color="tab:blue")
+    ax_loss[1].set_xlabel("SVI Iteration")
+    ax_loss[1].set_ylabel("ELBO Loss")
+    ax_loss[1].set_title("Loss (last 50%)")
+    ax_loss[1].grid(True, alpha=0.3)
+
+    fig_loss.tight_layout()
+    path = os.path.join(save_dir, f"{prefix}_loss.png")
+    fig_loss.savefig(path, dpi=200, bbox_inches="tight")
+    print(f"  📊 Saved loss convergence plot: {path}")
+    if show:
+        plt.show()
+    plt.close(fig_loss)

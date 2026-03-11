@@ -186,12 +186,18 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
 def input_func_factory(params):
     """Create a function handle to the input function u(t) for a
     given set of input parameters.
+
+    Uses jax.numpy so the function is compatible with both numpy
+    scalars and JAX tracers (needed by diffrax ODE integration).
     """
     a, b = params
 
     def input_func(t):
         """Left Neumann BC with the given input parameters."""
-        return FullOrderModel.oscillators(t, a, b)
+        return jnp.array([
+            a * jnp.sin(2 * jnp.pi * t),
+            b * jnp.sin(4 * jnp.pi * t),
+        ])
 
     return input_func
 

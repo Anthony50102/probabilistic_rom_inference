@@ -59,8 +59,15 @@ def _generate_rom_solves(
                 rom.model.predict(state0=q0, t=time_eval, input_func=input_func)
             else:
                 rom.model.predict(state0=q0, t=time_eval)
-            if rom.model.predict_result_.y.shape[1] == len(time_eval):
-                solves.append(rom.model.predict_result_.y)
+            result = rom.model.predict_result_
+            if hasattr(result, 'y'):
+                sol = result.y
+            elif hasattr(result, 'ys'):
+                sol = np.array(result.ys).T
+            else:
+                continue
+            if sol.shape[1] == len(time_eval) and np.all(np.isfinite(sol)):
+                solves.append(sol)
         except Exception:
             pass
     if solves:

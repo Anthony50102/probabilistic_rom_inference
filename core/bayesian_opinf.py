@@ -1153,9 +1153,18 @@ def generate_rom_predictions(
             else:
                 rom.model.predict(state0=snapshots_compressed[:, 0], t=time_eval, **predict_kwargs)
             
-            if rom.model.predict_result_.y.shape[1] >= time_eval.size:
-                rom_solves.append(rom.model.predict_result_.y)
-        except:
+            result = rom.model.predict_result_
+            # Support both scipy (.y) and JAX/diffrax (.ys) result formats
+            if hasattr(result, 'y'):
+                sol = result.y
+            elif hasattr(result, 'ys'):
+                sol = np.array(result.ys).T  # diffrax returns (n_time, n_modes)
+            else:
+                continue
+            
+            if sol.shape[1] >= time_eval.size and np.all(np.isfinite(sol)):
+                rom_solves.append(sol)
+        except Exception:
             pass
     
     return np.array(Os), np.array(Xs), np.array(rom_solves) if rom_solves else np.array([])
