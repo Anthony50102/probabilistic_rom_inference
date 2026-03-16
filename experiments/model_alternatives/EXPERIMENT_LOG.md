@@ -1,6 +1,77 @@
 # Experiment Log: Model Alternatives
 
-Running summary of experiments exploring different implementations of Bayesian Operator Inference.
+## Final Model: Conditional GP + Dual Constraint (Integral + Derivative Form)
+
+### Overview
+
+The selected model for the paper decomposes inference into a **conditional GP** stage and a **joint operator learning** stage via SVI. GP hyperparameters are sampled (not fixed at MLE), and latent states are computed analytically as deterministic functions of those hyperparameters. Physics fidelity is enforced through dual constraints — a derivative matching term and an integral form term — which together prevent the null-basin collapse and provide both local and global accuracy.
+
+### Graphical Model: What's Random vs Deterministic
+
+**Random variables (sampled via SVI guide):**
+- θ\_GP = (ℓ\_i, σ²\_i, ν\_i) for i = 1..r modes ~ LogNormal priors centered at MLE values
+- O ~ N(O\_ls, γ · |O\_ls|) — operator with informative prior centered on least-squares estimate
+
+**Deterministic (computed analytically given θ\_GP and data):**
+- X(t\_eval) = K(t\_eval, t\_train) · K(t\_train, t\_train)⁻¹ · y\_obs — GP posterior mean
+- μ\_z = K'\_eval · K⁻¹ · y\_obs — GP derivative posterior mean
+- σ²\_z = diag(K'' − K' K⁻¹ K'ᵀ) — GP derivative posterior variance
+
+### Physics Constraints (likelihood factors in ELBO)
+
+1. **Derivative matching:** μ\_z\_i ~ N(f(X)Oᵀ\_i, σ²\_z\_i + γ₂) — matches GP derivative to operator dynamics
+2. **Integral form:** X\_i(t\_b) − X\_i(t\_a) ~ N(∫\_{t\_a}^{t\_b} f(X)Oᵀ\_i ds, √γ₂ · |t\_b − t\_a|) — prevents null basin
+3. **GP marginal log-likelihood:** weighted by mll\_weight (= 0.1) for data fidelity
+
+### Why It Works
+
+- **GP hyperparameters are sampled** (not fixed) → full uncertainty propagation from data to operator
+- **X is computed analytically from θ\_GP** (not sampled as free latent) → eliminates ~1500 DOF, makes optimization tractable
+- **Integral constraint structurally prevents O → 0** — state differences are nonzero, so the integrated dynamics must be too
+- **Derivative constraint alone is insufficient** — GP derivative variance (50–2700) makes it near-vacuous
+- **Integration is a smoothing operation**, robust to noise (unlike differentiation which amplifies it)
+
+### Key Hyperparameters
+
+| Parameter | Value | Role |
+|-----------|-------|------|
+| γ | 2.0 | Operator prior scale |
+| γ₂ | 2.0 | ODE constraint slack |
+| gp\_prior\_scale | 0.1 | LogNormal scale for GP hyper priors |
+| mll\_weight | 0.1 | Weight on GP marginal log-likelihood |
+| lr | 3e-3 | Learning rate (critical — 1e-3 gets stuck) |
+| num\_steps | 10000 | SVI iterations |
+
+### Results Summary
+
+**Euler (6 POD modes):**
+
+| Scenario | Samples | Noise | Stability | Train Err | Pred Err |
+|----------|---------|-------|-----------|-----------|----------|
+| Dense, low noise | 250 | 3% | 100% | 2.12% | 9.99% |
+| Sparse, medium | 55 | 5% | 100% | 12.41% | 43.88% |
+| Dense, high noise | 250 | 15% | 100% | 14.78% | 31.52% |
+
+**Heat (5 train ICs + 1 test IC):**
+
+| Scenario | Samples | Noise | Stability | Train Err | Pred Err | Test IC Train | Test IC Pred |
+|----------|---------|-------|-----------|-----------|----------|---------------|--------------|
+| Dense, low | 65 | 2% | 100% | 1.46% | 4.66% | 2.05% | 4.98% |
+| Sparse, medium | 15 | 5% | 98% | 4.52% | 15.10% | 3.79% | 9.26% |
+| Dense, high | 65 | 8% | 100% | 3.05% | 16.26% | 2.77% | 12.21% |
+
+### Implementation Files
+
+- `run_conditional_integral.py` — Euler experiment
+- `run_conditional_integral_heat.py` — Heat experiment (multi-trajectory)
+- `experiment_utils.py` — Shared utilities (config, data generation, diagnostics)
+- `run_robustness.py` — Validation suite across noise/sparsity scenarios
+
+---
+
+## Experiment Journey
+
+The sections below document the model exploration that led to the final model above. Earlier model implementations are preserved in the `archive/` subdirectory.
 
 ---
 
@@ -188,21 +259,11 @@ Test the conditional GP + integral constraint model (Experiment 2) across the 3 
 
 ---
 
-## Open Issues
+## Known Limitations
 
-1. **CI coverage still below 90% target** (best: 67.6% at noise=0.03)
-   - γ₂=2.0 helps a lot (67.6% vs 45% at noise=0.03)
-   - Could try learning γ₂ per mode, or more flexible guide (AutoMultivariateNormal, AutoLowRankMultivariateNormal)
-   - Could also try temperature scaling the posterior
-2. **High-noise degradation** — at noise=0.15+, the model struggles
-   - Root cause is POD basis quality (26.6% at noise=0.15, 14% at noise=0.25)
-   - GP hyper drift increases to 49-97%
-   - Could try adaptive number of modes (fewer modes at higher noise)
-3. **Heat experiment** not yet adapted (multi-trajectory, cAHBN operators)
-4. **Lengthscale drift** — ℓ consistently increases 20-40%, even with tight priors
-   - This may be physics-driven (smoother states are easier to model)
-5. **Very sparse data (30 samples)** causes JAX JIT hang — different array shapes trigger recompilation
-   - Workaround: precompile with dummy data at target shape, or use fixed-size padding
+1. **CI coverage below 90% target** (best: 67.6% at noise=0.03). γ₂=2.0 helps significantly (67.6% vs 45%). Posterior is too narrow; potential remedies include per-mode γ₂, more flexible guides, or temperature scaling.
+2. **High-noise degradation** — at noise ≥ 15%, performance is limited by POD basis quality (26.6% energy at 15% noise). This is a fundamental limitation of the ROM basis, not the inference method.
+3. **Lengthscale drift** — ℓ consistently increases 20–40% from MLE, even with tight priors. Likely physics-driven (smoother states are easier to model with the operator).
 
 ---
 
