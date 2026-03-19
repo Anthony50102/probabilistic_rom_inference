@@ -1,0 +1,10 @@
+# Neural ODE experiment dependencies
+# For Kaggle: !pip install equinox diffrax optax
+jax>=0.4.0
+jaxlib>=0.4.0
+equinox>=0.11.0
+diffrax>=0.5.0
+optax>=0.1.7
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
