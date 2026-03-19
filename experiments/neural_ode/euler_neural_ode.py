@@ -56,7 +56,7 @@ SCHEMAS = [
 ARCHITECTURES = {
     "small":  {"hidden_dim": 64,  "num_layers": 2, "color": "tab:green"},
     "medium": {"hidden_dim": 128, "num_layers": 3, "color": "tab:orange"},
-    "large":  {"hidden_dim": 256, "num_layers": 4, "color": "tab:red"},
+    # "large":  {"hidden_dim": 256, "num_layers": 4, "color": "tab:red"},
 }
 
 TRAINING_SPAN = (0, 0.08)
