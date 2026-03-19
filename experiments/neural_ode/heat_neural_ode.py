@@ -184,17 +184,18 @@ def train_single_member(key, all_q0, all_t_obs, all_y_obs,
     opt = optax.adam(schedule)
     opt_state = opt.init(eqx.filter(model, eqx.is_array))
 
-    losses = []
-    for step in range(num_steps):
+    recorded_losses = []
+    for s in range(num_steps):
         model, opt_state, loss = _train_step(
             model, opt_state,
             all_q0, all_t_obs, all_y_obs, all_input_params, opt,
         )
-        losses.append(float(loss))
-        if step % 500 == 0 or step == num_steps - 1:
-            print(f"      step {step:5d}/{num_steps}  loss={losses[-1]:.6f}", flush=True)
+        if s % 500 == 0 or s == num_steps - 1:
+            loss_val = float(loss)
+            recorded_losses.append(loss_val)
+            print(f"      step {s:5d}/{num_steps}  loss={loss_val:.6f}", flush=True)
 
-    return model, np.array(losses)
+    return model, np.array(recorded_losses)
 
 
 def train_ensemble(all_q0, all_t_obs, all_y_obs, all_input_params,

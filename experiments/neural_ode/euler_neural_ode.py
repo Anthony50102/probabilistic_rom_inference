@@ -147,14 +147,15 @@ def train_single(model, t_train, y_train, q0, num_steps, key):
         model_new = eqx.apply_updates(model, updates)
         return model_new, opt_state_new, loss
 
-    losses = []
+    recorded_losses = []
     for i in range(num_steps):
         model, opt_state, loss = step(model, opt_state)
-        losses.append(float(loss))
         if i % 500 == 0 or i == num_steps - 1:
-            print(f"      step {i:5d}/{num_steps}  loss={losses[-1]:.6f}", flush=True)
+            loss_val = float(loss)
+            recorded_losses.append(loss_val)
+            print(f"      step {i:5d}/{num_steps}  loss={loss_val:.6f}", flush=True)
 
-    return model, losses
+    return model, recorded_losses
 
 
 # =============================================================================
