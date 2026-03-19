@@ -192,7 +192,7 @@ def train_single_member(key, all_q0, all_t_obs, all_y_obs,
         )
         losses.append(float(loss))
         if step % 500 == 0 or step == num_steps - 1:
-            print(f"      step {step:5d}/{num_steps}  loss={losses[-1]:.6f}")
+            print(f"      step {step:5d}/{num_steps}  loss={losses[-1]:.6f}", flush=True)
 
     return model, np.array(losses)
 

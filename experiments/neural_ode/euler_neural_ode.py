@@ -151,6 +151,8 @@ def train_single(model, t_train, y_train, q0, num_steps, key):
     for i in range(num_steps):
         model, opt_state, loss = step(model, opt_state)
         losses.append(float(loss))
+        if i % 500 == 0 or i == num_steps - 1:
+            print(f"      step {i:5d}/{num_steps}  loss={losses[-1]:.6f}", flush=True)
 
     return model, losses
 
@@ -490,7 +492,7 @@ def run_experiment(schema, arch_name, arch_cfg):
 
     # ── Train ensemble ───────────────────────────────────────────────────
     print(f"  Training {ENSEMBLE_SIZE} ensemble members ({NUM_TRAIN_STEPS} steps, "
-          f"cosine LR {INIT_LR}→0)...")
+          f"cosine LR {INIT_LR}→0)...", flush=True)
     t0 = time.time()
     trained_models = []
     all_losses = []
