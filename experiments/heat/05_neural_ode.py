@@ -43,6 +43,7 @@ from config import (
     input_parameters, test_parameters,
 )
 from step1_generate_data import TrajectorySampler
+from core.plotting import plot_full_order_error
 
 # ── Data regime definitions ──────────────────────────────────────────────────
 SCHEMAS = [
@@ -409,6 +410,8 @@ def run_experiment(schema):
         'training_span': TRAINING_SPAN,
         'num_modes': p['NUM_MODES'],
         'max_samp': max_samp,
+        'basis': basis,
+        'all_true_states_full': all_true_states,
     }
 
 
@@ -574,6 +577,62 @@ def plot_results(result, save_dir=None):
     print(f"  📊 Saved: {path}")
     plt.close(fig_sp)
 
+    # ── 4. Full-Order Error Plot (first training IC) ─────────────────
+    basis = result.get('basis')
+    all_true_states_full = result.get('all_true_states_full')
+    if basis is not None and all_true_states_full is not None and len(all_rom_solves) > 0:
+        first_ic_solves = all_rom_solves[0]
+        if len(first_ic_solves) > 0:
+            first_true_full = all_true_states_full[0]  # (n_dof, n_time_full)
+            fig_foe, axes_foe = plot_full_order_error(
+                rom_solves=first_ic_solves,
+                basis=basis,
+                true_states=first_true_full,
+                time_domain_full=t_full,
+                time_domain_eval=t_pred,
+                training_span=training_span,
+                error_type='relative',
+            )
+            fig_foe.suptitle(f'Full-Order Error (IC 0) — {schema["label"]}', fontsize=14)
+            path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
+            fig_foe.savefig(path, dpi=200, bbox_inches='tight')
+            print(f"  📊 Saved: {path}")
+            plt.close(fig_foe)
+
+
+# =============================================================================
+# save_predictions
+# =============================================================================
+def save_predictions(result, save_dir=None):
+    """Save predictions for cross-method comparison."""
+    schema = result['schema']
+    if save_dir is None:
+        save_dir = os.path.join(SCRIPT_DIR, "results", "comparison", schema['name'])
+    os.makedirs(save_dir, exist_ok=True)
+
+    all_rom_solves = result['all_rom_solves']
+    method_name = "05_neural_ode"
+
+    save_dict = {
+        't_pred': result['t_pred'],
+        'train_error': result['train_error'],
+        'pred_error': result['pred_error'],
+        'stability_pct': result['stability_pct'],
+        'ci_coverage': result.get('ci_coverage', float('nan')),
+        'ci_width': result.get('ci_width', float('nan')),
+        'runtime': result['runtime'],
+        'n_ics': len(all_rom_solves),
+    }
+    for ic_idx, solves in enumerate(all_rom_solves):
+        if len(solves) > 0:
+            save_dict[f'rom_solves_{ic_idx}'] = np.array(solves)
+        else:
+            save_dict[f'rom_solves_{ic_idx}'] = np.empty((0, result['num_modes'], len(result['t_pred'])))
+
+    path = os.path.join(save_dir, f"{method_name}.npz")
+    np.savez(path, **save_dict)
+    print(f"  💾 Saved predictions: {path}")
+
 
 # =============================================================================
 # Main
@@ -603,6 +662,7 @@ def main(schema_names=None):
     for schema in schemas:
         r = run_experiment(schema)
         plot_results(r)
+        save_predictions(r)
         results.append(r)
 
     # Summary table

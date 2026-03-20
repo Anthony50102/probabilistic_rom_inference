@@ -1,17 +1,22 @@
 """
-04 — Conditional GP + Dual Constraint (Integral + Derivative Form) — Heat Equation
+02 — Two-Stage Hierarchical Bayesian OpInf — Heat Equation
 
-Bayesian Operator Inference with full uncertainty propagation for multi-trajectory,
-input-dependent PDEs:
-  θ_GP^(ic) ~ LogNormal(MLE, σ)    — per-IC GP hyperparameters are sampled
-  X^(ic)(t) = K_* K⁻¹ y^(ic)      — states computed analytically from θ_GP
-  O ~ N(O_ls, γ|O_ls|)             — SHARED operator with informative prior
-  γ₂ = fixed hyperparameter        — constraint noise scale (fixed)
+Hierarchical Bayesian Operator Inference with two-stage conditional
+decomposition for multi-trajectory, input-dependent PDEs:
 
-Physics constraints (likelihood factors in ELBO):
-  1. Derivative:  dX/dt ≈ f(X, u)O^T   (weighted by GP derivative variance)
-  2. Integral:    ∫f(X, u)O^T ds ≈ ΔX  (prevents null basin, robust to noise)
-  3. GP MLL:      Σ_ic log p(y|θ_GP)    (data fidelity for hyperparameters)
+  p(O, X | Y) = p(O | X, dX/dt) × p(X, dX/dt | Y)
+
+  Stage 1 — Bayesian GP (per-IC):
+    Fit GP hyperparameters via MLE, then compute the exact GP posterior
+    distributions over latent states X and derivatives dX/dt:
+      p(X^(ic) | Y^(ic)) = N(μ_x, Σ_x)   (GP state posterior)
+      p(dX/dt^(ic) | Y^(ic)) = N(μ_z, Σ_z) (GP derivative posterior)
+
+  Stage 2 — Bayesian Operator Inference via SVI:
+    Sample X^(ic) ~ p(X^(ic) | Y^(ic)) from GP state posteriors.
+    O ~ N(O_ls, γ|O_ls|)  — SHARED operator with informative prior.
+    ODE constraint per IC: f(X^(ic), u^(ic))O^T ~ N(μ_z, Σ_z + γ₂I)
+    This propagates GP state uncertainty into the operator posterior.
 
 Operators: cAHBN (constant + linear + quadratic + input + state×input)
 
@@ -21,8 +26,8 @@ Data regimes (same hyperparameters for all):
   3. Dense data, high noise   (65 samples, 10% noise)
 
 Usage:
-    python 04_conditional_integral.py                  # run all 3 regimes
-    python 04_conditional_integral.py dense_low_noise  # run one regime
+    python 02_two_stage_svi.py                  # run all 3 regimes
+    python 02_two_stage_svi.py dense_low_noise  # run one regime
 """
 
 import sys
@@ -32,12 +37,9 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import numpyro
-import numpyro.distributions as dist
-from numpyro.infer import SVI, Trace_ELBO, Predictive, autoguide
-from numpyro.infer.initialization import init_to_value
-from numpyro.optim import ClippedAdam
 from jax import random
 from scipy.interpolate import interp1d
+import opinf
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
@@ -46,12 +48,14 @@ from config import (
     input_parameters, test_parameters,
 )
 from step1_generate_data import TrajectorySampler
-from core import compute_gp_derivatives, rbf_eval
-from core.bayesian_opinf import fit_gp_hyperparameters_mle, _find_operator_samples
-from core.diagnostics import plot_trace
+from core import (
+    compute_gp_derivatives, rbf_eval,
+    fit_gp_hyperparameters_mle,
+    build_bayesian_opinf_model, run_svi,
+)
+from core.bayesian_opinf import _find_operator_samples
 from core.plotting import plot_full_order_error
 from heat_plotter import _generate_rom_solves
-import opinf
 
 numpyro.set_platform('cpu')
 numpyro.set_host_device_count(4)
@@ -87,11 +91,6 @@ MODEL_PARAMS = dict(
     NUM_ICS=5,
     GAMMA=2.0,
     GAMMA2=0.5,
-    DERIV_WEIGHT=1.0,
-    INTEGRAL_WEIGHT=1.0,
-    MLL_WEIGHT=0.1,
-    GP_PRIOR_SCALE=0.1,
-    WINDOW_SIZE=10,
     NUM_STEPS=10000,
     LEARNING_RATE=3e-3,
     NUM_POSTERIOR_SAMPLES=500,
@@ -102,173 +101,6 @@ TRAINING_SPAN = (0, 1.0)
 PREDICTION_SPAN = (0, 2.0)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
-
-
-# =============================================================================
-# Model builder
-# =============================================================================
-def build_model(
-    rom, num_modes, num_ics,
-    all_time_sampled, all_snapshots_comp, all_inputs_eval,
-    O_prior, all_mle_Ls, all_mle_Vs, all_mle_Ns,
-    num_eval_points=150, window_size=10,
-    deriv_weight=1.0, integral_weight=1.0,
-    mll_weight=0.1, gp_prior_scale=0.1,
-):
-    """Build multi-IC conditional integral NumPyro model."""
-    O_prior_jnp = jnp.array(O_prior)
-
-    # Precompute per-IC kernel matrices
-    ic_data = []
-    for ic in range(num_ics):
-        t_train = jnp.array(all_time_sampled[ic])
-        n_train = len(t_train)
-        y_obs = jnp.array(all_snapshots_comp[ic])
-        inputs_eval = jnp.array(all_inputs_eval[ic])
-
-        time_eval = np.linspace(float(t_train[0]), float(t_train[-1]), num_eval_points)
-        t_eval = jnp.array(time_eval)
-        dt_eval = float(time_eval[1] - time_eval[0])
-
-        sq_diff_tt = (t_train[:, None] - t_train[None, :]) ** 2
-        sq_diffs_et = (t_eval[:, None] - t_train[None, :]) ** 2
-        diffs_et = t_eval[:, None] - t_train[None, :]
-        sq_diffs_ee = (t_eval[:, None] - t_eval[None, :]) ** 2
-        I_train = jnp.eye(n_train)
-
-        mle_log_ells = jnp.array([jnp.log(all_mle_Ls[ic][j]) for j in range(num_modes)])
-        mle_log_sig2s = jnp.array([jnp.log(all_mle_Vs[ic][j]) for j in range(num_modes)])
-        mle_log_nus = jnp.array([jnp.log(all_mle_Ns[ic][j]) for j in range(num_modes)])
-
-        # Integration windows
-        n_windows = num_eval_points // window_size
-        ws_list = [i * window_size for i in range(n_windows)]
-        we_list = [(i + 1) * window_size - 1 for i in range(n_windows)]
-        if we_list[-1] < num_eval_points - 1:
-            we_list[-1] = num_eval_points - 1
-
-        trap_weights = []
-        window_durations = []
-        for ws, we in zip(ws_list, we_list):
-            n_pts = we - ws + 1
-            w = jnp.ones(n_pts) * dt_eval
-            w = w.at[0].set(0.5 * dt_eval)
-            w = w.at[-1].set(0.5 * dt_eval)
-            trap_weights.append(w)
-            window_durations.append(float(time_eval[we] - time_eval[ws]))
-
-        ic_data.append(dict(
-            t_train=t_train, n_train=n_train, y_obs=y_obs,
-            inputs_eval=inputs_eval,
-            t_eval=t_eval, time_eval=time_eval, dt_eval=dt_eval,
-            sq_diff_tt=sq_diff_tt, sq_diffs_et=sq_diffs_et,
-            diffs_et=diffs_et, sq_diffs_ee=sq_diffs_ee, I_train=I_train,
-            mle_log_ells=mle_log_ells, mle_log_sig2s=mle_log_sig2s,
-            mle_log_nus=mle_log_nus,
-            ws_list=ws_list, we_list=we_list,
-            trap_weights=trap_weights, window_durations=window_durations,
-        ))
-
-    def _rbf_sq(ell, sig2, sq_diffs):
-        return sig2 * jnp.exp(-sq_diffs / (2.0 * ell ** 2))
-
-    def _single_gp_conditional(ell, sig2, nu, y_i, sq_diff_tt, sq_diffs_et,
-                                diffs_et, sq_diffs_ee, I_train, n_train):
-        ell2 = ell ** 2
-        jitter = jnp.maximum(1e-5, sig2 * 1e-4)
-        K_tt = _rbf_sq(ell, sig2, sq_diff_tt) + (nu + jitter) * I_train
-        L = jnp.linalg.cholesky(K_tt)
-        alpha = jax.scipy.linalg.cho_solve((L, True), y_i)
-        K_et = _rbf_sq(ell, sig2, sq_diffs_et)
-        X_eval = K_et @ alpha
-        K_zy = -(diffs_et / ell2) * K_et
-        mu_z = K_zy @ alpha
-        K_ee = _rbf_sq(ell, sig2, sq_diffs_ee)
-        K_zz = ((1.0 - sq_diffs_ee / ell2) / ell2) * K_ee
-        V = jax.scipy.linalg.cho_solve((L, True), K_zy.T)
-        deriv_var = jnp.maximum(jnp.diag(K_zz) - jnp.sum(K_zy * V.T, axis=1), 0.0)
-        mll = -0.5 * (jnp.dot(y_i, alpha) +
-                       2.0 * jnp.sum(jnp.log(jnp.diag(L))) +
-                       n_train * jnp.log(2.0 * jnp.pi))
-        return X_eval, mu_z, deriv_var, mll
-
-    def model(gamma=2.0, gamma2=0.5, jitter=1e-4):
-
-        # Shared operator
-        prior_scale = gamma * jnp.maximum(jnp.abs(O_prior_jnp), 0.5)
-        O = numpyro.sample("O", dist.Normal(O_prior_jnp, prior_scale))
-
-        total_mll = 0.0
-
-        for ic in range(num_ics):
-            d = ic_data[ic]
-
-            # Per-IC GP hyperparameters
-            ells = jnp.stack([
-                numpyro.sample(f"lengthscale_{ic}_{j}",
-                              dist.LogNormal(d['mle_log_ells'][j], gp_prior_scale))
-                for j in range(num_modes)
-            ])
-            sig2s = jnp.stack([
-                numpyro.sample(f"variance_{ic}_{j}",
-                              dist.LogNormal(d['mle_log_sig2s'][j], gp_prior_scale))
-                for j in range(num_modes)
-            ])
-            nus = jnp.stack([
-                numpyro.sample(f"noise_{ic}_{j}",
-                              dist.LogNormal(d['mle_log_nus'][j], gp_prior_scale))
-                for j in range(num_modes)
-            ])
-
-            # GP conditional per mode
-            ic_mll = 0.0
-            Xs_eval_list, mu_zs_list, deriv_vars_list = [], [], []
-            for j in range(num_modes):
-                X_j, mu_j, dv_j, mll_j = _single_gp_conditional(
-                    ells[j], sig2s[j], nus[j], d['y_obs'][j],
-                    d['sq_diff_tt'], d['sq_diffs_et'], d['diffs_et'],
-                    d['sq_diffs_ee'], d['I_train'], d['n_train'])
-                Xs_eval_list.append(X_j)
-                mu_zs_list.append(mu_j)
-                deriv_vars_list.append(dv_j)
-                ic_mll = ic_mll + mll_j
-
-            Xs_eval = jnp.stack(Xs_eval_list)
-            mu_zs = jnp.stack(mu_zs_list)
-            deriv_vars = jnp.stack(deriv_vars_list)
-            total_mll = total_mll + ic_mll
-
-            for j in range(num_modes):
-                numpyro.deterministic(f"X_{ic}_{j}", Xs_eval[j])
-
-            # Data matrix WITH inputs
-            f_Xi = rom.model._assemble_data_matrix(
-                Xs_eval, inputs=d['inputs_eval']) @ O.T
-
-            # CONSTRAINT 1: Derivative matching
-            if deriv_weight > 0:
-                for j in range(num_modes):
-                    total_var = deriv_vars[j] + gamma2 + jitter
-                    numpyro.factor(f"ode_{ic}_{j}",
-                        deriv_weight * jnp.sum(
-                            dist.Normal(f_Xi[:, j], jnp.sqrt(total_var)).log_prob(mu_zs[j])))
-
-            # CONSTRAINT 2: Integral form
-            if integral_weight > 0:
-                for j in range(num_modes):
-                    for w_idx, (ws, we) in enumerate(zip(d['ws_list'], d['we_list'])):
-                        delta_X_obs = Xs_eval[j, we] - Xs_eval[j, ws]
-                        delta_X_pred = jnp.sum(d['trap_weights'][w_idx] * f_Xi[ws:we+1, j])
-                        constraint_std = jnp.sqrt(gamma2) * d['window_durations'][w_idx]
-                        numpyro.factor(f"integral_{ic}_{j}_{w_idx}",
-                            integral_weight * dist.Normal(
-                                delta_X_pred, constraint_std).log_prob(delta_X_obs))
-
-        # GP marginal log-likelihood
-        if mll_weight > 0:
-            numpyro.factor("gp_mll", mll_weight * total_mll)
-
-    return model
 
 
 # =============================================================================
@@ -291,7 +123,7 @@ def run_experiment(schema):
     print(f"  {schema['label']}  ({num_samples} samples, {noise_level:.0%} noise)")
     print(f"{'='*70}")
 
-    # ── Data generation ──────────────────────────────────────────────────
+    # ── Data generation (EXACTLY matching heat/04) ────────────────────────
     sampler = TrajectorySampler(
         training_span=TRAINING_SPAN,
         num_samples=num_samples,
@@ -332,19 +164,21 @@ def run_experiment(schema):
         in_func = input_func_factory(train_params[ic])
         all_inputs_eval.append(in_func(t_eval_ic))
 
-    # ── MLE warm start (per-IC) ──────────────────────────────────────────
+    # ── Stage 1: MLE GP fitting (per-IC) ─────────────────────────────────
     all_mle_Ls, all_mle_Vs, all_mle_Ns = [], [], []
+    all_gp_models = []
     for ic in range(num_ics):
         print(f"  GP MLE — IC {ic} ({train_params[ic]})")
-        Ls, Vs, Ns, _ = fit_gp_hyperparameters_mle(
+        Ls, Vs, Ns, gp_models = fit_gp_hyperparameters_mle(
             all_time_sampled[ic], all_snapshots_comp[ic], verbose=False)
         all_mle_Ls.append(Ls)
         all_mle_Vs.append(Vs)
         all_mle_Ns.append(Ns)
+        all_gp_models.append(gp_models)
         for j in range(num_modes):
             print(f"    Mode {j}: ℓ={Ls[j]:.5f}, σ²={Vs[j]:.4f}, ν={Ns[j]:.6f}")
 
-    # ── LS operator (using all ICs) ──────────────────────────────────────
+    # ── LS operator (direct solve from GP derivatives, same as 04) ──────
     D_blocks, dXdt_blocks = [], []
     for ic in range(num_ics):
         t_eval_ic = np.linspace(
@@ -378,63 +212,109 @@ def run_experiment(schema):
     O_ls = np.linalg.solve(DtD + np.eye(DtD.shape[0]), D_all.T @ dXdt_all).T
     print(f"  LS operator norm: {np.linalg.norm(O_ls):.1f}, shape: {O_ls.shape}")
 
-    # ── Build & run SVI ──────────────────────────────────────────────────
-    model = build_model(
-        rom=rom, num_modes=num_modes, num_ics=num_ics,
-        all_time_sampled=all_time_sampled,
-        all_snapshots_comp=all_snapshots_comp,
-        all_inputs_eval=all_inputs_eval,
-        O_prior=O_ls,
-        all_mle_Ls=all_mle_Ls, all_mle_Vs=all_mle_Vs, all_mle_Ns=all_mle_Ns,
-        num_eval_points=num_eval_points, window_size=p['WINDOW_SIZE'],
-        deriv_weight=p['DERIV_WEIGHT'], integral_weight=p['INTEGRAL_WEIGHT'],
-        mll_weight=p['MLL_WEIGHT'], gp_prior_scale=p['GP_PRIOR_SCALE'],
+    # ── Stage 1 output: GP posterior means (per-IC) ────────────────────
+    Xs_means_list = []
+    for ic in range(num_ics):
+        time_eval_ic = np.linspace(
+            float(all_time_sampled[ic][0]),
+            float(all_time_sampled[ic][-1]),
+            num_eval_points,
+        )
+        Xs_means_ic = np.array([
+            all_gp_models[ic][j].predict(time_eval_ic[:, None], return_std=False)
+            for j in range(num_modes)
+        ])
+        Xs_means_list.append(Xs_means_ic)
+
+    # ── Stage 2: Build Bayesian model (deterministic X, derivative constraint) ──
+    bayesian_model = build_bayesian_opinf_model(
+        prior_operator=jnp.array(O_ls),
+        rom=rom,
+        Ls_means=[all_mle_Ls[ic] for ic in range(num_ics)],
+        Vs_means=[all_mle_Vs[ic] for ic in range(num_ics)],
+        time_domain_sampled=[all_time_sampled[ic] for ic in range(num_ics)],
+        snapshots=[all_snapshots_comp[ic] for ic in range(num_ics)],
+        Xs_means=Xs_means_list,
+        Ns_means=[all_mle_Ns[ic] for ic in range(num_ics)],
+        inputs_eval=[all_inputs_eval[ic] for ic in range(num_ics)],
+        data_scaler=None,
+        sample_X=False,
     )
 
-    init_values = {'O': jnp.array(O_ls)}
-    for ic in range(num_ics):
-        for j in range(num_modes):
-            init_values[f'lengthscale_{ic}_{j}'] = all_mle_Ls[ic][j]
-            init_values[f'variance_{ic}_{j}'] = all_mle_Vs[ic][j]
-            init_values[f'noise_{ic}_{j}'] = all_mle_Ns[ic][j]
+    # Evaluation time grid (use first IC's eval grid)
+    time_eval = np.linspace(
+        float(all_time_sampled[0][0]),
+        float(all_time_sampled[0][-1]),
+        num_eval_points,
+    )
 
-    model_kwargs = dict(gamma=p['GAMMA'], gamma2=p['GAMMA2'], jitter=1e-4)
-    guide = autoguide.AutoNormal(model, init_loc_fn=init_to_value(values=init_values))
-    optimizer = ClippedAdam(step_size=p['LEARNING_RATE'])
-    svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+    # ── Two-phase SVI ────────────────────────────────────────────────────
+    #   Phase A: AutoDelta (MAP) to find optimal operator location
+    #   Phase B: AutoNormal initialized at MAP for uncertainty quantification
+    from numpyro.infer import SVI, Trace_ELBO, Predictive, autoguide
+    from numpyro.infer.initialization import init_to_value
+    from numpyro.optim import ClippedAdam
 
-    rng_key, ik = random.split(rng_key)
+    model_kwargs = dict(time=jnp.array(time_eval), gamma=p['GAMMA'],
+                        gamma2=p['GAMMA2'], normalization=1e-6)
+
+    rng_key, svi_key = random.split(rng_key)
     t0 = time.time()
-    svi_state = svi.init(ik, **model_kwargs)
+
+    # Phase A: AutoDelta → MAP estimate
+    guide_a = autoguide.AutoDelta(
+        bayesian_model,
+        init_loc_fn=init_to_value(values={'O': jnp.array(O_ls)}),
+    )
+    svi_a = SVI(bayesian_model, guide_a, ClippedAdam(step_size=p['LEARNING_RATE']),
+                loss=Trace_ELBO())
+    rng_key, init_key = random.split(rng_key)
+    svi_state_a = svi_a.init(init_key, **model_kwargs)
 
     @jax.jit
-    def _step(s, _):
-        s, l = svi.update(s, **model_kwargs)
-        return s, l
+    def _step_a(state, _):
+        state, loss = svi_a.update(state, **model_kwargs)
+        return state, loss
 
-    num_steps = p['NUM_STEPS']
-    seg_size = max(1, num_steps // 10)
-    all_losses = []
-    for seg in range(10):
-        start = seg * seg_size
-        end = min(start + seg_size, num_steps)
-        if seg == 9:
-            end = num_steps
-        if start >= num_steps:
-            break
-        svi_state, seg_losses = jax.lax.scan(_step, svi_state, jnp.arange(end - start))
-        seg_np = np.array(seg_losses)
-        all_losses.extend(seg_np.tolist())
-        print(f"    step {end:6d}/{num_steps}  loss={seg_np[-1]:10.2f}")
+    svi_state_a, losses_a = jax.lax.scan(_step_a, svi_state_a, jnp.arange(p['NUM_STEPS']))
+    params_a = svi_a.get_params(svi_state_a)
+    rng_key, sk = random.split(rng_key)
+    map_samples = guide_a.sample_posterior(sk, params_a, sample_shape=(1,), **model_kwargs)
+    O_map = np.array(_find_operator_samples({**map_samples}, "O")).squeeze()
+    if O_map.ndim == 1:
+        O_map = O_map.reshape(O_ls.shape)
+    print(f"  Phase A (MAP): loss {float(losses_a[0]):.0f} → {float(losses_a[-1]):.0f}, "
+          f"|O_map|={np.linalg.norm(O_map):.1f}")
 
-    params = svi.get_params(svi_state)
-    rng_key, sk, pk = random.split(rng_key, 3)
-    n_post = p['NUM_POSTERIOR_SAMPLES']
-    post = guide.sample_posterior(sk, params, sample_shape=(n_post,), **model_kwargs)
-    pred = Predictive(model, posterior_samples=post, num_samples=n_post)
-    out = pred(pk, **model_kwargs)
-    samples = {**out, **post}
+    # Phase B: AutoNormal initialized at MAP → posterior with uncertainty
+    guide_b = autoguide.AutoNormal(
+        bayesian_model,
+        init_loc_fn=init_to_value(values={'O': jnp.array(O_map)}),
+    )
+    svi_b = SVI(bayesian_model, guide_b, ClippedAdam(step_size=p['LEARNING_RATE']),
+                loss=Trace_ELBO())
+    rng_key, init_key = random.split(rng_key)
+    svi_state_b = svi_b.init(init_key, **model_kwargs)
+
+    @jax.jit
+    def _step_b(state, _):
+        state, loss = svi_b.update(state, **model_kwargs)
+        return state, loss
+
+    svi_state_b, losses_b = jax.lax.scan(_step_b, svi_state_b, jnp.arange(p['NUM_STEPS']))
     runtime = time.time() - t0
+
+    params_b = svi_b.get_params(svi_state_b)
+    rng_key, sk, pk = random.split(rng_key, 3)
+    posterior_samples = guide_b.sample_posterior(
+        sk, params_b, sample_shape=(p['NUM_POSTERIOR_SAMPLES'],), **model_kwargs)
+    predictive = Predictive(bayesian_model, posterior_samples=posterior_samples,
+                            num_samples=p['NUM_POSTERIOR_SAMPLES'])
+    model_output = predictive(pk, **model_kwargs)
+    samples = {**model_output, **posterior_samples}
+    losses = list(np.array(losses_a)) + list(np.array(losses_b))
+    print(f"  Phase B (posterior): loss {float(losses_b[0]):.0f} → {float(losses_b[-1]):.0f}")
+    print(f"  Total runtime: {runtime:.1f}s")
 
     # ── Evaluate all training ICs + test IC ───────────────────────────────
     print(f"\n  Results ({runtime:.0f}s):")
@@ -443,7 +323,6 @@ def run_experiment(schema):
     if O_samp.ndim == 2:
         O_samp = O_samp[np.newaxis, ...]
     O_med = np.median(O_samp, axis=0)
-    O_std = np.std(O_samp, axis=0)
     print(f"    Operator norm: {np.linalg.norm(O_med):.1f} (LS: {np.linalg.norm(O_ls):.1f})")
 
     t_pred = np.linspace(PREDICTION_SPAN[0], PREDICTION_SPAN[1], 400)
@@ -550,7 +429,7 @@ def run_experiment(schema):
         'test_pred_error': all_pred_errors[-1],
         'test_n_stable': all_n_stable[-1],
         'ci_coverage': ci_coverage, 'ci_width': ci_width,
-        'runtime': runtime, 'losses': all_losses,
+        'runtime': runtime, 'losses': losses,
         'samples': samples,
         # Per-IC data for multi-trajectory plotting
         'all_rom_solves': all_rom_solves,
@@ -572,7 +451,7 @@ def run_experiment(schema):
 # Plotting
 # =============================================================================
 def plot_results(result, save_dir=None):
-    """Generate multi-IC ROM trajectory, operator trace, and loss plots."""
+    """Generate multi-IC ROM trajectory, loss, and full-order error plots."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -582,7 +461,7 @@ def plot_results(result, save_dir=None):
     os.makedirs(save_dir, exist_ok=True)
 
     schema = result['schema']
-    prefix = f"04_{schema['name']}"
+    prefix = f"02_{schema['name']}"
     samples = result['samples']
     losses = result['losses']
     t_pred = result['t_pred']
@@ -676,17 +555,7 @@ def plot_results(result, save_dir=None):
         print(f"  📊 Saved: {path}")
         plt.close(fig)
 
-    # ── 2. Operator Trace Plot ───────────────────────────────────────
-    try:
-        fig_trace, _ = plot_trace(samples, param_name="O", n_random=6)
-        path = os.path.join(save_dir, f"{prefix}_operator_traces.png")
-        fig_trace.savefig(path, dpi=200, bbox_inches='tight')
-        print(f"  📊 Saved: {path}")
-        plt.close(fig_trace)
-    except Exception as e:
-        print(f"  ⚠ Operator trace plot failed: {e}")
-
-    # ── 3. Loss Convergence Plot ─────────────────────────────────────
+    # ── 2. Loss Convergence Plot ─────────────────────────────────────
     fig_loss, ax_loss = plt.subplots(1, 2, figsize=(12, 4))
     ax_loss[0].plot(losses, lw=0.8, color='tab:blue')
     ax_loss[0].set_xlabel('SVI Iteration')
@@ -705,13 +574,13 @@ def plot_results(result, save_dir=None):
     print(f"  📊 Saved: {path}")
     plt.close(fig_loss)
 
-    # ── 4. Full-Order Error Plot (first training IC) ─────────────────
+    # ── 3. Full-Order Error Plot (first training IC) ─────────────────
     basis = result.get('basis')
     all_true_states_full = result.get('all_true_states_full')
     if basis is not None and all_true_states_full is not None and len(all_rom_solves) > 0:
         first_ic_solves = all_rom_solves[0]
         if len(first_ic_solves) > 0:
-            first_true_full = all_true_states_full[0]  # (n_dof, n_time_full)
+            first_true_full = all_true_states_full[0]
             fig_foe, axes_foe = plot_full_order_error(
                 rom_solves=first_ic_solves,
                 basis=basis,
@@ -739,7 +608,7 @@ def save_predictions(result, save_dir=None):
     os.makedirs(save_dir, exist_ok=True)
 
     all_rom_solves = result['all_rom_solves']
-    method_name = "04_conditional_integral"
+    method_name = "02_two_stage_svi"
 
     save_dict = {
         't_pred': result['t_pred'],
@@ -776,7 +645,7 @@ def main(schema_names=None):
             return
 
     print("=" * 70)
-    print("04 — Conditional GP + Dual Constraint — Cubic Heat Equation")
+    print("02 — Two-Stage Hierarchical Bayesian OpInf — Cubic Heat")
     print("=" * 70)
     print(f"Regimes: {len(schemas)}")
     for s in schemas:
@@ -794,7 +663,7 @@ def main(schema_names=None):
 
     # Summary table
     print(f"\n\n{'='*90}")
-    print(f"SUMMARY — Conditional GP + Dual Constraint (Heat)")
+    print(f"SUMMARY — Two-Stage Hierarchical Bayesian OpInf (Heat)")
     print(f"{'='*90}")
     print(f"{'Regime':<28s} {'Samp':>4s} {'Noise':>5s} {'Stab':>5s} "
           f"{'Train':>8s} {'Pred':>8s} {'TestPr':>8s} {'CI_cov':>7s} {'Time':>6s}")

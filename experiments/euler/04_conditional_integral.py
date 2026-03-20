@@ -45,6 +45,7 @@ from core import (
 )
 from core.bayesian_opinf import fit_gp_hyperparameters_mle, _find_operator_samples
 from core.diagnostics import plot_trace
+from core.plotting import plot_full_order_error
 import opinf
 
 numpyro.set_platform('cpu')
@@ -401,6 +402,7 @@ def run_experiment(schema):
         'snaps_comp': snaps_comp, 'true_comp': true_comp,
         't_full': t_full, 't_pred': t_pred, 't_samp': t_samp,
         'training_span': TRAINING_SPAN, 'num_modes': num_modes,
+        'true_states': true_states, 'basis': basis,
     }
 
 
@@ -500,7 +502,65 @@ def plot_results(result, save_dir=None):
         print(f"  📊 Saved: {path}")
         plt.close(fig)
 
-    # ── 2. Operator Trace Plot ───────────────────────────────────────
+    # ── 2. Notebook-style ROM Trajectory Plot ───────────────────────
+    if len(rom_solves) > 0:
+        rom_arr = np.array(rom_solves)
+        rom_med = np.median(rom_arr, axis=0)
+        rom_q05 = np.percentile(rom_arr, 5, axis=0)
+        rom_q95 = np.percentile(rom_arr, 95, axis=0)
+
+        true_interp = interp1d(t_full, true_comp, kind='cubic', fill_value='extrapolate')
+        true_at_pred = true_interp(t_pred)
+
+        n_stable = result['n_stable']
+        n_total = result['n_total']
+
+        fig, ax = plt.subplots(num_modes, 1, figsize=(10, 2.5 * num_modes), sharex=True)
+        if num_modes == 1:
+            ax = [ax]
+        for i in range(num_modes):
+            ax[i].axvspan(training_span[0], training_span[1], color='gray', alpha=0.10, zorder=0)
+            ax[i].plot(t_pred, true_at_pred[i], color='tab:gray', lw=2, label='True solution')
+            ax[i].plot(t_samp, snaps_comp[i], 'k*', ms=5, label='Training data', zorder=5)
+            ax[i].plot(t_pred, rom_med[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2, label='ROM median')
+            ax[i].fill_between(t_pred, rom_q05[i], rom_q95[i], color='tab:purple', alpha=0.15, label='ROM 5-95%')
+            ax[i].axvline(training_span[1], color='k', ls=':', lw=0.8, alpha=0.5)
+            ax[i].set_ylabel(f'Mode {i+1}')
+            yvals = true_at_pred[i]
+            ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
+            pad = max(abs(ymax - ymin) * 0.3, 1e-6)
+            ax[i].set_ylim(ymin - pad, ymax + pad)
+            if i == 0:
+                ax[i].legend(loc='upper right', fontsize=9)
+        ax[-1].set_xlabel('Time')
+        fig.suptitle(f'Conditional Integral — {schema["label"]}  ({n_stable}/{n_total} stable)', fontsize=14)
+        fig.tight_layout()
+        path = os.path.join(save_dir, f"{prefix}_rom_notebook.png")
+        fig.savefig(path, dpi=200, bbox_inches='tight')
+        print(f"  📊 Saved: {path}")
+        plt.close(fig)
+
+    # ── 3. Full-Order Error Plot ─────────────────────────────────────
+    basis = result.get('basis')
+    true_states = result.get('true_states')
+    if len(rom_solves) > 0 and basis is not None and true_states is not None:
+        rom_arr = np.array(rom_solves)
+        fig_foe, axes_foe = plot_full_order_error(
+            rom_solves=rom_arr,
+            basis=basis,
+            true_states=true_states,
+            time_domain_full=t_full,
+            time_domain_eval=t_pred,
+            training_span=training_span,
+            error_type='relative',
+        )
+        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
+        path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
+        fig_foe.savefig(path, dpi=200, bbox_inches='tight')
+        print(f"  📊 Saved: {path}")
+        plt.close(fig_foe)
+
+    # ── 4. Operator Trace Plot ───────────────────────────────────────
     try:
         fig_trace, _ = plot_trace(samples, param_name="O", n_random=6)
         path = os.path.join(save_dir, f"{prefix}_operator_traces.png")
@@ -510,7 +570,7 @@ def plot_results(result, save_dir=None):
     except Exception as e:
         print(f"  ⚠ Operator trace plot failed: {e}")
 
-    # ── 3. Loss Convergence Plot ─────────────────────────────────────
+    # ── 5. Loss Convergence Plot ─────────────────────────────────────
     fig_loss, ax_loss = plt.subplots(1, 2, figsize=(12, 4))
     ax_loss[0].plot(losses, lw=0.8, color='tab:blue')
     ax_loss[0].set_xlabel('SVI Iteration')
@@ -528,6 +588,33 @@ def plot_results(result, save_dir=None):
     fig_loss.savefig(path, dpi=200, bbox_inches='tight')
     print(f"  📊 Saved: {path}")
     plt.close(fig_loss)
+
+
+# =============================================================================
+# Save predictions for cross-method comparison
+# =============================================================================
+def save_predictions(result, save_dir=None):
+    """Save predictions for cross-method comparison."""
+    if save_dir is None:
+        save_dir = os.path.join(SCRIPT_DIR, "results", "comparison", result['schema']['name'])
+    os.makedirs(save_dir, exist_ok=True)
+
+    rom_solves = result['rom_solves']
+    rom_arr = np.array(rom_solves) if len(rom_solves) > 0 else np.empty((0, result['num_modes'], len(result['t_pred'])))
+
+    method_name = "04_conditional_integral"
+    path = os.path.join(save_dir, f"{method_name}.npz")
+    np.savez(path,
+        rom_solves=rom_arr,
+        t_pred=result['t_pred'],
+        train_error=result['train_error'],
+        pred_error=result['pred_error'],
+        stability_pct=result['stability_pct'],
+        ci_coverage=result.get('ci_coverage', float('nan')),
+        ci_width=result.get('ci_width', float('nan')),
+        runtime=result['runtime'],
+    )
+    print(f"  💾 Saved predictions: {path}")
 
 
 # =============================================================================
@@ -556,6 +643,7 @@ def main(schema_names=None):
     for schema in schemas:
         r = run_experiment(schema)
         plot_results(r)
+        save_predictions(r)
         results.append(r)
 
     # Summary table
