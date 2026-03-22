@@ -1852,3 +1852,427 @@ class FitzHughNagumo(_BasePDE):
             fig.colorbar(cdata, ax=ax, extend="both")
 
         return fig, axes
+
+
+# 2D Viscous Burgers equation =================================================
+class Burgers2D(_BasePDE):
+    """Full-order solver for the two-dimensional viscous Burgers equation
+    with Dirichlet (zero) boundary conditions:
+
+        du/dt + u * du/dx + u * du/dy = nu * (d²u/dx² + d²u/dy²)
+
+    on [0, 1] × [0, 1].
+
+    The state is stored as a flattened 1D array of interior grid points
+    (row-major order), so N = (nx-2) * (ny-2) for an nx × ny grid.
+    """
+
+    num_variables = 1
+
+    # Initialization ----------------------------------------------------------
+    def __init__(self, nx: int = 64, ny: int = 64, nu: float = 0.01):
+        """Initialize the grid and build the sparse diffusion matrix.
+
+        Parameters
+        ----------
+        nx : int
+            Number of grid points in x.
+        ny : int
+            Number of grid points in y.
+        nu : float
+            Viscosity coefficient.
+        """
+        self.__x = np.linspace(0, 1, nx)
+        self.__y = np.linspace(0, 1, ny)
+        self.__nx = nx
+        self.__ny = ny
+        self.__dx = self.__x[1] - self.__x[0]
+        self.__dy = self.__y[1] - self.__y[0]
+        self.__nu = nu
+
+        # Interior grid dimensions.
+        nxi = nx - 2
+        nyi = ny - 2
+        self.__N = nxi * nyi
+
+        # Build sparse Laplacian (5-point stencil) for interior points.
+        # Index mapping: k = j * nxi + i for interior point (x[i+1], y[j+1]).
+        dx2inv = 1.0 / (self.__dx ** 2)
+        dy2inv = 1.0 / (self.__dy ** 2)
+        L = sparse.lil_matrix((self.__N, self.__N))
+
+        for j in range(nyi):
+            for i in range(nxi):
+                k = j * nxi + i
+                L[k, k] = -2.0 * dx2inv - 2.0 * dy2inv
+
+                # Left neighbor (same row).
+                if i > 0:
+                    L[k, k - 1] = dx2inv
+                # Right neighbor (same row).
+                if i < nxi - 1:
+                    L[k, k + 1] = dx2inv
+                # Down neighbor (previous row).
+                if j > 0:
+                    L[k, k - nxi] = dy2inv
+                # Up neighbor (next row).
+                if j < nyi - 1:
+                    L[k, k + nxi] = dy2inv
+
+        self.__L = (nu * L).tocsr()
+
+    # Properties --------------------------------------------------------------
+    @property
+    def spatial_domain(self):
+        """Spatial domain as (x, y) tuple of full grid arrays."""
+        return (self.__x, self.__y)
+
+    @property
+    def x(self):
+        """Full x-grid array."""
+        return self.__x
+
+    @property
+    def y(self):
+        """Full y-grid array."""
+        return self.__y
+
+    @property
+    def nx(self):
+        """Number of grid points in x."""
+        return self.__nx
+
+    @property
+    def ny(self):
+        """Number of grid points in y."""
+        return self.__ny
+
+    @property
+    def N(self):
+        """Number of interior degrees of freedom."""
+        return self.__N
+
+    @property
+    def dx(self):
+        """Grid spacing in x."""
+        return self.__dx
+
+    @property
+    def dy(self):
+        """Grid spacing in y."""
+        return self.__dy
+
+    @property
+    def nu(self):
+        """Viscosity coefficient."""
+        return self.__nu
+
+    # Solving -----------------------------------------------------------------
+    def derivative(self, t: float, state: np.ndarray) -> np.ndarray:
+        """Compute the state derivative.
+
+        Parameters
+        ----------
+        t : float
+            Time (unused — autonomous system).
+        state : (N,) ndarray
+            State at time t (flattened interior points, row-major).
+
+        Returns
+        -------
+        (N,) ndarray
+            State derivative at time t.
+        """
+        nxi = self.__nx - 2
+        nyi = self.__ny - 2
+
+        # Reshape to 2D interior grid and embed in full grid with zero BCs.
+        u_int = state.reshape(nyi, nxi)
+        u_full = np.zeros((self.__ny, self.__nx))
+        u_full[1:-1, 1:-1] = u_int
+
+        # Central differences for du/dx and du/dy on the full grid.
+        du_dx_full = (u_full[:, 2:] - u_full[:, :-2]) / (2.0 * self.__dx)
+        du_dy_full = (u_full[2:, :] - u_full[:-2, :]) / (2.0 * self.__dy)
+
+        # Extract interior values (shapes are already (nyi, nxi)).
+        du_dx = du_dx_full[1:-1, :]
+        du_dy = du_dy_full[:, 1:-1]
+
+        # Diffusion: nu * Laplacian.
+        diffusion = self.__L @ state
+
+        # Convection: -u * (du/dx + du/dy).
+        convection = -u_int * (du_dx + du_dy)
+
+        return diffusion + convection.ravel()
+
+    # Auxiliary conditions ----------------------------------------------------
+    def initial_conditions(self, ic_type: str = "gaussian") -> np.ndarray:
+        """Generate initial conditions on the interior grid.
+
+        Parameters
+        ----------
+        ic_type : str
+            Type of initial condition: ``'gaussian'`` or ``'sine'``.
+
+        Returns
+        -------
+        (N,) ndarray
+            Initial state (flattened interior points).
+        """
+        x_int = self.__x[1:-1]
+        y_int = self.__y[1:-1]
+        X, Y = np.meshgrid(x_int, y_int, indexing="xy")
+
+        if ic_type == "gaussian":
+            sigma = 0.1
+            u0 = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2) / (2 * sigma**2))
+        elif ic_type == "sine":
+            u0 = np.sin(np.pi * X) * np.sin(np.pi * Y)
+        else:
+            raise ValueError(f"Unknown ic_type '{ic_type}'")
+
+        return u0.ravel()
+
+    @staticmethod
+    def noise(states, noise_level=0):
+        """Add multiplicative Gaussian noise to the solution.
+
+        Parameters
+        ----------
+        states : (N, k) ndarray
+            Solution to the PDE over the discretized space-time domain.
+        noise_level : float
+            Noise percentage to add to the solution.
+
+        Returns
+        -------
+        (N, k) ndarray
+            Solution array with added noise.
+        """
+        if not noise_level:
+            return states
+        return np.random.normal(
+            loc=states,
+            scale=np.abs(states * noise_level),
+            size=states.shape,
+        )
+
+    # Inference ---------------------------------------------------------------
+    num_inputs = 0
+    input_func = None
+
+    # Visualization -----------------------------------------------------------
+    def reconstruct_2d(self, state: np.ndarray) -> np.ndarray:
+        """Reshape flat state vector back to full 2D grid (including
+        boundary zeros).
+
+        Parameters
+        ----------
+        state : (N,) ndarray
+            Flattened interior state.
+
+        Returns
+        -------
+        (ny, nx) ndarray
+            Full 2D field with zero boundary.
+        """
+        u_full = np.zeros((self.__ny, self.__nx))
+        u_full[1:-1, 1:-1] = state.reshape(self.__ny - 2, self.__nx - 2)
+        return u_full
+
+    def plot_snapshot(self, state, ax=None, title=None, cmap="RdBu_r"):
+        """Plot a 2D snapshot as a filled contour plot.
+
+        Parameters
+        ----------
+        state : (N,) ndarray
+            Flattened interior state.
+        ax : matplotlib Axes, optional
+            Axes to plot on. Created if not provided.
+        title : str, optional
+            Title for the plot.
+        cmap : str
+            Colormap name.
+
+        Returns
+        -------
+        fig : matplotlib Figure
+        ax : matplotlib Axes
+        """
+        u_full = self.reconstruct_2d(state)
+
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+        else:
+            fig = ax.figure
+
+        pcm = ax.pcolormesh(
+            self.__x, self.__y, u_full,
+            shading="auto", cmap=cmap,
+        )
+        fig.colorbar(pcm, ax=ax)
+        ax.set_xlabel(r"$x$")
+        ax.set_ylabel(r"$y$")
+        ax.set_aspect("equal")
+        if title is not None:
+            ax.set_title(title)
+
+        return fig, ax
+
+
+class DiffusionReaction2D(_BasePDE):
+    """Full-order solver for the two-dimensional diffusion-reaction equation
+    with Dirichlet (zero) boundary conditions:
+
+        du/dt = κ ∇²u − β u²
+
+    on [0, 1] × [0, 1].
+
+    This combines linear diffusion with a quadratic reaction/damping term,
+    producing dissipative dynamics that are well-suited for polynomial ROM
+    learning with OpInf (operators: cAH).
+
+    The state is stored as a flattened 1D array of interior grid points
+    (row-major order), so N = (nx-2) * (ny-2).
+    """
+
+    num_variables = 1
+
+    def __init__(self, nx: int = 64, ny: int = 64,
+                 kappa: float = 0.01, beta: float = 1.0):
+        self.__x = np.linspace(0, 1, nx)
+        self.__y = np.linspace(0, 1, ny)
+        self.__nx = nx
+        self.__ny = ny
+        self.__dx = self.__x[1] - self.__x[0]
+        self.__dy = self.__y[1] - self.__y[0]
+        self.__kappa = kappa
+        self.__beta = beta
+
+        nxi = nx - 2
+        nyi = ny - 2
+        self.__N = nxi * nyi
+
+        dx2inv = 1.0 / (self.__dx ** 2)
+        dy2inv = 1.0 / (self.__dy ** 2)
+        L = sparse.lil_matrix((self.__N, self.__N))
+
+        for j in range(nyi):
+            for i in range(nxi):
+                k = j * nxi + i
+                L[k, k] = -2.0 * dx2inv - 2.0 * dy2inv
+                if i > 0:
+                    L[k, k - 1] = dx2inv
+                if i < nxi - 1:
+                    L[k, k + 1] = dx2inv
+                if j > 0:
+                    L[k, k - nxi] = dy2inv
+                if j < nyi - 1:
+                    L[k, k + nxi] = dy2inv
+
+        self.__L = (kappa * L).tocsr()
+
+    @property
+    def spatial_domain(self):
+        return (self.__x, self.__y)
+
+    @property
+    def x(self):
+        return self.__x
+
+    @property
+    def y(self):
+        return self.__y
+
+    @property
+    def nx(self):
+        return self.__nx
+
+    @property
+    def ny(self):
+        return self.__ny
+
+    @property
+    def N(self):
+        return self.__N
+
+    @property
+    def dx(self):
+        return self.__dx
+
+    @property
+    def dy(self):
+        return self.__dy
+
+    @property
+    def kappa(self):
+        return self.__kappa
+
+    @property
+    def beta(self):
+        return self.__beta
+
+    def derivative(self, t: float, state: np.ndarray) -> np.ndarray:
+        return self.__L @ state - self.__beta * state ** 2
+
+    def initial_conditions(self, ic_type: str = "multimode") -> np.ndarray:
+        x_int = self.__x[1:-1]
+        y_int = self.__y[1:-1]
+        X, Y = np.meshgrid(x_int, y_int, indexing="xy")
+
+        if ic_type == "multimode":
+            u0 = (np.sin(np.pi * X) * np.sin(np.pi * Y)
+                  + 0.5 * np.sin(2 * np.pi * X) * np.sin(np.pi * Y)
+                  + 0.3 * np.sin(np.pi * X) * np.sin(2 * np.pi * Y)
+                  + 0.2 * np.sin(2 * np.pi * X) * np.sin(2 * np.pi * Y))
+        elif ic_type == "gaussian":
+            sigma = 0.1
+            u0 = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2)
+                        / (2 * sigma ** 2))
+        elif ic_type == "sine":
+            u0 = np.sin(np.pi * X) * np.sin(np.pi * Y)
+        else:
+            raise ValueError(f"Unknown ic_type '{ic_type}'")
+
+        return u0.ravel()
+
+    @staticmethod
+    def noise(states, noise_level=0):
+        if not noise_level:
+            return states
+        return np.random.normal(
+            loc=states,
+            scale=np.abs(states * noise_level),
+            size=states.shape,
+        )
+
+    num_inputs = 0
+    input_func = None
+
+    def reconstruct_2d(self, state: np.ndarray) -> np.ndarray:
+        u_full = np.zeros((self.__ny, self.__nx))
+        u_full[1:-1, 1:-1] = state.reshape(self.__ny - 2, self.__nx - 2)
+        return u_full
+
+    def plot_snapshot(self, state, ax=None, title=None, cmap="RdBu_r"):
+        u_full = self.reconstruct_2d(state)
+
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+        else:
+            fig = ax.figure
+
+        pcm = ax.pcolormesh(
+            self.__x, self.__y, u_full,
+            shading="auto", cmap=cmap,
+        )
+        fig.colorbar(pcm, ax=ax)
+        ax.set_xlabel(r"$x$")
+        ax.set_ylabel(r"$y$")
+        ax.set_aspect("equal")
+        if title is not None:
+            ax.set_title(title)
+
+        return fig, ax
