@@ -58,27 +58,7 @@ numpyro.set_host_device_count(4)
 
 # ── Data regime definitions ──────────────────────────────────────────────────
 SCHEMAS = [
-    {
-        "name": "dense_low_noise",
-        "label": "Dense data, low noise",
-        "NUM_SAMPLES": 65,
-        "NOISE_LEVEL": 0.01,
-        "NUM_EVAL_POINTS": 150,
-    },
-    {
-        "name": "sparse_medium_noise",
-        "label": "Sparse data, medium noise",
-        "NUM_SAMPLES": 20,
-        "NOISE_LEVEL": 0.05,
-        "NUM_EVAL_POINTS": 100,
-    },
-    {
-        "name": "dense_high_noise",
-        "label": "Dense data, high noise",
-        "NUM_SAMPLES": 65,
-        "NOISE_LEVEL": 0.10,
-        "NUM_EVAL_POINTS": 150,
-    },
+    {"name": "test_noise", "label": "Test", "NUM_SAMPLES": 20, "NOISE_LEVEL": 0.02, "NUM_EVAL_POINTS": 100},
 ]
 
 # ── Shared model hyperparameters (same for ALL regimes) ──────────────────────
@@ -88,7 +68,7 @@ MODEL_PARAMS = dict(
     GAMMA=2.0,
     GAMMA2=0.5,
     DERIV_WEIGHT=1.0,
-    INTEGRAL_WEIGHT=1.0,
+    INTEGRAL_WEIGHT=2.0,
     MLL_WEIGHT=0.1,
     GP_PRIOR_SCALE=0.1,
     WINDOW_SIZE=20,

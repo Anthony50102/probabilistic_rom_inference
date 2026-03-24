@@ -48,25 +48,25 @@ from core.plotting import plot_full_order_error
 # ── Data regime definitions ──────────────────────────────────────────────────
 SCHEMAS = [
     {
-        "name": "dense_low_noise",
-        "label": "Dense data, low noise",
-        "NUM_SAMPLES": 65,
+        "name": "sparse_low_noise",
+        "label": "Sparse data, low noise",
+        "NUM_SAMPLES": 20,
         "NOISE_LEVEL": 0.01,
-        "NUM_EVAL_POINTS": 150,
+        "NUM_EVAL_POINTS": 100,
     },
     {
         "name": "sparse_medium_noise",
         "label": "Sparse data, medium noise",
         "NUM_SAMPLES": 20,
-        "NOISE_LEVEL": 0.05,
+        "NOISE_LEVEL": 0.03,
         "NUM_EVAL_POINTS": 100,
     },
     {
-        "name": "dense_high_noise",
-        "label": "Dense data, high noise",
-        "NUM_SAMPLES": 65,
-        "NOISE_LEVEL": 0.10,
-        "NUM_EVAL_POINTS": 150,
+        "name": "sparse_high_noise",
+        "label": "Sparse data, high noise",
+        "NUM_SAMPLES": 20,
+        "NOISE_LEVEL": 0.05,
+        "NUM_EVAL_POINTS": 100,
     },
 ]
 
