@@ -2276,3 +2276,383 @@ class DiffusionReaction2D(_BasePDE):
             ax.set_title(title)
 
         return fig, ax
+
+
+# Reaction-Diffusion Tumor Growth =============================================
+class ReactionDiffusionTumor(_BasePDE):
+    """Full-order solver for 1D reaction-diffusion tumor growth:
+
+        du/dt = d ∂²u/∂x² + k u (1 - u/θ)
+
+    with zero-flux (Neumann) boundary conditions on [0, L].
+
+    This models pre-treatment tumor growth as used in the TumorTwin
+    framework (Kapteyn et al. 2025), simplified to 1D for ROM learning.
+    The logistic growth term gives a quadratic nonlinearity suitable for
+    OpInf with operator structure "cAH".
+
+    Parameters
+    ----------
+    spatial_domain : (N,) ndarray
+        Spatial grid points.
+    k : float
+        Proliferation rate (1/day). Default 0.05 (~14-day doubling time,
+        typical for triple-negative breast cancer).
+    d : float
+        Diffusion coefficient (cm²/day). Default 5e-4.
+    theta : float
+        Carrying capacity (max cell density). Default 1.0.
+    """
+
+    num_variables = 1
+    num_inputs = 0
+    input_func = None
+
+    def __init__(
+        self,
+        spatial_domain: np.ndarray,
+        k: float = 0.05,
+        d: float = 5e-4,
+        theta: float = 1.0,
+    ):
+        self.__x = np.array(spatial_domain)
+        self.__k = k
+        self.__d = d
+        self.__theta = theta
+        self.__dx = self.__x[1] - self.__x[0]
+        N = len(self.__x)
+
+        # Build Laplacian with Neumann BCs (ghost-node approach)
+        dx2inv = 1.0 / (self.__dx ** 2)
+        L = sparse.lil_matrix((N, N))
+        for i in range(N):
+            L[i, i] = -2.0 * dx2inv
+            if i > 0:
+                L[i, i - 1] = dx2inv
+            else:
+                L[i, i + 1] += dx2inv      # Neumann: du/dx=0 at left
+            if i < N - 1:
+                L[i, i + 1] += dx2inv
+            else:
+                L[i, i - 1] += dx2inv      # Neumann: du/dx=0 at right
+        self.__L = L.tocsr()
+
+    @property
+    def spatial_domain(self):
+        return self.__x
+
+    @property
+    def k(self):
+        return self.__k
+
+    @property
+    def d(self):
+        return self.__d
+
+    @property
+    def theta(self):
+        return self.__theta
+
+    def derivative(self, t: float, state: np.ndarray) -> np.ndarray:
+        diffusion = self.__d * (self.__L @ state)
+        growth = self.__k * state * (1.0 - state / self.__theta)
+        return diffusion + growth
+
+    def solve(self, initial_conditions, timepoints, **kwargs):
+        """Solve with clamping to keep density in [0, theta]."""
+        def rhs(t, u):
+            return self.derivative(t, np.clip(u, 0, self.__theta))
+
+        result = integrate.solve_ivp(
+            fun=rhs,
+            t_span=[timepoints[0], timepoints[-1]],
+            y0=np.array(initial_conditions),
+            method=kwargs.pop('method', 'RK45'),
+            t_eval=timepoints,
+            rtol=kwargs.pop('rtol', 1e-6),
+            atol=kwargs.pop('atol', 1e-9),
+            **kwargs,
+        )
+        return np.clip(result.y, 0, self.__theta)
+
+    def initial_conditions(
+        self,
+        center: float = None,
+        width: float = 0.5,
+        amplitude: float = 0.5,
+    ) -> np.ndarray:
+        """Gaussian tumor seed.
+
+        Parameters
+        ----------
+        center : float, optional
+            Center of the initial tumor (defaults to domain midpoint).
+        width : float
+            Standard deviation of the Gaussian (cm).
+        amplitude : float
+            Peak initial density (fraction of carrying capacity).
+        """
+        if center is None:
+            center = (self.__x[0] + self.__x[-1]) / 2.0
+        u0 = amplitude * np.exp(-((self.__x - center) ** 2) / (2.0 * width ** 2))
+        return u0
+
+    @staticmethod
+    def noise(states, noise_level=0):
+        """Add multiplicative Gaussian noise, clamped to [0, 1]."""
+        if not noise_level:
+            return states
+        noisy = np.random.normal(
+            loc=states,
+            scale=np.abs(states * noise_level) + noise_level * 1e-3,
+            size=states.shape,
+        )
+        return np.clip(noisy, 0.0, 1.0)
+
+    def plot_spacetime(self, states, timepoints, ax=None, title=None):
+        """Plot a space-time heatmap of tumor density."""
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        else:
+            fig = ax.figure
+        pcm = ax.pcolormesh(
+            timepoints, self.__x, states,
+            shading='auto', cmap='hot_r', vmin=0, vmax=self.__theta,
+        )
+        fig.colorbar(pcm, ax=ax, label='Tumor density')
+        ax.set_xlabel('Time (days)')
+        ax.set_ylabel('Position (cm)')
+        if title is not None:
+            ax.set_title(title)
+        return fig, ax
+
+
+# Reaction-Diffusion Tumor Growth 2D ==========================================
+class ReactionDiffusionTumor2D(_BasePDE):
+    """Full-order solver for 2D reaction-diffusion tumor growth:
+
+        du/dt = d ∇²u + k u (1 - u/θ)
+
+    with zero-flux (Neumann) boundary conditions on [0, Lx] × [0, Ly].
+
+    Models pre-treatment TNBC tumor growth on a 2D breast cross-section,
+    following the TumorTwin framework (Kapteyn et al. 2025). The logistic
+    growth term produces a quadratic ROM structure: dq̂/dt = ĉ + Âq̂ + Ĥ[q̂⊗q̂].
+
+    The state is stored as a flattened 1D array of ALL grid points
+    (row-major), so N = nx * ny.  Neumann BCs are enforced via ghost-node
+    mirroring in the Laplacian stencil.
+
+    Parameters
+    ----------
+    nx, ny : int
+        Grid resolution.
+    Lx, Ly : float
+        Physical domain extent (cm).
+    k : float
+        Proliferation rate (1/day).
+    d : float
+        Diffusion coefficient (cm²/day).
+    theta : float
+        Carrying capacity.
+    """
+
+    num_variables = 1
+    num_inputs = 0
+    input_func = None
+
+    def __init__(
+        self,
+        nx: int = 64, ny: int = 64,
+        Lx: float = 5.0, Ly: float = 5.0,
+        k: float = 0.05,
+        d: float = 5e-4,
+        theta: float = 1.0,
+    ):
+        self.__x = np.linspace(0, Lx, nx)
+        self.__y = np.linspace(0, Ly, ny)
+        self.__nx = nx
+        self.__ny = ny
+        self.__Lx = Lx
+        self.__Ly = Ly
+        self.__dx = self.__x[1] - self.__x[0]
+        self.__dy = self.__y[1] - self.__y[0]
+        self.__k = k
+        self.__d = d
+        self.__theta = theta
+        self.__N = nx * ny
+
+        # Build Laplacian with Neumann BCs on ALL grid points
+        dx2inv = 1.0 / (self.__dx ** 2)
+        dy2inv = 1.0 / (self.__dy ** 2)
+        L = sparse.lil_matrix((self.__N, self.__N))
+
+        for j in range(ny):
+            for i in range(nx):
+                idx = j * nx + i
+                L[idx, idx] = -2.0 * dx2inv - 2.0 * dy2inv
+
+                # x-direction neighbours (Neumann: mirror at boundaries)
+                if i > 0:
+                    L[idx, idx - 1] += dx2inv
+                else:
+                    L[idx, idx] += dx2inv           # ghost node = self
+                if i < nx - 1:
+                    L[idx, idx + 1] += dx2inv
+                else:
+                    L[idx, idx] += dx2inv
+
+                # y-direction neighbours
+                if j > 0:
+                    L[idx, idx - nx] += dy2inv
+                else:
+                    L[idx, idx] += dy2inv
+                if j < ny - 1:
+                    L[idx, idx + nx] += dy2inv
+                else:
+                    L[idx, idx] += dy2inv
+
+        self.__L = L.tocsr()
+
+    # Properties ──────────────────────────────────────────────────────────
+    @property
+    def spatial_domain(self):
+        return (self.__x, self.__y)
+
+    @property
+    def x(self):
+        return self.__x
+
+    @property
+    def y(self):
+        return self.__y
+
+    @property
+    def nx(self):
+        return self.__nx
+
+    @property
+    def ny(self):
+        return self.__ny
+
+    @property
+    def N(self):
+        return self.__N
+
+    @property
+    def k(self):
+        return self.__k
+
+    @property
+    def d(self):
+        return self.__d
+
+    @property
+    def theta(self):
+        return self.__theta
+
+    # Dynamics ────────────────────────────────────────────────────────────
+    def derivative(self, t: float, state: np.ndarray) -> np.ndarray:
+        diffusion = self.__d * (self.__L @ state)
+        growth = self.__k * state * (1.0 - state / self.__theta)
+        return diffusion + growth
+
+    def solve(self, initial_conditions, timepoints, **kwargs):
+        """Solve with clamping to keep density in [0, theta]."""
+        def rhs(t, u):
+            return self.derivative(t, np.clip(u, 0, self.__theta))
+
+        result = integrate.solve_ivp(
+            fun=rhs,
+            t_span=[timepoints[0], timepoints[-1]],
+            y0=np.array(initial_conditions),
+            method=kwargs.pop('method', 'RK45'),
+            t_eval=timepoints,
+            rtol=kwargs.pop('rtol', 1e-6),
+            atol=kwargs.pop('atol', 1e-9),
+            **kwargs,
+        )
+        return np.clip(result.y, 0, self.__theta)
+
+    def initial_conditions(
+        self,
+        center: tuple = None,
+        width: float = 0.4,
+        amplitude: float = 0.6,
+    ) -> np.ndarray:
+        """Gaussian tumor seed in 2D.
+
+        Parameters
+        ----------
+        center : (cx, cy) tuple, optional
+            Center of the initial tumor (defaults to domain center).
+        width : float
+            Standard deviation (cm).
+        amplitude : float
+            Peak initial density.
+        """
+        if center is None:
+            center = (self.__Lx / 2.0, self.__Ly / 2.0)
+        cx, cy = center
+        X, Y = np.meshgrid(self.__x, self.__y, indexing='xy')
+        u0 = amplitude * np.exp(
+            -((X - cx) ** 2 + (Y - cy) ** 2) / (2.0 * width ** 2)
+        )
+        return u0.ravel()
+
+    @staticmethod
+    def noise(states, noise_level=0):
+        """Add multiplicative Gaussian noise, clamped to [0, 1]."""
+        if not noise_level:
+            return states
+        noisy = np.random.normal(
+            loc=states,
+            scale=np.abs(states * noise_level) + noise_level * 1e-3,
+            size=states.shape,
+        )
+        return np.clip(noisy, 0.0, 1.0)
+
+    # Spatial utilities ───────────────────────────────────────────────────
+    def reconstruct_2d(self, state: np.ndarray) -> np.ndarray:
+        """Reshape flat state to (ny, nx) image."""
+        return state.reshape(self.__ny, self.__nx)
+
+    def plot_snapshot(self, state, ax=None, title=None, cmap='hot_r',
+                      vmin=0, vmax=None):
+        """Plot a single 2D tumor density snapshot."""
+        if vmax is None:
+            vmax = self.__theta
+        u2d = self.reconstruct_2d(state)
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(5, 4))
+        else:
+            fig = ax.figure
+        pcm = ax.pcolormesh(
+            self.__x, self.__y, u2d,
+            shading='auto', cmap=cmap, vmin=vmin, vmax=vmax,
+        )
+        fig.colorbar(pcm, ax=ax, label='Tumor density')
+        ax.set_xlabel('x (cm)')
+        ax.set_ylabel('y (cm)')
+        ax.set_aspect('equal')
+        if title is not None:
+            ax.set_title(title)
+        return fig, ax
+
+    def plot_snapshots_row(self, states, timepoints, indices=None,
+                           figsize=None, cmap='hot_r'):
+        """Plot a row of snapshots at selected time indices."""
+        if indices is None:
+            indices = np.linspace(0, len(timepoints) - 1, 5, dtype=int)
+        n = len(indices)
+        if figsize is None:
+            figsize = (4 * n, 3.5)
+        fig, axes = plt.subplots(1, n, figsize=figsize)
+        if n == 1:
+            axes = [axes]
+        for ax, idx in zip(axes, indices):
+            self.plot_snapshot(states[:, idx], ax=ax,
+                             title=f't = {timepoints[idx]:.1f} days',
+                             cmap=cmap)
+        fig.tight_layout()
+        return fig, axes
