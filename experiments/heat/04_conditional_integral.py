@@ -58,7 +58,27 @@ numpyro.set_host_device_count(4)
 
 # ── Data regime definitions ──────────────────────────────────────────────────
 SCHEMAS = [
-    {"name": "test_noise", "label": "Test", "NUM_SAMPLES": 20, "NOISE_LEVEL": 0.02, "NUM_EVAL_POINTS": 100},
+    {
+        "name": "sparse_low_noise",
+        "label": "Sparse data, low noise",
+        "NUM_SAMPLES": 20,
+        "NOISE_LEVEL": 0.01,
+        "NUM_EVAL_POINTS": 100,
+    },
+    {
+        "name": "sparse_medium_noise",
+        "label": "Sparse data, medium noise",
+        "NUM_SAMPLES": 20,
+        "NOISE_LEVEL": 0.03,
+        "NUM_EVAL_POINTS": 100,
+    },
+    {
+        "name": "sparse_high_noise",
+        "label": "Sparse data, high noise",
+        "NUM_SAMPLES": 20,
+        "NOISE_LEVEL": 0.05,
+        "NUM_EVAL_POINTS": 100,
+    },
 ]
 
 # ── Shared model hyperparameters (same for ALL regimes) ──────────────────────
