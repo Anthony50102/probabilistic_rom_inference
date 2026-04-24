@@ -1,14 +1,15 @@
 """
-05 — Neural ODE Ensemble Baseline (Tumor Growth)
+05 — Neural ODE Ensemble Baseline (Tumor Growth) — Multi-Trajectory
 
 Black-box baseline for comparison with Bayesian OpInf:
   - MLP: r → 128 → 128 → 128 → r  (tanh activations)
-  - Training: trajectory matching via MSE against noisy reduced observations
+  - Training: multi-trajectory MSE over 5 (k, d) parameter regimes
+  - Evaluation: 5 training ICs + 1 unseen test IC
   - UQ: ensemble of 20 independently trained networks
 
 Uses the EXACT same data pipeline as the Bayesian OpInf experiment:
   1. FOM solve → subsample in training span → add noise
-  2. Clean POD basis (fit on noise-free snapshots)
+  2. Clean POD basis (fit on concatenated noise-free snapshots)
   3. t_pred starts at TRAINING_SPAN[0] (skip MRI IC transient)
 
 Data regime:
@@ -32,8 +33,10 @@ from scipy.interpolate import interp1d
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
-from config import Basis
-from config import load_fom_data, TumorTwinFOM
+from config import (
+    Basis, TumorTwinFOM,
+    load_multitraj_fom_data, TRAINING_PARAMS, TEST_PARAMS, get_fom_data_path,
+)
 from core.plotting import plot_full_order_error
 
 # ── Data regime definitions ──────────────────────────────────────────────────
@@ -50,11 +53,12 @@ SCHEMAS = [
 # ── Model hyperparameters ────────────────────────────────────────────────────
 MODEL_PARAMS = dict(
     NUM_MODES=4,
+    NUM_ICS=5,
     HIDDEN_DIM=128,
     NUM_LAYERS=3,
     ACTIVATION='tanh',
     ENSEMBLE_SIZE=20,
-    NUM_TRAIN_STEPS=2000,
+    NUM_TRAIN_STEPS=3000,
     LEARNING_RATE=1e-3,
     SEED=42,
 )
@@ -89,129 +93,108 @@ class NeuralODE(eqx.Module):
 
 
 # =============================================================================
-# Training
+# Training — Multi-IC loss
 # =============================================================================
-def train_single(model, t_train, y_train, q0, num_steps, lr, key):
-    """Train one neural ODE via trajectory matching. Returns (model, losses)."""
-    t_train_jnp = jnp.array(t_train)
-    y_train_jnp = jnp.array(y_train)  # (num_modes, num_samples)
-    q0_jnp = jnp.array(q0)
+def _solve_trajectory(model, q0, t_obs):
+    """Integrate neural ODE from q0 at observation times.
 
-    t0 = float(t_train[0])
-    t1 = float(t_train[-1])
-    dt0 = float(t_train[1] - t_train[0])
-
+    Returns predicted states (len(t_obs), num_modes).
+    """
+    term = diffrax.ODETerm(model)
     solver = diffrax.Tsit5()
-    saveat = diffrax.SaveAt(ts=t_train_jnp)
+    saveat = diffrax.SaveAt(ts=t_obs)
     adjoint = diffrax.RecursiveCheckpointAdjoint()
+    sol = diffrax.diffeqsolve(
+        term, solver,
+        t0=t_obs[0], t1=t_obs[-1],
+        dt0=t_obs[1] - t_obs[0],
+        y0=q0, saveat=saveat,
+        adjoint=adjoint,
+        max_steps=16384, throw=False,
+    )
+    return sol.ys  # (len(t_obs), num_modes)
 
+
+@eqx.filter_jit
+def _train_step(model, opt_state, all_q0, all_t_obs, all_y_obs, opt):
+    """One gradient step over all training ICs."""
+
+    def loss_fn(model):
+        total_loss = 0.0
+        n_ics = len(all_q0)
+        for ic in range(n_ics):
+            y_pred = _solve_trajectory(model, all_q0[ic], all_t_obs[ic])
+            # y_pred: (len(t_obs), num_modes), y_obs: (num_modes, len(t_obs))
+            total_loss = total_loss + jnp.mean((y_pred - all_y_obs[ic].T) ** 2)
+        return total_loss / n_ics
+
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
+    updates, opt_state = opt.update(grads, opt_state, model)
+    model = eqx.apply_updates(model, updates)
+    return model, opt_state, loss
+
+
+def train_single_member(key, all_q0, all_t_obs, all_y_obs,
+                        num_steps, lr, num_modes, hidden_dim, num_layers):
+    """Train one ensemble member on all trajectories. Returns (model, losses)."""
+    model = NeuralODE(
+        in_dim=num_modes,
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        key=key,
+    )
     opt = optax.adam(lr)
     opt_state = opt.init(eqx.filter(model, eqx.is_array))
 
-    @eqx.filter_jit
-    def loss_fn(model):
-        term = diffrax.ODETerm(model)
-        sol = diffrax.diffeqsolve(
-            term, solver,
-            t0=t0, t1=t1,
-            dt0=dt0,
-            y0=q0_jnp,
-            saveat=saveat,
-            adjoint=adjoint,
-            max_steps=16384,
-            throw=False,
-        )
-        y_pred = sol.ys  # (len(t_train), num_modes)
-        return jnp.mean((y_pred - y_train_jnp.T) ** 2)
-
-    @eqx.filter_jit
-    def step(model, opt_state):
-        loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
-        updates, opt_state_new = opt.update(grads, opt_state, eqx.filter(model, eqx.is_array))
-        model_new = eqx.apply_updates(model, updates)
-        return model_new, opt_state_new, loss
-
     losses = []
-    for i in range(num_steps):
-        model, opt_state, loss = step(model, opt_state)
-        losses.append(float(loss))
-
-    return model, losses
-
-
-# =============================================================================
-# Run experiment
-# =============================================================================
-def run_experiment(schema):
-    """Run one data regime. Returns results dict."""
-    p = MODEL_PARAMS
-    np.random.seed(p['SEED'])
-
-    noise_level = schema['NOISE_LEVEL']
-    num_samples = schema['NUM_SAMPLES']
-    num_modes = p['NUM_MODES']
-
-    print(f"\n{'='*70}")
-    print(f"  {schema['label']}  ({num_samples} samples, {noise_level:.0%} noise)")
-    print(f"{'='*70}")
-
-    # ── Data generation ──────────────────────────────────────────────────
-    num_eval_points = schema['NUM_EVAL_POINTS']
-    t_pred = np.linspace(TRAINING_SPAN[0], config.PREDICTION_DAYS, num_eval_points)
-    (fom, t_full, true_states, t_samp, snaps_samp) = \
-        load_fom_data(t_pred, TRAINING_SPAN, num_samples, noise_level)
-
-    # Clean basis — fit on noise-free FOM data (same as 04)
-    snaps_clean = fom.get_states(t_samp)
-    basis = Basis(num_vectors=num_modes)
-    basis.fit(snaps_clean)
-    snaps_comp = basis.compress(snaps_samp)   # (r, num_samples)
-    true_comp = basis.compress(true_states)   # (r, len(t_full))
-    print(f"  POD energy: {basis.cumulative_energy:.4%}")
-
-    q0 = snaps_comp[:, 0]
-
-    # ── Train ensemble ───────────────────────────────────────────────────
-    ensemble_size = p['ENSEMBLE_SIZE']
-    num_steps = p['NUM_TRAIN_STEPS']
-    lr = p['LEARNING_RATE']
-
-    print(f"  Training {ensemble_size} ensemble members ({num_steps} steps each)...")
-    t0_wall = time.time()
-    trained_models = []
-    all_losses = []
-
-    for m in range(ensemble_size):
-        key = random.PRNGKey(p['SEED'] + m)
-        model = NeuralODE(
-            in_dim=num_modes,
-            hidden_dim=p['HIDDEN_DIM'],
-            num_layers=p['NUM_LAYERS'],
-            key=key,
+    for step in range(num_steps):
+        model, opt_state, loss = _train_step(
+            model, opt_state, all_q0, all_t_obs, all_y_obs, opt,
         )
-        model, losses = train_single(model, t_samp, snaps_comp, q0, num_steps, lr, key)
-        trained_models.append(model)
-        all_losses.append(losses)
-        final_loss = losses[-1]
-        print(f"    member {m+1:2d}/{ensemble_size}  final_loss={final_loss:.6f}")
+        losses.append(float(loss))
+        if step % 500 == 0 or step == num_steps - 1:
+            print(f"      step {step:5d}/{num_steps}  loss={losses[-1]:.6f}")
 
-    runtime = time.time() - t0_wall
-    print(f"  Ensemble training took {runtime:.0f}s")
+    return model, np.array(losses)
 
-    # ── Evaluate ─────────────────────────────────────────────────────────
-    num_eval = schema['NUM_EVAL_POINTS']
-    t_pred = np.linspace(PREDICTION_SPAN[0], PREDICTION_SPAN[1], num_eval)
+
+def train_ensemble(all_q0, all_t_obs, all_y_obs, p):
+    """Train full ensemble. Returns list of (model, losses)."""
+    ensemble_size = p['ENSEMBLE_SIZE']
+    base_key = jax.random.PRNGKey(p['SEED'])
+    keys = jax.random.split(base_key, ensemble_size)
+
+    ensemble = []
+    for m in range(ensemble_size):
+        print(f"    ── Ensemble member {m + 1}/{ensemble_size} ──")
+        model, losses = train_single_member(
+            keys[m], all_q0, all_t_obs, all_y_obs,
+            p['NUM_TRAIN_STEPS'], p['LEARNING_RATE'],
+            p['NUM_MODES'], p['HIDDEN_DIM'], p['NUM_LAYERS'],
+        )
+        ensemble.append((model, losses))
+    return ensemble
+
+
+# =============================================================================
+# Evaluation
+# =============================================================================
+def evaluate_ensemble(ensemble, q0, t_pred):
+    """Integrate all ensemble members from q0, return stable trajectories.
+
+    Returns array of shape (n_stable, num_modes, len(t_pred)).
+    """
     t_pred_jnp = jnp.array(t_pred)
     q0_jnp = jnp.array(q0)
+    t0_pred = float(t_pred[0])
+    t1_pred = float(t_pred[-1])
+    dt0_pred = float(t_pred[1] - t_pred[0])
 
     solver = diffrax.Tsit5()
     saveat = diffrax.SaveAt(ts=t_pred_jnp)
 
-    rom_solves = []
-    t0_pred = float(t_pred[0])
-    t1_pred = float(t_pred[-1])
-    dt0_pred = float(t_pred[1] - t_pred[0])
-    for model in trained_models:
+    solves = []
+    for model, _ in ensemble:
         try:
             term = diffrax.ODETerm(model)
             sol = diffrax.diffeqsolve(
@@ -225,65 +208,188 @@ def run_experiment(schema):
             )
             traj = np.array(sol.ys).T  # (num_modes, len(t_pred))
             if np.all(np.isfinite(traj)):
-                rom_solves.append(traj)
+                solves.append(traj)
         except Exception:
             pass
+    if solves:
+        return np.stack(solves, axis=0)  # (n_stable, num_modes, len(t_pred))
+    return np.empty((0, q0.shape[0], len(t_pred)))
 
-    n_stable = len(rom_solves)
-    n_total = ensemble_size
-    stability_pct = n_stable / max(n_total, 1) * 100
 
-    train_error = pred_error = float('inf')
-    ci_coverage = ci_width = float('nan')
+# =============================================================================
+# Run experiment
+# =============================================================================
+def run_experiment(schema):
+    """Run one data regime. Returns results dict."""
+    p = MODEL_PARAMS
+    np.random.seed(p['SEED'])
 
-    if n_stable > 0:
-        rom_arr = np.array(rom_solves)
-        rom_med = np.median(rom_arr, axis=0)
-        train_mask = t_pred <= TRAINING_SPAN[1]
-        pred_mask = t_pred > TRAINING_SPAN[1]
+    noise_level = schema['NOISE_LEVEL']
+    num_samples = schema['NUM_SAMPLES']
+    num_eval_points = schema['NUM_EVAL_POINTS']
+    num_modes = p['NUM_MODES']
+    num_ics = p['NUM_ICS']
 
-        ti = interp1d(t_full, true_comp, kind='cubic', fill_value='extrapolate')
+    print(f"\n{'='*70}")
+    print(f"  {schema['label']}  ({num_samples} samples, {noise_level:.0%} noise)")
+    print(f"{'='*70}")
+
+    # ── 1. GENERATE TRAINING DATA (5 trajectories) ───────────────────
+    t_pred_full = np.linspace(TRAINING_SPAN[0], config.PREDICTION_DAYS, num_eval_points)
+    (all_foms, t_full, all_true_states, all_t_samp, all_snaps_noisy) = \
+        load_multitraj_fom_data(t_pred_full, TRAINING_SPAN, num_samples, noise_level,
+                                param_list=TRAINING_PARAMS)
+
+    # ── 2. BUILD POD BASIS (from concatenated clean snapshots) ────────
+    all_snaps_clean = [fom.get_states(t_samp)
+                       for fom, t_samp in zip(all_foms, all_t_samp)]
+    basis = Basis(num_vectors=num_modes)
+    basis.fit(np.hstack(all_snaps_clean))
+    print(f"  POD energy: {basis.cumulative_energy:.4%}")
+
+    # ── 3. COMPRESS ALL SNAPSHOTS AND TRUTH ──────────────────────────
+    all_snaps_comp = [basis.compress(s) for s in all_snaps_noisy]
+    all_true_comp = [basis.compress(s) for s in all_true_states]
+
+    # ── 4. PREPARE JAX TRAINING DATA ─────────────────────────────────
+    all_q0 = [jnp.array(sc[:, 0]) for sc in all_snaps_comp]
+    all_t_obs = [jnp.array(ts) for ts in all_t_samp]
+    all_y_obs = [jnp.array(sc) for sc in all_snaps_comp]
+
+    # ── 5. TRAIN ENSEMBLE ─────────────────────────────────────────────
+    print(f"\n  Training {p['ENSEMBLE_SIZE']} ensemble members "
+          f"({p['NUM_TRAIN_STEPS']} steps each, {num_ics} ICs)...")
+    t0_wall = time.time()
+    ensemble = train_ensemble(all_q0, all_t_obs, all_y_obs, p)
+    runtime = time.time() - t0_wall
+    print(f"  Training time: {runtime:.0f}s")
+
+    # ── 6. GENERATE TEST IC DATA ─────────────────────────────────────
+    test_fom = TumorTwinFOM(get_fom_data_path(*TEST_PARAMS))
+    test_true = test_fom.get_states(t_pred_full)
+    test_true_comp = basis.compress(test_true)
+    test_t_samp = np.sort(
+        np.random.uniform(TRAINING_SPAN[0], TRAINING_SPAN[1], size=num_samples))
+    test_t_samp[0] = TRAINING_SPAN[0]
+    test_t_samp[-1] = TRAINING_SPAN[1]
+    test_snaps_noisy = test_fom.noise(test_fom.get_states(test_t_samp), noise_level)
+    test_snaps_comp = basis.compress(test_snaps_noisy)
+
+    # ── 7. EVALUATE ALL ICs (5 train + 1 test) ───────────────────────
+    t_pred = np.linspace(PREDICTION_SPAN[0], PREDICTION_SPAN[1], num_eval_points)
+    max_samp = p['ENSEMBLE_SIZE']
+
+    eval_params = list(TRAINING_PARAMS) + [TEST_PARAMS]
+    eval_snaps_comp = all_snaps_comp + [test_snaps_comp]
+    eval_true_comp = all_true_comp + [test_true_comp]
+    eval_t_samp = all_t_samp + [test_t_samp]
+    eval_labels = [f"Train (k={k:.3f}, d={d:.3f})" for k, d in TRAINING_PARAMS] + \
+                  [f"Test (k={TEST_PARAMS[0]:.3f}, d={TEST_PARAMS[1]:.3f})"]
+
+    all_rom_solves = []
+    all_n_stable = []
+    all_train_errors = []
+    all_pred_errors = []
+    train_mask = t_pred <= TRAINING_SPAN[1]
+    pred_mask = t_pred > TRAINING_SPAN[1]
+
+    for ic_idx, (params, true_c) in enumerate(zip(eval_params, eval_true_comp)):
+        q0 = eval_snaps_comp[ic_idx][:, 0]
+        ic_solves = evaluate_ensemble(ensemble, q0, t_pred)
+        all_rom_solves.append(ic_solves)
+        all_n_stable.append(len(ic_solves))
+
+        ti = interp1d(t_full, true_c, kind='cubic', fill_value='extrapolate')
         ta = ti(t_pred)
 
-        train_error = float(np.linalg.norm(rom_med[:, train_mask] - ta[:, train_mask]) /
-                           np.linalg.norm(ta[:, train_mask]))
-        pred_error = float(np.linalg.norm(rom_med[:, pred_mask] - ta[:, pred_mask]) /
-                          np.linalg.norm(ta[:, pred_mask]))
+        if len(ic_solves) > 0:
+            rom_med = np.median(ic_solves, axis=0)
+            te = float(np.linalg.norm(rom_med[:, train_mask] - ta[:, train_mask]) /
+                       np.linalg.norm(ta[:, train_mask]))
+            pe = float(np.linalg.norm(rom_med[:, pred_mask] - ta[:, pred_mask]) /
+                       np.linalg.norm(ta[:, pred_mask]))
+        else:
+            te, pe = float('inf'), float('inf')
 
-        q05 = np.percentile(rom_arr, 5, axis=0)
-        q95 = np.percentile(rom_arr, 95, axis=0)
-        ci_width = float(np.mean(q95 - q05))
-        ci_coverage = float(np.mean((ta >= q05) & (ta <= q95)))
+        all_train_errors.append(te)
+        all_pred_errors.append(pe)
+        label = eval_labels[ic_idx]
+        print(f"    {label}: {all_n_stable[-1]}/{max_samp} stable, "
+              f"train={te:.4%}, pred={pe:.4%}")
 
-    print(f"\n  Results ({runtime:.0f}s):")
-    print(f"    Stability: {n_stable}/{n_total} ({stability_pct:.0f}%)")
-    print(f"    Train error: {train_error:.4%}  |  Pred error: {pred_error:.4%}")
-    print(f"    CI coverage: {ci_coverage:.2%} (target: 90%)")
-    mean_final_loss = np.mean([l[-1] for l in all_losses])
-    print(f"    Mean final loss: {mean_final_loss:.6f}")
+    # Aggregate over training ICs
+    train_ic_stable = sum(all_n_stable[:num_ics])
+    train_ic_total = max_samp * num_ics
+    train_errors_fin = [e for e in all_train_errors[:num_ics] if np.isfinite(e)]
+    pred_errors_fin = [e for e in all_pred_errors[:num_ics] if np.isfinite(e)]
+    train_error = np.mean(train_errors_fin) if train_errors_fin else float('inf')
+    pred_error = np.mean(pred_errors_fin) if pred_errors_fin else float('inf')
+    stability_pct = train_ic_stable / max(train_ic_total, 1) * 100
+
+    print(f"\n    Overall: {train_ic_stable}/{train_ic_total} ({stability_pct:.0f}%)")
+    print(f"    Avg train: {train_error:.4%}  |  Avg pred: {pred_error:.4%}")
+    print(f"    Test IC: {all_n_stable[-1]}/{max_samp} stable, "
+          f"train={all_train_errors[-1]:.4%}, pred={all_pred_errors[-1]:.4%}")
+
+    # CI coverage (over training ICs)
+    ci_width = ci_coverage = float('nan')
+    if train_ic_stable > 0:
+        all_in_ci, all_widths = [], []
+        for ic_idx in range(num_ics):
+            if all_n_stable[ic_idx] > 0:
+                ti = interp1d(t_full, eval_true_comp[ic_idx],
+                              kind='cubic', fill_value='extrapolate')
+                ta = ti(t_pred)
+                q05 = np.percentile(all_rom_solves[ic_idx], 5, axis=0)
+                q95 = np.percentile(all_rom_solves[ic_idx], 95, axis=0)
+                all_widths.append(np.mean(q95 - q05))
+                all_in_ci.append(np.mean((ta >= q05) & (ta <= q95)))
+        if all_widths:
+            ci_width = np.mean(all_widths)
+            ci_coverage = np.mean(all_in_ci)
+            print(f"    CI coverage: {ci_coverage:.2%} (target: 90%)")
+
+    # Collect per-member losses for plotting
+    all_member_losses = np.stack([losses for _, losses in ensemble], axis=0)
 
     return {
         'schema': schema,
         'train_error': train_error, 'pred_error': pred_error,
         'stability_pct': stability_pct,
-        'n_stable': n_stable, 'n_total': n_total,
+        'n_stable': train_ic_stable, 'n_total': train_ic_total,
+        'test_train_error': all_train_errors[-1],
+        'test_pred_error': all_pred_errors[-1],
+        'test_n_stable': all_n_stable[-1],
         'ci_coverage': ci_coverage, 'ci_width': ci_width,
-        'runtime': runtime, 'losses': all_losses,
-        'rom_solves': rom_solves,
-        'ensemble_preds': rom_solves,
-        'fom': fom,
-        'snaps_comp': snaps_comp, 'true_comp': true_comp,
-        't_full': t_full, 't_pred': t_pred, 't_samp': t_samp,
-        'training_span': TRAINING_SPAN, 'num_modes': num_modes,
-        'true_states': true_states, 'basis': basis,
+        'runtime': runtime,
+        'all_member_losses': all_member_losses,
+        # Per-IC data for multi-trajectory plotting
+        'all_rom_solves': all_rom_solves,
+        'all_snaps_comp': eval_snaps_comp,
+        'all_true_comp': eval_true_comp,
+        'all_t_samp': eval_t_samp,
+        'all_n_stable': all_n_stable,
+        'eval_params': eval_params,
+        'eval_labels': eval_labels,
+        't_full': t_full,
+        't_pred': t_pred,
+        'training_span': TRAINING_SPAN,
+        'num_modes': num_modes,
+        'max_samp': max_samp,
+        'basis': basis,
+        'all_true_states': all_true_states + [test_true],
+        'all_foms': all_foms + [test_fom],
+        'losses': all_member_losses,
+        'all_train_errors': all_train_errors,
+        'all_pred_errors': all_pred_errors,
     }
 
 
 # =============================================================================
-# Plotting — Spatial heatmaps and tumor volume
+# Plotting — Spatial heatmaps (test IC)
 # =============================================================================
 def plot_spatial_comparison(result, save_dir=None):
-    """Plot 3D tumor density slices: FOM truth vs Neural ODE prediction."""
+    """Plot 3D tumor density slices for the test IC: FOM truth vs Neural ODE."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -295,18 +401,23 @@ def plot_spatial_comparison(result, save_dir=None):
     schema = result['schema']
     prefix = f"05_{schema['name']}"
     basis = result['basis']
-    true_states = result['true_states']
     t_full = result['t_full']
     t_pred = result['t_pred']
-    ensemble_preds = result['ensemble_preds']  # list of (num_modes, n_t) arrays
-    fom = result.get('fom') or TumorTwinFOM()
+    all_rom_solves = result['all_rom_solves']
+    all_true_states = result['all_true_states']
+    all_foms = result['all_foms']
 
-    if len(ensemble_preds) == 0:
-        print("  ⚠ No ensemble predictions — skipping spatial plot")
+    # Use test IC (last index)
+    test_idx = len(all_rom_solves) - 1
+    test_solves = all_rom_solves[test_idx]
+    test_true = all_true_states[test_idx]
+    test_fom = all_foms[test_idx]
+
+    if len(test_solves) == 0:
+        print("  ⚠ No stable test IC predictions — skipping spatial plot")
         return
 
-    ens_arr = np.array(ensemble_preds)
-    ens_med = np.median(ens_arr, axis=0)
+    ens_med = np.median(test_solves, axis=0)
 
     timepoints_to_show = [5, 15, 30, 45, 60, 90]
     n_times = len(timepoints_to_show)
@@ -314,14 +425,14 @@ def plot_spatial_comparison(result, save_dir=None):
 
     for col, t_target in enumerate(timepoints_to_show):
         idx_full = np.argmin(np.abs(t_full - t_target))
-        fom_state = true_states[:, idx_full]
+        fom_state = test_true[:, idx_full]
 
         idx_pred = np.argmin(np.abs(t_pred - t_target))
         rom_full = basis.decompress(ens_med[:, idx_pred])
 
-        fom_slices = fom.get_center_slices(fom_state)
-        rom_slices = fom.get_center_slices(rom_full)
-        err_slices = fom.get_center_slices(np.abs(fom_state - rom_full))
+        fom_slices = test_fom.get_center_slices(fom_state)
+        rom_slices = test_fom.get_center_slices(rom_full)
+        err_slices = test_fom.get_center_slices(np.abs(fom_state - rom_full))
 
         im0 = axes[0, col].imshow(fom_slices['axial'].T, origin='lower',
                                    cmap='hot_r', vmin=0, vmax=1, aspect='equal')
@@ -345,7 +456,9 @@ def plot_spatial_comparison(result, save_dir=None):
     fig.colorbar(im0, ax=axes[0, :].tolist(), shrink=0.8, label='Cellularity')
     fig.colorbar(im1, ax=axes[1, :].tolist(), shrink=0.8, label='Cellularity')
     fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.8, label='|Error|')
-    fig.suptitle('Tumor Growth: FOM vs Neural ODE ROM (axial slice)', fontsize=14, y=1.02)
+    k_t, d_t = TEST_PARAMS
+    fig.suptitle(f'Test IC (k={k_t:.3f}, d={d_t:.3f}): FOM vs Neural ODE (axial)',
+                 fontsize=14, y=1.02)
     fig.tight_layout()
     path = os.path.join(save_dir, f"{prefix}_spatial_comparison.png")
     fig.savefig(path, dpi=200, bbox_inches='tight')
@@ -353,8 +466,11 @@ def plot_spatial_comparison(result, save_dir=None):
     plt.close(fig)
 
 
+# =============================================================================
+# Plotting — Tumor volume (all ICs)
+# =============================================================================
 def plot_tumor_volume(result, save_dir=None):
-    """Plot total tumor burden: FOM truth vs Neural ODE ensemble.
+    """Plot total tumor burden for all ICs: FOM truth vs Neural ODE ensemble.
 
     Uses reduced-space dot product to avoid decompressing full 646K DOF fields.
     """
@@ -369,44 +485,57 @@ def plot_tumor_volume(result, save_dir=None):
     schema = result['schema']
     prefix = f"05_{schema['name']}"
     basis = result['basis']
-    true_states = result['true_states']
     t_full = result['t_full']
     t_pred = result['t_pred']
-    ensemble_preds = result['ensemble_preds']
-    fom = result.get('fom') or TumorTwinFOM()
+    all_rom_solves = result['all_rom_solves']
+    all_true_states = result['all_true_states']
+    all_foms = result['all_foms']
+    eval_labels = result['eval_labels']
+    num_ics = len(all_rom_solves)
 
-    if len(ensemble_preds) == 0:
-        return
-
-    voxel_vol = float(np.prod(fom.spacing))
-
-    # FOM truth: direct summation
-    fom_vol = np.array([true_states[:, i].sum() * voxel_vol
-                        for i in range(true_states.shape[1])])
-
-    # ROM: efficient volume via reduced-space projection
-    # vol(t) = ones^T @ (V @ q + shift) = (V^T @ ones) . q + ones^T @ shift
+    # Precompute efficient volume projection: vol = vol_proj @ q + shift_vol
     V = basis.entries   # (n_dof, r)
     ones = np.ones(V.shape[0])
     vol_proj = V.T @ ones          # (r,)
     shift_vol = ones @ basis.shift_  # scalar
 
-    ens_arr = np.array(ensemble_preds)
-    ens_vols = np.array([vol_proj @ ens_arr[s] + shift_vol
-                         for s in range(ens_arr.shape[0])]) * voxel_vol
+    train_colors = plt.cm.tab10(np.linspace(0, 0.5, num_ics - 1))
+    test_color = 'tab:red'
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(t_full, fom_vol, 'k-', lw=2, label='FOM Truth')
-    ens_med = np.median(ens_vols, axis=0)
-    ens_lo = np.percentile(ens_vols, 5, axis=0)
-    ens_hi = np.percentile(ens_vols, 95, axis=0)
-    ax.plot(t_pred, ens_med, color='tab:orange', lw=2, label='Neural ODE Median')
-    ax.fill_between(t_pred, ens_lo, ens_hi, color='tab:orange', alpha=0.2, label='90% CI')
-    ax.axvline(config.TRAINING_SPAN[1], color='gray', ls='--', alpha=0.5, label='Train/Predict')
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    for ic_idx in range(num_ics):
+        fom = all_foms[ic_idx]
+        true_states = all_true_states[ic_idx]
+        voxel_vol = float(np.prod(fom.spacing))
+        is_test = (ic_idx == num_ics - 1)
+        color = test_color if is_test else train_colors[ic_idx]
+        lw_truth = 2.5 if is_test else 1.5
+        alpha_truth = 1.0 if is_test else 0.6
+
+        # FOM truth volume
+        fom_vol = np.array([true_states[:, i].sum() * voxel_vol
+                            for i in range(true_states.shape[1])])
+        label_truth = eval_labels[ic_idx]
+        ax.plot(t_full, fom_vol, color=color, lw=lw_truth, alpha=alpha_truth,
+                label=label_truth)
+
+        # ROM ensemble volume
+        ic_solves = all_rom_solves[ic_idx]
+        if len(ic_solves) > 0:
+            ens_vols = np.array([vol_proj @ ic_solves[s] + shift_vol
+                                 for s in range(len(ic_solves))]) * voxel_vol
+            ens_med = np.median(ens_vols, axis=0)
+            ens_lo = np.percentile(ens_vols, 5, axis=0)
+            ens_hi = np.percentile(ens_vols, 95, axis=0)
+            ax.plot(t_pred, ens_med, color=color, ls='--', lw=1.5, alpha=0.8)
+            ax.fill_between(t_pred, ens_lo, ens_hi, color=color, alpha=0.10)
+
+    ax.axvline(TRAINING_SPAN[1], color='gray', ls='--', alpha=0.5, label='Train/Predict')
     ax.set_xlabel('Time (days)')
     ax.set_ylabel('Total Tumor Burden (mm³)')
-    ax.set_title('Tumor Volume Over Time')
-    ax.legend()
+    ax.set_title('Tumor Volume: All ICs (solid=FOM, dashed=NeuralODE)')
+    ax.legend(fontsize=7, loc='upper left')
     fig.tight_layout()
     path = os.path.join(save_dir, f"{prefix}_tumor_volume.png")
     fig.savefig(path, dpi=200, bbox_inches='tight')
@@ -415,10 +544,10 @@ def plot_tumor_volume(result, save_dir=None):
 
 
 # =============================================================================
-# Plotting — ROM trajectories, loss, ensemble spread
+# Plotting — Multi-IC ROM trajectories, loss, ensemble spread
 # =============================================================================
 def plot_results(result, save_dir=None):
-    """Generate all plots: ROM trajectories, loss, ensemble spread, spatial heatmaps, tumor volume."""
+    """Generate multi-IC ROM trajectory, loss, ensemble spread, spatial, and volume plots."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -429,156 +558,109 @@ def plot_results(result, save_dir=None):
 
     schema = result['schema']
     prefix = f"05_{schema['name']}"
-    losses = result['losses']
-    rom_solves = result['rom_solves']
-    snaps_comp = result['snaps_comp']
-    true_comp = result['true_comp']
-    t_full = result['t_full']
     t_pred = result['t_pred']
-    t_samp = result['t_samp']
+    t_full = result['t_full']
     training_span = result['training_span']
     num_modes = result['num_modes']
+    all_rom_solves = result['all_rom_solves']
+    all_snaps_comp = result['all_snaps_comp']
+    all_true_comp = result['all_true_comp']
+    all_t_samp = result['all_t_samp']
+    all_n_stable = result['all_n_stable']
+    eval_labels = result['eval_labels']
+    max_samp = result['max_samp']
+    all_member_losses = result['all_member_losses']
 
-    # ── 1. ROM Trajectory Plot (3-column) ────────────────────────────
-    if len(rom_solves) > 0:
-        rom_arr = np.array(rom_solves)
-        rom_med = np.median(rom_arr, axis=0)
-        rom_q05 = np.percentile(rom_arr, 5, axis=0)
-        rom_q95 = np.percentile(rom_arr, 95, axis=0)
+    # ── 1. Multi-trajectory ROM plot ─────────────────────────────────
+    n_ics_total = len(all_rom_solves)
+    has_any_stable = any(ns > 0 for ns in all_n_stable)
 
-        true_interp = interp1d(t_full, true_comp, kind='cubic', fill_value='extrapolate')
-        true_at_pred = true_interp(t_pred)
+    if not has_any_stable:
+        print("  ⚠ No stable Neural ODE solves — skipping trajectory plot")
+    else:
+        fig, axes = plt.subplots(
+            n_ics_total, num_modes,
+            figsize=(4 * num_modes, 2.5 * n_ics_total),
+            sharex=True, squeeze=False,
+        )
 
-        train_end = training_span[1]
-        train_mask = t_pred <= train_end
-        pred_mask = t_pred > train_end
-        t_train_win = t_pred[train_mask]
-        t_pred_win = t_pred[pred_mask]
+        for row in range(n_ics_total):
+            rom_solves = all_rom_solves[row]
+            n_stable = all_n_stable[row]
+            label = eval_labels[row]
 
-        fig, ax = plt.subplots(num_modes, 3, figsize=(15, 2.5 * num_modes),
-                               sharey='row', sharex='col')
-        if num_modes == 1:
-            ax = ax.reshape(1, -1)
+            true_interp = interp1d(t_full, all_true_comp[row],
+                                   kind='cubic', fill_value='extrapolate')
+            true_at_pred = true_interp(t_pred)
 
-        for i in range(num_modes):
-            # Training window
-            ax[i, 0].plot(t_samp, snaps_comp[i], 'k*', ms=3, label='Obs')
-            ax[i, 0].plot(t_train_win, true_at_pred[i, train_mask],
-                         color='tab:gray', lw=1.5, label='Truth')
-            ax[i, 0].plot(t_train_win, rom_med[i, train_mask],
-                         color='tab:orange', ls='--', lw=2, alpha=0.9, label='Median')
-            ax[i, 0].fill_between(t_train_win,
-                                  rom_q05[i, train_mask], rom_q95[i, train_mask],
-                                  color='tab:orange', alpha=0.15, label='90% CI')
-            ax[i, 0].set_ylabel(f'Mode {i}')
+            for col in range(num_modes):
+                ax = axes[row, col]
 
-            # Prediction window
-            ax[i, 1].plot(t_pred_win, true_at_pred[i, pred_mask], color='tab:gray', lw=1.5)
-            ax[i, 1].plot(t_pred_win, rom_med[i, pred_mask],
-                         color='tab:orange', ls='--', lw=2, alpha=0.9)
-            ax[i, 1].fill_between(t_pred_win,
-                                  rom_q05[i, pred_mask], rom_q95[i, pred_mask],
-                                  color='tab:orange', alpha=0.15)
+                ax.axvspan(training_span[0], training_span[1],
+                           color='gray', alpha=0.10, zorder=0)
 
-            # Full span
-            ax[i, 2].plot(t_samp, snaps_comp[i], 'k*', ms=3)
-            ax[i, 2].plot(t_pred, true_at_pred[i], color='tab:gray', lw=1.5)
-            ax[i, 2].plot(t_pred, rom_med[i], color='tab:orange', ls='--', lw=2, alpha=0.9)
-            ax[i, 2].fill_between(t_pred, rom_q05[i], rom_q95[i],
-                                  color='tab:orange', alpha=0.15)
-            ax[i, 2].axvline(train_end, color='k', ls=':', lw=0.8, alpha=0.5)
+                ax.plot(t_pred, true_at_pred[col],
+                        color='tab:gray', lw=2,
+                        label='True' if (row == 0 and col == 0) else None)
 
-            # y-limits from truth
-            yvals = true_at_pred[i]
-            ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
-            pad = max(abs(ymax - ymin) * 0.3, 1e-6)
-            for j in range(3):
-                ax[i, j].set_ylim(ymin - pad, ymax + pad)
+                ax.plot(all_t_samp[row], all_snaps_comp[row][col],
+                        'k*', ms=4, zorder=5,
+                        label='Data' if (row == 0 and col == 0) else None)
 
-        ax[0, 0].set_title('Training Window')
-        ax[0, 1].set_title('Prediction Window')
-        ax[0, 2].set_title('Full Span')
-        ax[0, 0].legend(fontsize=7, loc='upper right')
-        for j in range(3):
-            ax[-1, j].set_xlabel('Time (days)')
+                if n_stable > 0:
+                    ax.plot(
+                        t_pred,
+                        np.median(rom_solves[:, col, :], axis=0),
+                        color='tab:orange', ls='--', lw=2, alpha=0.9,
+                        label='Median' if (row == 0 and col == 0) else None,
+                    )
+                    ax.fill_between(
+                        t_pred,
+                        np.percentile(rom_solves[:, col, :], 5, axis=0),
+                        np.percentile(rom_solves[:, col, :], 95, axis=0),
+                        color='tab:orange', alpha=0.15,
+                        label='90% CI' if (row == 0 and col == 0) else None,
+                    )
 
-        fig.suptitle(f"Neural ODE — {schema['label']}", fontsize=14)
+                ax.axvline(training_span[1], color='k', ls=':', lw=0.8, alpha=0.5)
+
+                yvals = true_at_pred[col]
+                ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
+                pad = max(abs(ymax - ymin) * 0.3, 1e-6)
+                ax.set_ylim(ymin - pad, ymax + pad)
+
+                if row == 0:
+                    ax.set_title(f'Mode {col + 1}')
+                if col == 0:
+                    ax.set_ylabel(f'{label}\n({n_stable}/{max_samp} stable)',
+                                  fontsize=8)
+                if row == n_ics_total - 1:
+                    ax.set_xlabel('Time (days)')
+
+        handles, labels_leg = axes[0, 0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels_leg, loc='upper center',
+                       ncol=len(handles), fontsize=9,
+                       bbox_to_anchor=(0.5, 1.02))
+
+        fig.suptitle(f"Neural ODE — {schema['label']}", fontsize=14, y=1.05)
         fig.tight_layout()
         path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
         plt.close(fig)
 
-    # ── 2. Notebook-style ROM Trajectory Plot ───────────────────────
-    if len(rom_solves) > 0:
-        rom_arr = np.array(rom_solves)
-        rom_med = np.median(rom_arr, axis=0)
-        rom_q05 = np.percentile(rom_arr, 5, axis=0)
-        rom_q95 = np.percentile(rom_arr, 95, axis=0)
-
-        true_interp = interp1d(t_full, true_comp, kind='cubic', fill_value='extrapolate')
-        true_at_pred = true_interp(t_pred)
-
-        n_stable = result['n_stable']
-        n_total = result['n_total']
-
-        fig, ax = plt.subplots(num_modes, 1, figsize=(10, 2.5 * num_modes), sharex=True)
-        if num_modes == 1:
-            ax = [ax]
-        for i in range(num_modes):
-            ax[i].axvspan(training_span[0], training_span[1], color='gray', alpha=0.10, zorder=0)
-            ax[i].plot(t_pred, true_at_pred[i], color='tab:gray', lw=2, label='True solution')
-            ax[i].plot(t_samp, snaps_comp[i], 'k*', ms=5, label='Training data', zorder=5)
-            ax[i].plot(t_pred, rom_med[i], color='tab:orange', linestyle='--', alpha=0.9, lw=2, label='ROM median')
-            ax[i].fill_between(t_pred, rom_q05[i], rom_q95[i], color='tab:orange', alpha=0.15, label='ROM 5-95%')
-            ax[i].axvline(training_span[1], color='k', ls=':', lw=0.8, alpha=0.5)
-            ax[i].set_ylabel(f'Mode {i+1}')
-            yvals = true_at_pred[i]
-            ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
-            pad = max(abs(ymax - ymin) * 0.3, 1e-6)
-            ax[i].set_ylim(ymin - pad, ymax + pad)
-            if i == 0:
-                ax[i].legend(loc='upper right', fontsize=9)
-        ax[-1].set_xlabel('Time (days)')
-        fig.suptitle(f'Neural ODE — {schema["label"]}  ({n_stable}/{n_total} stable)', fontsize=14)
-        fig.tight_layout()
-        path = os.path.join(save_dir, f"{prefix}_rom_notebook.png")
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        print(f"  📊 Saved: {path}")
-        plt.close(fig)
-
-    # ── 3. Full-Order Error Plot ─────────────────────────────────────
-    basis = result.get('basis')
-    true_states = result.get('true_states')
-    if len(rom_solves) > 0 and basis is not None and true_states is not None:
-        rom_arr = np.array(rom_solves)
-        # Cap at 20 samples to avoid OOM with 646K DOFs
-        rom_arr_capped = rom_arr[:min(20, rom_arr.shape[0])]
-        fig_foe, axes_foe = plot_full_order_error(
-            rom_solves=rom_arr_capped,
-            basis=basis,
-            true_states=true_states,
-            time_domain_full=t_full,
-            time_domain_eval=t_pred,
-            training_span=training_span,
-            error_type='relative',
-        )
-        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
-        path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
-        fig_foe.savefig(path, dpi=200, bbox_inches='tight')
-        print(f"  📊 Saved: {path}")
-        plt.close(fig_foe)
-
-    # ── 4. Training Loss Plot ────────────────────────────────────────
-    mean_loss = np.mean(losses, axis=0)
+    # ── 2. Loss Convergence Plot ─────────────────────────────────────
+    mean_loss = np.mean(all_member_losses, axis=0)
     fig_loss, ax_loss = plt.subplots(1, 2, figsize=(12, 4))
-    ax_loss[0].plot(mean_loss, lw=0.8, color='tab:blue')
+    ax_loss[0].plot(mean_loss, lw=0.8, color='tab:orange')
     ax_loss[0].set_xlabel('Training Step')
     ax_loss[0].set_ylabel('MSE Loss')
-    ax_loss[0].set_title('Loss Convergence (mean over ensemble)')
+    ax_loss[0].set_title('Loss Convergence (ensemble mean)')
     ax_loss[0].grid(True, alpha=0.3)
     half = len(mean_loss) // 2
-    ax_loss[1].plot(range(half, len(mean_loss)), mean_loss[half:], lw=0.8, color='tab:blue')
+    ax_loss[1].plot(range(half, len(mean_loss)), mean_loss[half:],
+                    lw=0.8, color='tab:orange')
     ax_loss[1].set_xlabel('Training Step')
     ax_loss[1].set_ylabel('MSE Loss')
     ax_loss[1].set_title('Loss (last 50%)')
@@ -589,64 +671,104 @@ def plot_results(result, save_dir=None):
     print(f"  📊 Saved: {path}")
     plt.close(fig_loss)
 
-    # ── 5. Ensemble Spread Plot ──────────────────────────────────────
-    if len(rom_solves) > 0:
-        rom_arr = np.array(rom_solves)
-        true_interp = interp1d(t_full, true_comp, kind='cubic', fill_value='extrapolate')
+    # ── 3. Ensemble Spread Plot ──────────────────────────────────────
+    n_modes_show = min(2, num_modes)
+    ics_to_show = list(range(min(2, n_ics_total)))
+    if n_ics_total > 2:
+        ics_to_show.append(n_ics_total - 1)  # test IC
+
+    fig_sp, axes_sp = plt.subplots(
+        len(ics_to_show), n_modes_show,
+        figsize=(6 * n_modes_show, 3 * len(ics_to_show)),
+        sharex=True, squeeze=False,
+    )
+    for ri, ic_idx in enumerate(ics_to_show):
+        rom_solves = all_rom_solves[ic_idx]
+        true_interp = interp1d(t_full, all_true_comp[ic_idx],
+                               kind='cubic', fill_value='extrapolate')
         true_at_pred = true_interp(t_pred)
-        train_end = training_span[1]
+        for ci in range(n_modes_show):
+            ax = axes_sp[ri, ci]
+            ax.plot(t_pred, true_at_pred[ci], color='tab:gray', lw=2, label='True')
+            if len(rom_solves) > 0:
+                for m in range(len(rom_solves)):
+                    ax.plot(t_pred, rom_solves[m, ci, :],
+                            color='tab:orange', alpha=0.1, lw=0.5)
+            ax.axvline(training_span[1], color='k', ls=':', lw=0.8, alpha=0.5)
+            if ri == 0:
+                ax.set_title(f'Mode {ci + 1}')
+            if ci == 0:
+                ax.set_ylabel(eval_labels[ic_idx], fontsize=8)
+            if ri == len(ics_to_show) - 1:
+                ax.set_xlabel('Time (days)')
+    fig_sp.suptitle(f"Ensemble Spread — {schema['label']}", fontsize=12, y=1.02)
+    fig_sp.tight_layout()
+    path = os.path.join(save_dir, f"{prefix}_ensemble_spread.png")
+    fig_sp.savefig(path, dpi=200, bbox_inches='tight')
+    print(f"  📊 Saved: {path}")
+    plt.close(fig_sp)
 
-        n_show = min(2, num_modes)
-        fig, axes = plt.subplots(n_show, 2, figsize=(14, 4 * n_show))
-        if n_show == 1:
-            axes = axes.reshape(1, -1)
+    # ── 4. Full-Order Error Plot (first training IC, capped at 20) ───
+    basis = result.get('basis')
+    all_true_states_full = result.get('all_true_states')
+    if basis is not None and all_true_states_full is not None and len(all_rom_solves) > 0:
+        first_ic_solves = all_rom_solves[0]
+        if len(first_ic_solves) > 0:
+            first_true_full = all_true_states_full[0]
+            rom_arr_capped = first_ic_solves[:min(20, len(first_ic_solves))]
+            fig_foe, axes_foe = plot_full_order_error(
+                rom_solves=rom_arr_capped,
+                basis=basis,
+                true_states=first_true_full,
+                time_domain_full=t_full,
+                time_domain_eval=t_pred,
+                training_span=training_span,
+                error_type='relative',
+            )
+            fig_foe.suptitle(f'Full-Order Error (IC 0) — {schema["label"]}', fontsize=14)
+            path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
+            fig_foe.savefig(path, dpi=200, bbox_inches='tight')
+            print(f"  📊 Saved: {path}")
+            plt.close(fig_foe)
 
-        for i in range(n_show):
-            # Left: individual ensemble trajectories
-            for m in range(len(rom_solves)):
-                axes[i, 0].plot(t_pred, rom_arr[m, i], color='tab:orange',
-                               alpha=0.1, lw=0.6)
-            axes[i, 0].plot(t_pred, true_at_pred[i], color='tab:gray', lw=1.5,
-                           label='Truth')
-            axes[i, 0].axvline(train_end, color='k', ls=':', lw=0.8, alpha=0.5)
-            axes[i, 0].set_ylabel(f'Mode {i}')
-            axes[i, 0].set_title(f'Mode {i} — Ensemble Trajectories')
-            axes[i, 0].legend(fontsize=7)
-            axes[i, 0].grid(True, alpha=0.2)
+    # ── 5. Per-IC Error Bar Chart ────────────────────────────────────
+    all_train_errors = result.get('all_train_errors', [])
+    all_pred_errors = result.get('all_pred_errors', [])
+    n_train_ics = len(TRAINING_PARAMS)
 
-            # Right: per-member error histogram
-            train_mask = t_pred <= train_end
-            pred_mask = t_pred > train_end
-            train_errs = []
-            pred_errs = []
-            for m in range(len(rom_solves)):
-                te = np.linalg.norm(rom_arr[m, i, train_mask] - true_at_pred[i, train_mask]) / \
-                     max(np.linalg.norm(true_at_pred[i, train_mask]), 1e-12)
-                pe = np.linalg.norm(rom_arr[m, i, pred_mask] - true_at_pred[i, pred_mask]) / \
-                     max(np.linalg.norm(true_at_pred[i, pred_mask]), 1e-12)
-                train_errs.append(te)
-                pred_errs.append(pe)
-            axes[i, 1].hist(train_errs, bins=10, alpha=0.6, color='tab:blue',
-                           label='Train err')
-            axes[i, 1].hist(pred_errs, bins=10, alpha=0.6, color='tab:red',
-                           label='Pred err')
-            axes[i, 1].set_xlabel('Relative Error')
-            axes[i, 1].set_ylabel('Count')
-            axes[i, 1].set_title(f'Mode {i} — Per-member Error Distribution')
-            axes[i, 1].legend(fontsize=7)
-            axes[i, 1].grid(True, alpha=0.2)
+    if all_train_errors and all_pred_errors:
+        fig_bar, ax_bar = plt.subplots(figsize=(10, 5))
+        x = np.arange(n_ics_total)
+        width = 0.35
+        train_errs_pct = [e * 100 if np.isfinite(e) else 0.0 for e in all_train_errors]
+        pred_errs_pct = [e * 100 if np.isfinite(e) else 0.0 for e in all_pred_errors]
 
-        fig.suptitle(f"Ensemble Trajectories — {schema['label']}", fontsize=14)
-        fig.tight_layout()
-        path = os.path.join(save_dir, f"{prefix}_ensemble_spread.png")
-        fig.savefig(path, dpi=200, bbox_inches='tight')
+        colors_train = ['tab:blue'] * n_train_ics + ['tab:cyan']
+        colors_pred = ['tab:red'] * n_train_ics + ['tab:orange']
+        for i in range(n_ics_total):
+            ax_bar.bar(x[i] - width/2, train_errs_pct[i], width,
+                       color=colors_train[i], alpha=0.7,
+                       label='Train' if i == 0 else None)
+            ax_bar.bar(x[i] + width/2, pred_errs_pct[i], width,
+                       color=colors_pred[i], alpha=0.7,
+                       label='Pred' if i == 0 else None)
+        ax_bar.set_xticks(x)
+        ax_bar.set_xticklabels([l.replace('Train ', 'Tr ').replace('Test ', 'Te ')
+                                for l in eval_labels], rotation=30, ha='right', fontsize=8)
+        ax_bar.set_ylabel('Relative Error (%)')
+        ax_bar.set_title(f'Per-IC Error — {schema["label"]}')
+        ax_bar.legend()
+        ax_bar.grid(True, alpha=0.2, axis='y')
+        fig_bar.tight_layout()
+        path = os.path.join(save_dir, f"{prefix}_per_ic_error.png")
+        fig_bar.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
-        plt.close(fig)
+        plt.close(fig_bar)
 
-    # ── 6. Spatial Heatmap Comparison ────────────────────────────────
+    # ── 6. Spatial Heatmap Comparison (test IC) ──────────────────────
     plot_spatial_comparison(result, save_dir=save_dir)
 
-    # ── 7. Tumor Volume Plot ────────────────────────────────────────
+    # ── 7. Tumor Volume Plot (all ICs) ──────────────────────────────
     plot_tumor_volume(result, save_dir=save_dir)
 
 
@@ -655,25 +777,35 @@ def plot_results(result, save_dir=None):
 # =============================================================================
 def save_predictions(result, save_dir=None):
     """Save predictions for cross-method comparison."""
+    schema = result['schema']
     if save_dir is None:
-        save_dir = os.path.join(SCRIPT_DIR, "results", "comparison", result['schema']['name'])
+        save_dir = os.path.join(SCRIPT_DIR, "results", "comparison", schema['name'])
     os.makedirs(save_dir, exist_ok=True)
 
-    rom_solves = result['rom_solves']
-    rom_arr = np.array(rom_solves) if len(rom_solves) > 0 else np.empty((0, result['num_modes'], len(result['t_pred'])))
-
+    all_rom_solves = result['all_rom_solves']
     method_name = "05_neural_ode"
+
+    save_dict = {
+        't_pred': result['t_pred'],
+        'train_error': result['train_error'],
+        'pred_error': result['pred_error'],
+        'stability_pct': result['stability_pct'],
+        'ci_coverage': result.get('ci_coverage', float('nan')),
+        'ci_width': result.get('ci_width', float('nan')),
+        'runtime': result['runtime'],
+        'n_ics': len(all_rom_solves),
+        'test_train_error': result.get('test_train_error', float('nan')),
+        'test_pred_error': result.get('test_pred_error', float('nan')),
+    }
+    for ic_idx, solves in enumerate(all_rom_solves):
+        if len(solves) > 0:
+            save_dict[f'rom_solves_{ic_idx}'] = np.array(solves)
+        else:
+            save_dict[f'rom_solves_{ic_idx}'] = np.empty(
+                (0, result['num_modes'], len(result['t_pred'])))
+
     path = os.path.join(save_dir, f"{method_name}.npz")
-    np.savez(path,
-        rom_solves=rom_arr,
-        t_pred=result['t_pred'],
-        train_error=result['train_error'],
-        pred_error=result['pred_error'],
-        stability_pct=result['stability_pct'],
-        ci_coverage=result.get('ci_coverage', float('nan')),
-        ci_width=result.get('ci_width', float('nan')),
-        runtime=result['runtime'],
-    )
+    np.savez(path, **save_dict)
     print(f"  💾 Saved predictions: {path}")
 
 
@@ -691,14 +823,15 @@ def main(schema_names=None):
             return
 
     print("=" * 70)
-    print("05 — Neural ODE Ensemble — Tumor Growth")
+    print("05 — Neural ODE Ensemble — Tumor Growth (Multi-Trajectory)")
     print("=" * 70)
     print(f"Regimes: {len(schemas)}")
     for s in schemas:
         print(f"  • {s['label']:30s}  samples={s['NUM_SAMPLES']:3d}  noise={s['NOISE_LEVEL']:.0%}")
-    print(f"Model:  hidden={MODEL_PARAMS['HIDDEN_DIM']}, layers={MODEL_PARAMS['NUM_LAYERS']}, "
-          f"lr={MODEL_PARAMS['LEARNING_RATE']}, steps={MODEL_PARAMS['NUM_TRAIN_STEPS']}, "
-          f"ensemble={MODEL_PARAMS['ENSEMBLE_SIZE']}")
+    print(f"Model:  {MODEL_PARAMS['NUM_LAYERS']}×{MODEL_PARAMS['HIDDEN_DIM']} "
+          f"{MODEL_PARAMS['ACTIVATION']}, ensemble={MODEL_PARAMS['ENSEMBLE_SIZE']}, "
+          f"lr={MODEL_PARAMS['LEARNING_RATE']}, steps={MODEL_PARAMS['NUM_TRAIN_STEPS']}")
+    print(f"ICs:    {MODEL_PARAMS['NUM_ICS']} training + 1 test ({TEST_PARAMS})")
 
     results = []
     for schema in schemas:
@@ -708,17 +841,18 @@ def main(schema_names=None):
         results.append(r)
 
     # Summary table
-    print(f"\n\n{'='*80}")
-    print(f"SUMMARY — Neural ODE Ensemble (Tumor Growth)")
-    print(f"{'='*80}")
+    print(f"\n\n{'='*90}")
+    print(f"SUMMARY — Neural ODE Ensemble (Tumor Growth, Multi-Traj)")
+    print(f"{'='*90}")
     print(f"{'Regime':<28s} {'Samp':>4s} {'Noise':>5s} {'Stab':>5s} "
-          f"{'Train':>8s} {'Pred':>8s} {'CI_cov':>7s} {'Time':>6s}")
-    print(f"{'-'*28} {'-'*4} {'-'*5} {'-'*5} {'-'*8} {'-'*8} {'-'*7} {'-'*6}")
+          f"{'Train':>8s} {'Pred':>8s} {'TestPr':>8s} {'CI_cov':>7s} {'Time':>6s}")
+    print(f"{'-'*28} {'-'*4} {'-'*5} {'-'*5} {'-'*8} {'-'*8} {'-'*8} {'-'*7} {'-'*6}")
     for r in results:
         s = r['schema']
         print(f"{s['label']:<28s} {s['NUM_SAMPLES']:>4d} "
               f"{s['NOISE_LEVEL']:>4.0%} {r['stability_pct']:>4.0f}% "
               f"{r['train_error']:>7.2%} {r['pred_error']:>7.2%} "
+              f"{r['test_pred_error']:>7.2%} "
               f"{r['ci_coverage']:>6.1%} {r['runtime']:>5.0f}s")
 
 

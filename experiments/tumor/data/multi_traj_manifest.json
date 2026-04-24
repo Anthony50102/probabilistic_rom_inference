@@ -1,0 +1,49 @@
+{
+  "patient_id": "TNBC_demo_001",
+  "theta": 1.0,
+  "total_days": 90.0,
+  "training": [
+    {
+      "k": 0.01,
+      "d": 0.03,
+      "file": "TNBC_demo_001_k0.010_d0.030_fom.npz",
+      "path": "/Users/anthonypoole/Repositories/thesis_claude/probabilistic_rom_inference/experiments/tumor/data/TNBC_demo_001_k0.010_d0.030_fom.npz",
+      "size_mb": 272.28
+    },
+    {
+      "k": 0.02,
+      "d": 0.08,
+      "file": "TNBC_demo_001_k0.020_d0.080_fom.npz",
+      "path": "/Users/anthonypoole/Repositories/thesis_claude/probabilistic_rom_inference/experiments/tumor/data/TNBC_demo_001_k0.020_d0.080_fom.npz",
+      "size_mb": 317.03
+    },
+    {
+      "k": 0.03,
+      "d": 0.05,
+      "file": "TNBC_demo_001_k0.030_d0.050_fom.npz",
+      "path": "/Users/anthonypoole/Repositories/thesis_claude/probabilistic_rom_inference/experiments/tumor/data/TNBC_demo_001_k0.030_d0.050_fom.npz",
+      "size_mb": 300.17
+    },
+    {
+      "k": 0.04,
+      "d": 0.02,
+      "file": "TNBC_demo_001_k0.040_d0.020_fom.npz",
+      "path": "/Users/anthonypoole/Repositories/thesis_claude/probabilistic_rom_inference/experiments/tumor/data/TNBC_demo_001_k0.040_d0.020_fom.npz",
+      "size_mb": 248.79
+    },
+    {
+      "k": 0.05,
+      "d": 0.1,
+      "file": "TNBC_demo_001_k0.050_d0.100_fom.npz",
+      "path": "/Users/anthonypoole/Repositories/thesis_claude/probabilistic_rom_inference/experiments/tumor/data/TNBC_demo_001_k0.050_d0.100_fom.npz",
+      "size_mb": 322.15
+    }
+  ],
+  "test": {
+    "k": 0.025,
+    "d": 0.06,
+    "file": "TNBC_demo_001_k0.025_d0.060_fom.npz",
+    "path": "/Users/anthonypoole/Repositories/thesis_claude/probabilistic_rom_inference/experiments/tumor/data/TNBC_demo_001_k0.025_d0.060_fom.npz",
+    "size_mb": 307.65
+  }
+}

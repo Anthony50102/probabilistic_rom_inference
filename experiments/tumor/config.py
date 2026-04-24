@@ -24,8 +24,13 @@ __all__ = [
     "TRAINING_SPAN",
     "PREDICTION_DAYS",
     "FOM_DATA_PATH",
+    "TRAINING_PARAMS",
+    "TEST_PARAMS",
     "TumorTwinFOM",
     "load_fom_data",
+    "get_fom_data_path",
+    "load_multitraj_fom_data",
+    "input_func_factory",
     "Basis",
     "ReducedOrderModel",
     "CONSTANT_VALUE_BOUNDS",
@@ -45,6 +50,7 @@ from opinf.operators import (
     ConstantOperator,
     LinearOperator,
     QuadraticOperator,
+    InputOperator,
 )
 
 # Add core to path
@@ -60,6 +66,54 @@ PREDICTION_DAYS = 90.0             # Predict to 90 days
 FOM_DATA_PATH = os.path.join(
     os.path.dirname(__file__), 'data', 'TNBC_demo_001_fom.npz'
 )
+
+# Multi-trajectory parameter sets for (k, d)
+TRAINING_PARAMS = [
+    (0.01, 0.03), (0.02, 0.08), (0.03, 0.05),
+    (0.04, 0.02), (0.05, 0.10),
+]
+TEST_PARAMS = (0.025, 0.06)
+
+# Input normalization: map (k, d) to [0, 1] for numerical conditioning
+_k_vals = [p[0] for p in TRAINING_PARAMS]
+_d_vals = [p[1] for p in TRAINING_PARAMS]
+INPUT_NORM = {
+    'k_min': min(_k_vals), 'k_max': max(_k_vals),
+    'd_min': min(_d_vals), 'd_max': max(_d_vals),
+}
+
+
+def normalize_inputs(k, d):
+    """Normalize (k, d) to [0, 1] based on training range."""
+    k_range = INPUT_NORM['k_max'] - INPUT_NORM['k_min']
+    d_range = INPUT_NORM['d_max'] - INPUT_NORM['d_min']
+    k_n = (k - INPUT_NORM['k_min']) / max(k_range, 1e-10)
+    d_n = (d - INPUT_NORM['d_min']) / max(d_range, 1e-10)
+    return k_n, d_n
+
+
+def get_fom_data_path(k, d):
+    """Return NPZ path for a specific (k, d) parameter pair."""
+    return os.path.join(os.path.dirname(__file__), 'data',
+                        f'TNBC_demo_001_k{k:.3f}_d{d:.3f}_fom.npz')
+
+
+def input_func_factory(params):
+    """Create input function for parametric (k, d) tumor growth parameters.
+
+    Returns a callable u(t) = [k_norm, d_norm] (constant in time).
+    Inputs are normalized to [0, 1] based on training parameter range
+    for numerical conditioning (raw k,d ~0.02-0.10 vs state magnitude ~30).
+    """
+    k, d = params
+    k_n, d_n = normalize_inputs(k, d)
+    _val_np = np.array([k_n, d_n])
+
+    def input_func(t):
+        """Return normalized constant input [k_norm, d_norm]."""
+        return _val_np
+
+    return input_func
 
 
 # =============================================================================
@@ -216,6 +270,65 @@ def load_fom_data(
     return fom, prediction_time_domain, true_states, t_sampled, snaps_sampled
 
 
+def load_multitraj_fom_data(
+    prediction_time_domain,
+    training_span,
+    num_samples,
+    noise_level=0.0,
+    param_list=None,
+):
+    """Load FOM data for multiple (k, d) trajectories.
+
+    Parameters
+    ----------
+    prediction_time_domain : ndarray
+        Full time grid for truth solutions (shared across trajectories).
+    training_span : (float, float)
+        (t_start, t_end) for training data.
+    num_samples : int
+        Number of training snapshots per trajectory.
+    noise_level : float
+        Gaussian noise level (fraction of state range).
+    param_list : list of (float, float), optional
+        List of (k, d) tuples. Defaults to TRAINING_PARAMS.
+
+    Returns
+    -------
+    all_foms : list of TumorTwinFOM
+    t_full : ndarray
+    all_true_states : list of ndarray, each (n_dof, n_pred)
+    all_t_samp : list of ndarray, each (num_samples,)
+    all_snaps_noisy : list of ndarray, each (n_dof, num_samples)
+    """
+    if param_list is None:
+        param_list = TRAINING_PARAMS
+
+    all_foms = []
+    all_true_states = []
+    all_t_samp = []
+    all_snaps_noisy = []
+
+    for k, d in param_list:
+        fom = TumorTwinFOM(get_fom_data_path(k, d))
+        true_states = fom.get_states(prediction_time_domain)
+
+        t_sampled = np.sort(
+            np.random.uniform(training_span[0], training_span[1],
+                              size=num_samples)
+        )
+        t_sampled[0] = training_span[0]
+        t_sampled[-1] = training_span[1]
+
+        snaps_noisy = fom.noise(fom.get_states(t_sampled), noise_level)
+
+        all_foms.append(fom)
+        all_true_states.append(true_states)
+        all_t_samp.append(t_sampled)
+        all_snaps_noisy.append(snaps_noisy)
+
+    return all_foms, prediction_time_domain, all_true_states, all_t_samp, all_snaps_noisy
+
+
 # =============================================================================
 # POD Basis (unchanged from other experiments)
 # =============================================================================
@@ -291,10 +404,10 @@ def quadratic_apply(state, entries, _mask):
 # Reduced-Order Model
 # =============================================================================
 class ReducedOrderModel(opinf.models.ContinuousModel):
-    """ROM for tumor growth with JAX support. Operators: cAH."""
+    """ROM for tumor growth with JAX support. Operators: cAB (parametric inputs)."""
 
     ivp_method = "RK45"
-    input_dimension = 0
+    input_dimension = 2
     input_func = None
 
     def rhs(self, state, input_):
@@ -304,15 +417,20 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
                 out += constant_apply(state, input_, op.entries)
             elif isinstance(op, LinearOperator):
                 out += linear_apply(state, op.entries)
+            elif isinstance(op, InputOperator):
+                out += op.entries @ input_
             elif isinstance(op, QuadraticOperator):
                 out += quadratic_apply(state, op.entries, op._mask)
             else:
                 raise RuntimeError(f"Unknown operator: {type(op)}")
         return out
 
-    def predict(self, state0, t):
+    def predict(self, state0, t, input_func=None):
+        ifunc = input_func if input_func is not None else self.input_func
+
         def f(t, y, args):
-            return self.rhs(y, self.input_func)
+            u = ifunc(t) if ifunc is not None else None
+            return self.rhs(y, u)
 
         solver = diffrax.Tsit5()
         saveat = diffrax.SaveAt(ts=t)
@@ -324,7 +442,7 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
             t1=float(t[-1]),
             dt0=(t[1] - t[0]),
             y0=state0,
-            args=(self.input_func,),
+            args=None,
             rtol=1e-6,
             atol=1e-9,
             saveat=saveat,

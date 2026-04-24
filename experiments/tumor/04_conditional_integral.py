@@ -1,22 +1,33 @@
 """
-04 — Conditional GP + Dual Constraint (Integral + Derivative Form)
+04 — Conditional GP + Dual Constraint (Integral + Derivative Form) — Tumor Growth
 
-Bayesian Operator Inference for **Tumor Growth** with full uncertainty propagation:
+Bayesian Operator Inference with full uncertainty propagation for single-trajectory
+tumor growth (autonomous dynamics):
   θ_GP ~ LogNormal(MLE, σ)    — GP hyperparameters are sampled
   X(t) = K_* K⁻¹ y            — states computed analytically from θ_GP
   O ~ N(O_ls, γ|O_ls|)        — operator with informative prior
-  γ₂ = fixed hyperparameter   — constraint noise scale is fixed
+  γ₂ = fixed hyperparameter   — constraint noise scale (fixed)
 
 Physics constraints (likelihood factors in ELBO):
-  1. Derivative:  dX/dt ≈ f(X)O^T   (weighted by GP derivative variance)
-  2. Integral:    ∫f(X)O^T ds ≈ ΔX  (prevents null basin, robust to noise)
+  1. Derivative:  dX/dt ≈ D(X)O^T   (weighted by GP derivative variance)
+  2. Integral:    ∫D(X)O^T ds ≈ ΔX  (prevents null basin, robust to noise)
   3. GP MLL:      log p(y|θ_GP)      (data fidelity for hyperparameters)
 
-Data regime:
-  Dense data, low noise (200 samples, 1% noise)
+Operators: cA (constant + linear) — autonomous, no parametric inputs.
+The (k, d) parameters are baked into the single FOM trajectory.
+
+POD basis is computed from NOISY data (realistic: only noisy measurements
+are available in practice). The GP noise parameter ν absorbs measurement
+noise after projection.
+
+Data regimes:
+  1. Dense data, low noise    (80 samples, 1% noise)
+  2. Dense data, medium noise (80 samples, 3% noise)
+  3. Dense data, high noise   (80 samples, 5% noise)
 
 Usage:
-    python 04_conditional_integral.py
+    python 04_conditional_integral.py                  # run all 3 regimes
+    python 04_conditional_integral.py dense_low_noise  # run one regime
 """
 
 import sys
@@ -35,12 +46,8 @@ from scipy.interpolate import interp1d
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
-from config import Basis
-from core import (
-    JaxCompatibleModel, compute_gp_derivatives,
-    generate_rom_predictions, rbf_eval,
-)
-from config import load_fom_data, TumorTwinFOM
+from config import Basis, TumorTwinFOM, load_fom_data
+from core import JaxCompatibleModel, compute_gp_derivatives, rbf_eval
 from core.bayesian_opinf import fit_gp_hyperparameters_mle, _find_operator_samples
 from core.diagnostics import plot_trace
 from core.plotting import plot_full_order_error
@@ -58,17 +65,31 @@ SCHEMAS = [
         "NOISE_LEVEL": 0.01,
         "NUM_EVAL_POINTS": 200,
     },
+    {
+        "name": "dense_medium_noise",
+        "label": "Dense data, medium noise",
+        "NUM_SAMPLES": 80,
+        "NOISE_LEVEL": 0.03,
+        "NUM_EVAL_POINTS": 200,
+    },
+    {
+        "name": "dense_high_noise",
+        "label": "Dense data, high noise",
+        "NUM_SAMPLES": 80,
+        "NOISE_LEVEL": 0.05,
+        "NUM_EVAL_POINTS": 200,
+    },
 ]
 
 # ── Shared model hyperparameters (same for ALL regimes) ──────────────────────
 MODEL_PARAMS = dict(
     NUM_MODES=4,
-    GAMMA=0.05,          # Tight operator prior
-    GAMMA2=0.035,        # Calibrated constraint noise
+    GAMMA=0.05,
+    GAMMA2=0.035,
     DERIV_WEIGHT=1.0,
-    INTEGRAL_WEIGHT=8.0, # Strong integral for stability + calibration
+    INTEGRAL_WEIGHT=8.0,
     MLL_WEIGHT=0.1,
-    GP_PRIOR_SCALE=0.03, # Tight GP hyper variation
+    GP_PRIOR_SCALE=0.03,
     WINDOW_SIZE=20,
     NUM_STEPS=12000,
     LEARNING_RATE=3e-3,
@@ -82,16 +103,43 @@ FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
 
 
 # =============================================================================
-# Model builder
+# ROM solve helper (autonomous — no input function)
+# =============================================================================
+def _generate_rom_solves(operator_samples, rom, q0, time_eval, max_samples=200):
+    """Generate ROM solves from operator samples for a single autonomous trajectory."""
+    solves = []
+    n = min(len(operator_samples), max_samples)
+    for i in range(n):
+        rom.model._extract_operators(np.array(operator_samples[i]))
+        try:
+            rom.model.predict(state0=q0, t=time_eval, input_func=None)
+            result = rom.model.predict_result_
+            if hasattr(result, 'y'):
+                sol = result.y
+            elif hasattr(result, 'ys'):
+                sol = np.array(result.ys).T
+            else:
+                continue
+            if sol.shape[1] == len(time_eval) and np.all(np.isfinite(sol)):
+                solves.append(sol)
+        except Exception:
+            pass
+    if solves:
+        return np.array(solves)
+    return np.empty((0, len(q0), len(time_eval)))
+
+
+# =============================================================================
+# Model builder (single trajectory, autonomous)
 # =============================================================================
 def build_model(
     rom, num_modes, time_sampled, snapshots_comp,
     O_prior, mle_Ls, mle_Vs, mle_Ns,
-    num_eval_points=400, window_size=10,
+    num_eval_points=200, window_size=20,
     deriv_weight=1.0, integral_weight=1.0,
-    mll_weight=0.1, gp_prior_scale=0.1,
+    mll_weight=0.1, gp_prior_scale=0.03,
 ):
-    """Build the conditional integral NumPyro model."""
+    """Build the conditional integral NumPyro model for a single trajectory."""
     t_train = jnp.array(time_sampled)
     n_train = len(t_train)
     y_obs = jnp.array(snapshots_comp)
@@ -133,7 +181,7 @@ def build_model(
         return sig2 * jnp.exp(-sq_diffs / (2.0 * ell ** 2))
 
     def _single_gp_conditional(ell, sig2, nu, y_i):
-        """GP posterior: mean, derivative mean/var, MLL — all deterministic given hypers."""
+        """GP posterior: mean, derivative mean/var, MLL — deterministic given hypers."""
         ell2 = ell ** 2
         jitter = jnp.maximum(1e-5, sig2 * 1e-4)
 
@@ -161,7 +209,7 @@ def build_model(
 
     _batch_gp_conditional = jax.vmap(_single_gp_conditional)
 
-    def model(gamma=2.0, gamma2=5.0, jitter=1e-4):
+    def model(gamma=0.05, gamma2=0.035, jitter=1e-4):
 
         # GP hyperparameters — sampled with informative priors
         ells = jnp.stack([
@@ -194,7 +242,7 @@ def build_model(
         prior_scale = gamma * jnp.maximum(jnp.abs(O_prior_jnp), 0.5)
         O = numpyro.sample("O", dist.Normal(O_prior_jnp, prior_scale))
 
-        # Operator dynamics: f(X_eval) @ O^T
+        # Autonomous dynamics: D(X_eval) @ O^T
         f_Xi = rom.model._assemble_data_matrix(Xs_eval, inputs=None) @ O.T
 
         # CONSTRAINT 1: Derivative matching
@@ -239,27 +287,54 @@ def run_experiment(schema):
 
     # ── Data generation ──────────────────────────────────────────────────
     t_pred = np.linspace(TRAINING_SPAN[0], config.PREDICTION_DAYS, num_eval_points)
-    (fom, t_full, true_states, t_samp, snaps_samp) = \
-        load_fom_data(t_pred, TRAINING_SPAN, num_samples, noise_level)
 
-    # Clean basis — fit on noise-free FOM data, not noisy observations
-    snaps_clean = fom.get_states(t_samp)
+    fom, t_full, true_states, t_samp, snaps_noisy = load_fom_data(
+        t_pred, TRAINING_SPAN, num_samples, noise_level)
+
+    # ── Adaptive POD: fit generous basis, then truncate by GP SNR ────────
+    max_modes = p['NUM_MODES'] + 4   # generous initial fit
+    basis_probe = Basis(num_vectors=max_modes)
+    basis_probe.fit(snaps_noisy)
+    snaps_comp_probe = basis_probe.compress(snaps_noisy)
+
+    # GP MLE on all probe modes to determine signal vs noise
+    Ls_probe, Vs_probe, Ns_probe, _ = fit_gp_hyperparameters_mle(
+        t_samp, snaps_comp_probe, verbose=False)
+
+    SNR_THRESHOLD = 10.0
+    effective_modes = 0
+    for j in range(max_modes):
+        snr = Vs_probe[j] / max(Ns_probe[j], 1e-10)
+        tag = "✓" if snr > SNR_THRESHOLD else "✗"
+        print(f"  Probe mode {j}: σ²={Vs_probe[j]:.4f}, ν={Ns_probe[j]:.6f}, "
+              f"SNR={snr:.1f} {tag}")
+        if snr > SNR_THRESHOLD:
+            effective_modes = j + 1
+    effective_modes = max(effective_modes, 2)  # at least 2 modes
+    num_modes = min(effective_modes, p['NUM_MODES'])
+    print(f"  → Using {num_modes} modes (SNR threshold={SNR_THRESHOLD})")
+
+    # Final basis with effective modes
     basis = Basis(num_vectors=num_modes)
-    basis.fit(snaps_clean)
-    snaps_comp = basis.compress(snaps_samp)
+    basis.fit(snaps_noisy)
+    snaps_comp = basis.compress(snaps_noisy)
     true_comp = basis.compress(true_states)
     print(f"  POD energy: {basis.cumulative_energy:.4%}")
 
+    # Autonomous ROM: cA (constant + linear)
     rom = opinf.ROM(
         basis=basis,
         ddt_estimator=opinf.ddt.NonuniformFiniteDifferencer(t_samp),
         model=JaxCompatibleModel(operators="cA",
                                  solver=opinf.lstsq.L2Solver(regularizer=1e0)),
     )
-    rom.fit(states=snaps_clean)
+    rom.fit(states=snaps_noisy)
+    print(f"  Operator shape: {rom.model.operator_matrix.shape}")
 
-    # ── MLE warm start ───────────────────────────────────────────────────
-    Ls, Vs, Ns, _ = fit_gp_hyperparameters_mle(t_samp, snaps_comp, verbose=False)
+    # ── MLE warm start (reuse probe results for kept modes) ────────────
+    Ls = Ls_probe[:num_modes]
+    Vs = Vs_probe[:num_modes]
+    Ns = Ns_probe[:num_modes]
     for i in range(num_modes):
         T = t_samp[-1] - t_samp[0]
         print(f"  Mode {i}: ℓ={Ls[i]:.5f} (T/ℓ={T/Ls[i]:.0f}), σ²={Vs[i]:.4f}, ν={Ns[i]:.6f}")
@@ -267,16 +342,21 @@ def run_experiment(schema):
     # LS operator
     t_eval_ls = np.linspace(float(t_samp[0]), float(t_samp[-1]), num_eval_points)
     X_mle = np.zeros((num_modes, num_eval_points))
+    # Also compute GP posterior mean at sampled times (for denoised obs in plots)
+    X_mle_at_samp = np.zeros((num_modes, len(t_samp)))
     for i in range(num_modes):
-        K = rbf_eval(Ls[i], Vs[i], t_samp, t_samp) + (Ns[i]+1e-5)*np.eye(len(t_samp))
+        K = rbf_eval(Ls[i], Vs[i], t_samp, t_samp) + (Ns[i] + 1e-5) * np.eye(len(t_samp))
+        K_inv_y = np.linalg.solve(K, snaps_comp[i])
         Ks = rbf_eval(Ls[i], Vs[i], t_eval_ls, t_samp)
-        X_mle[i] = Ks @ np.linalg.solve(K, snaps_comp[i])
+        X_mle[i] = Ks @ K_inv_y
+        Ks_samp = rbf_eval(Ls[i], Vs[i], t_samp, t_samp)
+        X_mle_at_samp[i] = Ks_samp @ K_inv_y
 
     mu_z_mle, _ = compute_gp_derivatives(Ls, Vs, t_samp, t_eval_ls, snaps_comp, Ns=Ns)
     D = np.array(rom.model._assemble_data_matrix(jnp.array(X_mle), inputs=None))
     DtD = D.T @ D
     O_ls = np.linalg.solve(DtD + np.eye(DtD.shape[0]), D.T @ np.array(mu_z_mle).T).T
-    print(f"  LS operator norm: {np.linalg.norm(O_ls):.1f}")
+    print(f"  LS operator norm: {np.linalg.norm(O_ls):.1f}, shape: {O_ls.shape}")
 
     # ── Build & run SVI ──────────────────────────────────────────────────
     model, time_eval = build_model(
@@ -337,25 +417,25 @@ def run_experiment(schema):
     if O_samp.ndim == 2:
         O_samp = O_samp[np.newaxis, ...]
     O_med = np.median(O_samp, axis=0)
-    O_std = np.std(O_samp, axis=0)
 
-    Os, Xs, rom_solves = generate_rom_predictions(
-        samples=samples, rom=rom, snapshots_compressed=snaps_comp,
-        time_eval=t_pred, num_modes=num_modes,
-        num_pulls=min(200, n_post))
+    q0 = snaps_comp[:, 0]
+    rom_solves = _generate_rom_solves(
+        operator_samples=O_samp, rom=rom, q0=q0,
+        time_eval=t_pred, max_samples=min(200, n_post))
 
     n_stable = len(rom_solves)
-    n_total = len(Os)
+    n_total = min(200, n_post)
     stability_pct = n_stable / max(n_total, 1) * 100
 
     train_error = pred_error = float('inf')
     ci_coverage = ci_width = float('nan')
 
+    train_mask = t_pred <= TRAINING_SPAN[1]
+    pred_mask = t_pred > TRAINING_SPAN[1]
+
     if n_stable > 0:
         rom_arr = np.array(rom_solves)
         rom_med = np.median(rom_arr, axis=0)
-        train_mask = t_pred <= TRAINING_SPAN[1]
-        pred_mask = t_pred > TRAINING_SPAN[1]
 
         ti = interp1d(t_full, true_comp, kind='cubic', fill_value='extrapolate')
         ta = ti(t_pred)
@@ -386,6 +466,7 @@ def run_experiment(schema):
         'runtime': runtime, 'losses': all_losses,
         'samples': samples, 'rom_solves': rom_solves,
         'snaps_comp': snaps_comp, 'true_comp': true_comp,
+        'gp_mean_at_samp': X_mle_at_samp,
         't_full': t_full, 't_pred': t_pred, 't_samp': t_samp,
         'training_span': TRAINING_SPAN, 'num_modes': num_modes,
         'true_states': true_states, 'basis': basis,
@@ -413,83 +494,14 @@ def plot_results(result, save_dir=None):
     rom_solves = result['rom_solves']
     snaps_comp = result['snaps_comp']
     true_comp = result['true_comp']
+    gp_mean_at_samp = result.get('gp_mean_at_samp', snaps_comp)  # fallback
     t_full = result['t_full']
     t_pred = result['t_pred']
     t_samp = result['t_samp']
     training_span = result['training_span']
     num_modes = result['num_modes']
 
-    # ── 1. ROM Trajectory Plot (3-column) ────────────────────────────
-    if len(rom_solves) > 0:
-        rom_arr = np.array(rom_solves)
-        rom_med = np.median(rom_arr, axis=0)
-        rom_q05 = np.percentile(rom_arr, 5, axis=0)
-        rom_q95 = np.percentile(rom_arr, 95, axis=0)
-
-        true_interp = interp1d(t_full, true_comp, kind='cubic', fill_value='extrapolate')
-        true_at_pred = true_interp(t_pred)
-
-        train_end = training_span[1]
-        train_mask = t_pred <= train_end
-        pred_mask = t_pred > train_end
-        t_train_win = t_pred[train_mask]
-        t_pred_win = t_pred[pred_mask]
-
-        fig, ax = plt.subplots(num_modes, 3, figsize=(15, 2.5 * num_modes),
-                               sharey='row', sharex='col')
-        if num_modes == 1:
-            ax = ax.reshape(1, -1)
-
-        for i in range(num_modes):
-            # Training window
-            ax[i, 0].plot(t_samp, snaps_comp[i], 'k*', ms=3, label='Obs')
-            ax[i, 0].plot(t_train_win, true_at_pred[i, train_mask],
-                         color='tab:gray', lw=1.5, label='Truth')
-            ax[i, 0].plot(t_train_win, rom_med[i, train_mask],
-                         color='tab:purple', ls='--', lw=2, alpha=0.9, label='Median')
-            ax[i, 0].fill_between(t_train_win,
-                                  rom_q05[i, train_mask], rom_q95[i, train_mask],
-                                  color='tab:purple', alpha=0.15, label='90% CI')
-            ax[i, 0].set_ylabel(f'Mode {i}')
-
-            # Prediction window
-            ax[i, 1].plot(t_pred_win, true_at_pred[i, pred_mask], color='tab:gray', lw=1.5)
-            ax[i, 1].plot(t_pred_win, rom_med[i, pred_mask],
-                         color='tab:purple', ls='--', lw=2, alpha=0.9)
-            ax[i, 1].fill_between(t_pred_win,
-                                  rom_q05[i, pred_mask], rom_q95[i, pred_mask],
-                                  color='tab:purple', alpha=0.15)
-
-            # Full span
-            ax[i, 2].plot(t_samp, snaps_comp[i], 'k*', ms=3)
-            ax[i, 2].plot(t_pred, true_at_pred[i], color='tab:gray', lw=1.5)
-            ax[i, 2].plot(t_pred, rom_med[i], color='tab:purple', ls='--', lw=2, alpha=0.9)
-            ax[i, 2].fill_between(t_pred, rom_q05[i], rom_q95[i],
-                                  color='tab:purple', alpha=0.15)
-            ax[i, 2].axvline(train_end, color='k', ls=':', lw=0.8, alpha=0.5)
-
-            # y-limits from truth
-            yvals = true_at_pred[i]
-            ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
-            pad = max(abs(ymax - ymin) * 0.3, 1e-6)
-            for j in range(3):
-                ax[i, j].set_ylim(ymin - pad, ymax + pad)
-
-        ax[0, 0].set_title('Training Window')
-        ax[0, 1].set_title('Prediction Window')
-        ax[0, 2].set_title('Full Span')
-        ax[0, 0].legend(fontsize=7, loc='upper right')
-        for j in range(3):
-            ax[-1, j].set_xlabel('Time (days)')
-
-        fig.suptitle(f"ROM Trajectories — {schema['label']}", fontsize=14)
-        fig.tight_layout()
-        path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        print(f"  📊 Saved: {path}")
-        plt.close(fig)
-
-    # ── 2. Notebook-style ROM Trajectory Plot ───────────────────────
+    # ── 1. ROM Trajectory Plot ───────────────────────────────────────
     if len(rom_solves) > 0:
         rom_arr = np.array(rom_solves)
         rom_med = np.median(rom_arr, axis=0)
@@ -506,13 +518,20 @@ def plot_results(result, save_dir=None):
         if num_modes == 1:
             ax = [ax]
         for i in range(num_modes):
-            ax[i].axvspan(training_span[0], training_span[1], color='gray', alpha=0.10, zorder=0)
-            ax[i].plot(t_pred, true_at_pred[i], color='tab:gray', lw=2, label='True solution')
-            ax[i].plot(t_samp, snaps_comp[i], 'k*', ms=5, label='Training data', zorder=5)
-            ax[i].plot(t_pred, rom_med[i], color='tab:purple', linestyle='--', alpha=0.9, lw=2, label='ROM median')
-            ax[i].fill_between(t_pred, rom_q05[i], rom_q95[i], color='tab:purple', alpha=0.15, label='ROM 5-95%')
+            ax[i].axvspan(training_span[0], training_span[1],
+                          color='gray', alpha=0.10, zorder=0)
+            ax[i].plot(t_pred, true_at_pred[i], color='tab:gray', lw=2,
+                       label='True solution')
+            ax[i].plot(t_samp, snaps_comp[i], 'k.', ms=3,
+                       alpha=0.3, label='Raw obs', zorder=4)
+            ax[i].plot(t_samp, gp_mean_at_samp[i], 'k*', ms=5,
+                       label='GP denoised', zorder=5)
+            ax[i].plot(t_pred, rom_med[i], color='tab:purple', linestyle='--',
+                       alpha=0.9, lw=2, label='ROM median')
+            ax[i].fill_between(t_pred, rom_q05[i], rom_q95[i],
+                               color='tab:purple', alpha=0.15, label='ROM 5-95%')
             ax[i].axvline(training_span[1], color='k', ls=':', lw=0.8, alpha=0.5)
-            ax[i].set_ylabel(f'Mode {i+1}')
+            ax[i].set_ylabel(f'Mode {i + 1}')
             yvals = true_at_pred[i]
             ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
             pad = max(abs(ymax - ymin) * 0.3, 1e-6)
@@ -520,47 +539,15 @@ def plot_results(result, save_dir=None):
             if i == 0:
                 ax[i].legend(loc='upper right', fontsize=9)
         ax[-1].set_xlabel('Time (days)')
-        fig.suptitle(f'Conditional Integral — {schema["label"]}  ({n_stable}/{n_total} stable)', fontsize=14)
+        fig.suptitle(f'Conditional Integral — {schema["label"]}  '
+                     f'({n_stable}/{n_total} stable)', fontsize=14)
         fig.tight_layout()
-        path = os.path.join(save_dir, f"{prefix}_rom_notebook.png")
+        path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
         plt.close(fig)
 
-    # ── 3. Full-Order Error Plot ─────────────────────────────────────
-    basis = result.get('basis')
-    true_states = result.get('true_states')
-    if len(rom_solves) > 0 and basis is not None and true_states is not None:
-        rom_arr = np.array(rom_solves)
-        # Subsample to avoid OOM with 646K DOF decompression
-        max_foe_samples = min(20, rom_arr.shape[0])
-        idx = np.linspace(0, rom_arr.shape[0]-1, max_foe_samples, dtype=int)
-        fig_foe, axes_foe = plot_full_order_error(
-            rom_solves=rom_arr[idx],
-            basis=basis,
-            true_states=true_states,
-            time_domain_full=t_full,
-            time_domain_eval=t_pred,
-            training_span=training_span,
-            error_type='relative',
-        )
-        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
-        path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
-        fig_foe.savefig(path, dpi=200, bbox_inches='tight')
-        print(f"  📊 Saved: {path}")
-        plt.close(fig_foe)
-
-    # ── 4. Operator Trace Plot ───────────────────────────────────────
-    try:
-        fig_trace, _ = plot_trace(samples, param_name="O", n_random=6)
-        path = os.path.join(save_dir, f"{prefix}_operator_traces.png")
-        fig_trace.savefig(path, dpi=200, bbox_inches='tight')
-        print(f"  📊 Saved: {path}")
-        plt.close(fig_trace)
-    except Exception as e:
-        print(f"  ⚠ Operator trace plot failed: {e}")
-
-    # ── 5. Loss Convergence Plot ─────────────────────────────────────
+    # ── 2. Loss Convergence Plot ─────────────────────────────────────
     fig_loss, ax_loss = plt.subplots(1, 2, figsize=(12, 4))
     ax_loss[0].plot(losses, lw=0.8, color='tab:blue')
     ax_loss[0].set_xlabel('SVI Iteration')
@@ -579,15 +566,47 @@ def plot_results(result, save_dir=None):
     print(f"  📊 Saved: {path}")
     plt.close(fig_loss)
 
-    # ── 6. Spatial Comparison Plot ───────────────────────────────────
+    # ── 3. Operator Trace Plot ───────────────────────────────────────
+    try:
+        fig_trace, _ = plot_trace(samples, param_name="O", n_random=6)
+        path = os.path.join(save_dir, f"{prefix}_operator_traces.png")
+        fig_trace.savefig(path, dpi=200, bbox_inches='tight')
+        print(f"  📊 Saved: {path}")
+        plt.close(fig_trace)
+    except Exception as e:
+        print(f"  ⚠ Operator trace plot failed: {e}")
+
+    # ── 4. Full-Order Error Plot ─────────────────────────────────────
+    basis = result.get('basis')
+    true_states = result.get('true_states')
+    if len(rom_solves) > 0 and basis is not None and true_states is not None:
+        rom_arr = np.array(rom_solves)
+        max_foe_samples = min(20, rom_arr.shape[0])
+        idx = np.linspace(0, rom_arr.shape[0] - 1, max_foe_samples, dtype=int)
+        fig_foe, axes_foe = plot_full_order_error(
+            rom_solves=rom_arr[idx],
+            basis=basis,
+            true_states=true_states,
+            time_domain_full=t_full,
+            time_domain_eval=t_pred,
+            training_span=training_span,
+            error_type='relative',
+        )
+        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
+        path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
+        fig_foe.savefig(path, dpi=200, bbox_inches='tight')
+        print(f"  📊 Saved: {path}")
+        plt.close(fig_foe)
+
+    # ── 5. Spatial Comparison Plot ───────────────────────────────────
     plot_spatial_comparison(result, save_dir)
 
-    # ── 7. Tumor Volume Over Time ────────────────────────────────────
+    # ── 6. Tumor Volume Over Time ────────────────────────────────────
     plot_tumor_volume(result, save_dir)
 
 
 def plot_spatial_comparison(result, save_dir, timepoints_to_show=None):
-    """Plot 3D tumor density slices: FOM truth vs ROM prediction at multiple times."""
+    """Plot 3D tumor density slices: FOM truth vs ROM prediction vs error."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -595,18 +614,18 @@ def plot_spatial_comparison(result, save_dir, timepoints_to_show=None):
     schema = result['schema']
     prefix = f"04_{schema['name']}"
     basis = result['basis']
-    true_states = result['true_states']
     t_full = result['t_full']
     t_pred = result['t_pred']
     rom_solves = result['rom_solves']
-    fom = result.get('fom') or TumorTwinFOM()
+    true_states = result['true_states']
+    fom = result['fom']
 
     if len(rom_solves) == 0:
         print("  ⚠ No stable ROM solves — skipping spatial plot")
         return
 
     rom_arr = np.array(rom_solves)
-    rom_med = np.median(rom_arr, axis=0)  # (num_modes, n_t_pred)
+    rom_med = np.median(rom_arr, axis=0)
 
     if timepoints_to_show is None:
         timepoints_to_show = [5, 15, 30, 45, 60, 90]
@@ -615,20 +634,16 @@ def plot_spatial_comparison(result, save_dir, timepoints_to_show=None):
     fig, axes = plt.subplots(3, n_times, figsize=(3.5 * n_times, 10))
 
     for col, t_target in enumerate(timepoints_to_show):
-        # FOM truth (interpolate to target time)
         idx_full = np.argmin(np.abs(t_full - t_target))
         fom_state = true_states[:, idx_full]
 
-        # ROM prediction (decompress median)
         idx_pred = np.argmin(np.abs(t_pred - t_target))
         rom_full = basis.decompress(rom_med[:, idx_pred])
 
-        # Get axial slices through tumor center
         fom_slices = fom.get_center_slices(fom_state)
         rom_slices = fom.get_center_slices(rom_full)
         err_slices = fom.get_center_slices(np.abs(fom_state - rom_full))
 
-        # Plot axial (XY) slices — most informative view
         im0 = axes[0, col].imshow(fom_slices['axial'].T, origin='lower',
                                    cmap='hot_r', vmin=0, vmax=1, aspect='equal')
         axes[0, col].set_title(f'Day {t_full[idx_full]:.0f}', fontsize=11)
@@ -651,7 +666,8 @@ def plot_spatial_comparison(result, save_dir, timepoints_to_show=None):
     fig.colorbar(im0, ax=axes[0, :].tolist(), shrink=0.8, label='Cellularity')
     fig.colorbar(im1, ax=axes[1, :].tolist(), shrink=0.8, label='Cellularity')
     fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.8, label='|Error|')
-    fig.suptitle('Tumor Growth: FOM vs Bayesian OpInf ROM (axial slice)', fontsize=14, y=1.02)
+    fig.suptitle(f'Tumor Growth: FOM vs ROM (axial slice) — {schema["label"]}',
+                 fontsize=14, y=1.02)
     fig.tight_layout()
     path = os.path.join(save_dir, f"{prefix}_spatial_comparison.png")
     fig.savefig(path, dpi=200, bbox_inches='tight')
@@ -660,9 +676,9 @@ def plot_spatial_comparison(result, save_dir, timepoints_to_show=None):
 
 
 def plot_tumor_volume(result, save_dir):
-    """Plot total tumor burden over time: FOM truth vs ROM ensemble.
+    """Plot total tumor burden over time.
 
-    Uses reduced-space dot product to avoid decompressing full 646K DOF fields.
+    Uses reduced-space dot product to avoid decompressing full DOF fields.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -671,45 +687,46 @@ def plot_tumor_volume(result, save_dir):
     schema = result['schema']
     prefix = f"04_{schema['name']}"
     basis = result['basis']
-    true_states = result['true_states']
     t_full = result['t_full']
     t_pred = result['t_pred']
     rom_solves = result['rom_solves']
-    fom = result.get('fom') or TumorTwinFOM()
+    true_states = result['true_states']
+    fom = result['fom']
+    training_span = result['training_span']
 
-    if len(rom_solves) == 0:
-        print("  ⚠ No stable ROM solves — skipping tumor volume plot")
-        return
-
-    voxel_vol = float(np.prod(fom.spacing))
-
-    # FOM truth: direct summation over full-order states
-    fom_vol = np.array([true_states[:, i].sum() * voxel_vol
-                        for i in range(true_states.shape[1])])
-
-    # ROM: efficient volume via reduced-space projection
-    # vol(t) = ones^T @ (V @ q + shift) = (V^T @ ones) . q + ones^T @ shift
+    # Efficient volume projection vectors
     V = basis.entries   # (n_dof, r)
     ones = np.ones(V.shape[0])
     vol_proj = V.T @ ones          # (r,)
     shift_vol = ones @ basis.shift_  # scalar
+    voxel_vol = float(np.prod(fom.spacing))
 
-    rom_arr = np.array(rom_solves)
-    rom_vols = np.array([vol_proj @ rom_arr[s] + shift_vol
-                         for s in range(rom_arr.shape[0])]) * voxel_vol
+    fig, ax = plt.subplots(figsize=(10, 6))
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(t_full, fom_vol, 'k-', lw=2, label='FOM Truth')
-    rom_med = np.median(rom_vols, axis=0)
-    rom_lo = np.percentile(rom_vols, 5, axis=0)
-    rom_hi = np.percentile(rom_vols, 95, axis=0)
-    ax.plot(t_pred, rom_med, color='tab:purple', lw=2, label='ROM Median')
-    ax.fill_between(t_pred, rom_lo, rom_hi, color='tab:purple', alpha=0.2, label='90% CI')
-    ax.axvline(config.TRAINING_SPAN[1], color='gray', ls='--', alpha=0.5, label='Train/Predict')
+    # FOM truth volume
+    fom_vol = np.array([true_states[:, i].sum() * voxel_vol
+                        for i in range(true_states.shape[1])])
+    ax.plot(t_full, fom_vol, color='tab:gray', lw=2.5, label='FOM Truth')
+
+    # ROM volume
+    if len(rom_solves) > 0:
+        rom_arr = np.array(rom_solves)
+        rom_vols = np.array([vol_proj @ rom_arr[s] + shift_vol
+                             for s in range(rom_arr.shape[0])]) * voxel_vol
+        rom_med = np.median(rom_vols, axis=0)
+        rom_lo = np.percentile(rom_vols, 5, axis=0)
+        rom_hi = np.percentile(rom_vols, 95, axis=0)
+        ax.plot(t_pred, rom_med, color='tab:purple', lw=2, ls='--',
+                label='ROM median')
+        ax.fill_between(t_pred, rom_lo, rom_hi, color='tab:purple', alpha=0.15,
+                        label='ROM 90% CI')
+
+    ax.axvline(training_span[1], color='gray', ls='--', alpha=0.5,
+               label='Train/Predict')
     ax.set_xlabel('Time (days)')
     ax.set_ylabel('Total Tumor Burden (mm³)')
-    ax.set_title('Tumor Volume Over Time')
-    ax.legend()
+    ax.set_title(f'Tumor Volume Over Time — {schema["label"]}')
+    ax.legend(fontsize=9)
     fig.tight_layout()
     path = os.path.join(save_dir, f"{prefix}_tumor_volume.png")
     fig.savefig(path, dpi=200, bbox_inches='tight')
@@ -723,11 +740,13 @@ def plot_tumor_volume(result, save_dir):
 def save_predictions(result, save_dir=None):
     """Save predictions for cross-method comparison."""
     if save_dir is None:
-        save_dir = os.path.join(SCRIPT_DIR, "results", "comparison", result['schema']['name'])
+        save_dir = os.path.join(SCRIPT_DIR, "results", "comparison",
+                                result['schema']['name'])
     os.makedirs(save_dir, exist_ok=True)
 
     rom_solves = result['rom_solves']
-    rom_arr = np.array(rom_solves) if len(rom_solves) > 0 else np.empty((0, result['num_modes'], len(result['t_pred'])))
+    rom_arr = (np.array(rom_solves) if len(rom_solves) > 0
+               else np.empty((0, result['num_modes'], len(result['t_pred']))))
 
     method_name = "04_conditional_integral"
     path = os.path.join(save_dir, f"{method_name}.npz")
@@ -758,11 +777,12 @@ def main(schema_names=None):
             return
 
     print("=" * 70)
-    print("04 — Conditional GP + Dual Constraint — Tumor Growth")
+    print("04 — Conditional GP + Dual Constraint — Tumor Growth (Single Traj)")
     print("=" * 70)
     print(f"Regimes: {len(schemas)}")
     for s in schemas:
-        print(f"  • {s['label']:30s}  samples={s['NUM_SAMPLES']:3d}  noise={s['NOISE_LEVEL']:.0%}")
+        print(f"  • {s['label']:30s}  samples={s['NUM_SAMPLES']:3d}  "
+              f"noise={s['NOISE_LEVEL']:.0%}")
     print(f"Model:  γ={MODEL_PARAMS['GAMMA']}, γ₂={MODEL_PARAMS['GAMMA2']}, "
           f"lr={MODEL_PARAMS['LEARNING_RATE']}, steps={MODEL_PARAMS['NUM_STEPS']}")
 
