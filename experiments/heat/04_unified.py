@@ -602,15 +602,26 @@ def run_experiment(schema, p=None):
             ci_coverage = float(np.mean(all_in_ci))
             print(f"    CI coverage: {ci_coverage:.2%} (target: 90%)")
 
-    # ── Persist ──────────────────────────────────────────────────────────
+    # ── Persist (schema matches heat 04_conditional_integral) ────────────
     out_dir = os.path.join(SCRIPT_DIR, 'results', 'comparison', schema['name'])
     os.makedirs(out_dir, exist_ok=True)
-    np.savez(os.path.join(out_dir, '04_unified.npz'),
-             train_error=train_error, pred_error=pred_error,
-             stability_pct=stability_pct, ci_coverage=ci_coverage,
-             ci_width=ci_width, runtime=runtime,
-             op_norm_median=float(np.median(op_norms)),
-             losses=losses)
+    save_dict = {
+        't_pred': t_pred,
+        'train_error': train_error, 'pred_error': pred_error,
+        'stability_pct': stability_pct,
+        'ci_coverage': ci_coverage, 'ci_width': ci_width,
+        'runtime': runtime,
+        'n_ics': len(all_rom_solves),
+        'op_norm_median': float(np.median(op_norms)),
+        'losses': losses,
+    }
+    for ic_idx, solves in enumerate(all_rom_solves):
+        if len(solves) > 0:
+            save_dict[f'rom_solves_{ic_idx}'] = np.array(solves)
+        else:
+            save_dict[f'rom_solves_{ic_idx}'] = np.empty(
+                (0, p['NUM_MODES'], len(t_pred)))
+    np.savez(os.path.join(out_dir, '04_unified.npz'), **save_dict)
 
     return {
         'schema': schema,

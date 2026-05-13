@@ -516,10 +516,12 @@ def run_experiment(schema, p=None):
     print(f"    CI width:    {ci_w:.4f}")
     print(f"    Runtime:     {runtime:.0f}s")
 
-    # ── Persist results ──────────────────────────────────────────────────
+    # ── Persist results (schema matches 04_conditional_integral) ─────────
     out_dir = os.path.join(SCRIPT_DIR, 'results', 'comparison', schema['name'])
     os.makedirs(out_dir, exist_ok=True)
+    rom_arr = np.array(rom_solves) if n_stable > 0 else np.empty((0, nmodes, len(t_pred)))
     np.savez(os.path.join(out_dir, '04_unified.npz'),
+             rom_solves=rom_arr, t_pred=t_pred,
              train_error=train_err, pred_error=pred_err,
              stability_pct=stability_pct, ci_coverage=ci_cov,
              ci_width=ci_w, runtime=runtime,

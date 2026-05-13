@@ -36,20 +36,20 @@ SCHEMAS = [
 
 METHODS = [
     {
-        "name": "02_two_stage_svi",
-        "label": "Two-Stage SVI",
-        "color": "tab:blue",
-        "linestyle": "-",
-    },
-    {
         "name": "04_conditional_integral",
-        "label": "Conditional Integral",
+        "label": "Conditional Integral (2-stage)",
         "color": "tab:purple",
         "linestyle": "--",
     },
     {
+        "name": "04_unified",
+        "label": "Marg-O × Weak-Form",
+        "color": "tab:green",
+        "linestyle": "-",
+    },
+    {
         "name": "05_neural_ode",
-        "label": "MLP Ensemble",
+        "label": "MLP Ensemble (baseline)",
         "color": "tab:orange",
         "linestyle": "-.",
     },
