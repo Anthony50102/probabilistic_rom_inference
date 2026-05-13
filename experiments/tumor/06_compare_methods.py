@@ -146,7 +146,7 @@ def compute_errors(rom_solves, t_pred, basis, t_full, true_states):
 def plot_error_comparison(methods_data, t_pred, training_span,
                           title_suffix, save_path):
     """3-panel plot: ROM error, projection error, excess error.
-    Each method has its own projection-error curve (because mode counts differ)."""
+    Each method plots against its own t_pred (mode counts and grids may differ)."""
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True,
                              gridspec_kw={"height_ratios": [1, 1, 1]})
 
@@ -157,10 +157,10 @@ def plot_error_comparison(methods_data, t_pred, training_span,
         median = np.median(rom_errors, axis=0)
         p5 = np.percentile(rom_errors, 5, axis=0)
         p95 = np.percentile(rom_errors, 95, axis=0)
-        ax_rom.plot(t_pred, median, color=m["color"],
+        ax_rom.plot(m["t_pred"], median, color=m["color"],
                     linestyle=m["linestyle"], lw=2,
                     label=f"{m['label']} (median)")
-        ax_rom.fill_between(t_pred, p5, p95, color=m["color"], alpha=0.10)
+        ax_rom.fill_between(m["t_pred"], p5, p95, color=m["color"], alpha=0.10)
     ax_rom.set_ylabel("Relative Error")
     ax_rom.set_title(f"ROM Prediction Error — {title_suffix}")
     ax_rom.legend(loc="upper left", fontsize=9)
@@ -169,7 +169,7 @@ def plot_error_comparison(methods_data, t_pred, training_span,
     ax_proj = axes[1]
     ax_proj.axvspan(training_span[0], training_span[1], color="gray", alpha=0.10)
     for m in methods_data:
-        ax_proj.plot(t_pred, m["projection_error"], color=m["color"],
+        ax_proj.plot(m["t_pred"], m["projection_error"], color=m["color"],
                      linestyle=":", lw=1.5,
                      label=f"{m['label']} ({m['rom_solves'].shape[1]} modes)")
     ax_proj.set_ylabel("Relative Error")
@@ -182,7 +182,7 @@ def plot_error_comparison(methods_data, t_pred, training_span,
     for m in methods_data:
         median = np.median(m["rom_errors"], axis=0)
         excess = np.maximum(median - m["projection_error"], 1e-16)
-        ax_diff.plot(t_pred, excess, color=m["color"],
+        ax_diff.plot(m["t_pred"], excess, color=m["color"],
                      linestyle=m["linestyle"], lw=2, label=m["label"])
     ax_diff.set_xlabel("Time")
     ax_diff.set_ylabel("Relative Error")

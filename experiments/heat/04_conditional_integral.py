@@ -480,7 +480,8 @@ def run_experiment(schema):
 
     for ic_idx, (params, true_c) in enumerate(zip(eval_params, eval_true_comp)):
         q0 = eval_snaps_comp[ic_idx][:, 0]
-        ic_input_func = input_func_factory(params)
+        _ic_input_func = input_func_factory(params)
+        ic_input_func = lambda t, f=_ic_input_func: np.asarray(f(t))
 
         ic_solves = _generate_rom_solves(
             operator_samples=O_samp, rom=rom, q0=q0,
