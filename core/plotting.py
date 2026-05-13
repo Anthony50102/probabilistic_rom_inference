@@ -267,7 +267,7 @@ class Plotter:
                     eval_stds.append(eval_std)
             
             means, stds = np.array(means), np.array(stds)
-            
+
             # Inverse transform if needed
             if self.scaler is not None:
                 means_orig = means * self.scaler.stds_[i, 0] + self.scaler.means_[i, 0]
@@ -275,12 +275,18 @@ class Plotter:
             else:
                 means_orig, stds_orig = means, stds
 
+            # Percentile band: MC-sample one draw per hyperparam sample to
+            # capture both posterior and hyperparameter uncertainty as a
+            # Gaussian mixture, then take 5/95 percentiles across draws.
+            rng = np.random.default_rng(0)
+            draws = means_orig + stds_orig * rng.standard_normal(means_orig.shape)
+            q05 = np.percentile(draws, 5, axis=0)
+            q95 = np.percentile(draws, 95, axis=0)
+
             ax[i, 0].plot(self.time_domain_training, means_orig.T, alpha=0.3)
             ax[i, 0].fill_between(
-                self.time_domain_training,
-                np.mean(means_orig, axis=0) - 2*np.mean(stds_orig, axis=0),
-                np.mean(means_orig, axis=0) + 2*np.mean(stds_orig, axis=0),
-                alpha=0.3, color="gray", label="Mean ± 2 std"
+                self.time_domain_training, q05, q95,
+                alpha=0.3, color="gray", label="5\u201395% CI",
             )
 
             if double:
@@ -290,13 +296,15 @@ class Plotter:
                     eval_stds_orig = eval_stds * self.scaler.stds_[i, 0]
                 else:
                     eval_means_orig, eval_stds_orig = eval_means, eval_stds
-                    
+
+                eval_draws = eval_means_orig + eval_stds_orig * rng.standard_normal(eval_means_orig.shape)
+                eval_q05 = np.percentile(eval_draws, 5, axis=0)
+                eval_q95 = np.percentile(eval_draws, 95, axis=0)
+
                 ax[i, 1].plot(self.time_domain_eval_training, eval_means_orig.T, alpha=0.3)
                 ax[i, 1].fill_between(
-                    self.time_domain_eval_training,
-                    np.mean(eval_means_orig, axis=0) - 2*np.mean(eval_stds_orig, axis=0),
-                    np.mean(eval_means_orig, axis=0) + 2*np.mean(eval_stds_orig, axis=0),
-                    alpha=0.3, color="gray", label="Mean ± 2 std"
+                    self.time_domain_eval_training, eval_q05, eval_q95,
+                    alpha=0.3, color="gray", label="5\u201395% CI",
                 )
 
             ax[i, 0].set_title(f"Mode {i+1} Training Domain")
@@ -399,9 +407,9 @@ class Plotter:
                 ax[i].plot(self.time_domain_eval_training, mu_z[i], label='GP Mean')
                 ax[i].fill_between(
                     self.time_domain_eval_training,
-                    mu_z[i] - 2 * std_z[i],
-                    mu_z[i] + 2 * std_z[i],
-                    color='gray', alpha=0.3, label='± 2 Std'
+                    mu_z[i] - 1.96 * std_z[i],
+                    mu_z[i] + 1.96 * std_z[i],
+                    color='gray', alpha=0.3, label='95% CI (Gaussian)'
                 )
             ax[i].set_title(f"Mode {i+1} Derivative")
             ax[i].legend()

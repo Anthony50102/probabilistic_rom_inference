@@ -60,9 +60,18 @@ class EulerPlotter(Plotter):
             means, stds, eval_means, eval_stds = np.array(means), np.array(stds), np.array(eval_means), np.array(eval_stds)
             ax[i,0].plot(self.time_domain_training, means.T, alpha = .3)
             ax[i,1].plot(self.time_domain_eval_training, eval_means.T, alpha = .3)
-        
-            ax[i,0].fill_between(self.time_domain_training, np.mean(means, axis=0)-2*np.mean(stds, axis=0), np.mean(means, axis=0)+2*np.mean(stds, axis=0), alpha = .3, color = "gray", label = "Mean $\pm$ 2 std")
-            ax[i,1].fill_between(self.time_domain_eval_training, np.mean(eval_means, axis=0)-2*np.mean(eval_stds, axis=0), np.mean(eval_means, axis=0)+2*np.mean(eval_stds, axis=0), alpha = .3, color = "gray", label = "Mean $\pm$ 2 std")
+
+            # Percentile band: MC-sample one draw per hyperparam sample to
+            # capture both posterior and hyperparameter uncertainty as a
+            # Gaussian mixture, then take 5/95 percentiles across draws.
+            rng = np.random.default_rng(0)
+            draws = means + stds * rng.standard_normal(means.shape)
+            eval_draws = eval_means + eval_stds * rng.standard_normal(eval_means.shape)
+            q05, q95 = np.percentile(draws, 5, axis=0), np.percentile(draws, 95, axis=0)
+            eq05, eq95 = np.percentile(eval_draws, 5, axis=0), np.percentile(eval_draws, 95, axis=0)
+
+            ax[i,0].fill_between(self.time_domain_training, q05, q95, alpha=.3, color="gray", label="5\u201395% CI")
+            ax[i,1].fill_between(self.time_domain_eval_training, eq05, eq95, alpha=.3, color="gray", label="5\u201395% CI")
 
             ax[i,0].set_title(f"Mode {i+1} Training Domain")
             ax[i,1].set_title(f"Mode {i+1} Training Domain Increase Density")
