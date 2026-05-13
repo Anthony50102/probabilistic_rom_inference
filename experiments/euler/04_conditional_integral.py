@@ -400,6 +400,7 @@ def run_experiment(schema):
         'runtime': runtime, 'losses': all_losses,
         'samples': samples, 'rom_solves': rom_solves,
         'snaps_comp': snaps_comp, 'true_comp': true_comp,
+        'snaps_noisy': snaps_samp,
         't_full': t_full, 't_pred': t_pred, 't_samp': t_samp,
         'training_span': TRAINING_SPAN, 'num_modes': num_modes,
         'true_states': true_states, 'basis': basis,

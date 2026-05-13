@@ -497,41 +497,65 @@ def plot_results(result, save_dir=None):
         snapshot_times = [0.0, 0.5, 1.0, 1.5, 2.0]
         snapshot_times = [t for t in snapshot_times if t <= t_pred[-1]]
 
-        fig, axes = plt.subplots(2, len(snapshot_times),
-                                 figsize=(3.5 * len(snapshot_times), 6.5))
+        fig, axes = plt.subplots(3, len(snapshot_times),
+                                 figsize=(3.0 * len(snapshot_times), 8.5),
+                                 sharex=True, sharey=True,
+                                 constrained_layout=True)
         x, y = fom.spatial_domain
 
-        for col, t_snap in enumerate(snapshot_times):
+        # Pre-compute per-row global ranges for shared colorbars.
+        true_blocks = []
+        rom_blocks = []
+        width_blocks = []
+        for t_snap in snapshot_times:
             t_idx = np.argmin(np.abs(t_full - t_snap))
             u_true = fom.reconstruct_2d(true_states[:, t_idx])
-
             t_idx_pred = np.argmin(np.abs(t_pred - t_snap))
             u_rom_full = basis.decompress(rom_med[:, t_idx_pred])
             u_rom = fom.reconstruct_2d(u_rom_full)
+            sample_fields = np.stack([
+                fom.reconstruct_2d(basis.decompress(rom_arr[s, :, t_idx_pred]))
+                for s in range(rom_arr.shape[0])
+            ], axis=0)
+            u_q05 = np.percentile(sample_fields, 5, axis=0)
+            u_q95 = np.percentile(sample_fields, 95, axis=0)
+            u_width = u_q95 - u_q05
+            true_blocks.append(u_true)
+            rom_blocks.append(u_rom)
+            width_blocks.append(u_width)
 
-            vmin = min(u_true.min(), u_rom.min())
-            vmax = max(u_true.max(), u_rom.max())
-            levels = np.linspace(vmin, vmax, 30)
+        field_min = min(np.min(b) for b in true_blocks + rom_blocks)
+        field_max = max(np.max(b) for b in true_blocks + rom_blocks)
+        field_levels = np.linspace(field_min, field_max, 30)
+        width_max = max(np.max(w) for w in width_blocks)
+        width_max = max(width_max, 1e-12)
+        width_levels = np.linspace(0.0, width_max, 30)
 
-            im0 = axes[0, col].contourf(x, y, u_true, levels=levels,
+        for col, t_snap in enumerate(snapshot_times):
+            im0 = axes[0, col].contourf(x, y, true_blocks[col], levels=field_levels,
                                          cmap='RdBu_r', extend='both')
             axes[0, col].set_aspect('equal')
             axes[0, col].set_title(f't = {t_snap:.1f}', fontsize=12)
-            plt.colorbar(im0, ax=axes[0, col], fraction=0.046, pad=0.04)
 
-            im1 = axes[1, col].contourf(x, y, u_rom, levels=levels,
+            im1 = axes[1, col].contourf(x, y, rom_blocks[col], levels=field_levels,
                                          cmap='RdBu_r', extend='both')
             axes[1, col].set_aspect('equal')
-            plt.colorbar(im1, ax=axes[1, col], fraction=0.046, pad=0.04)
 
-            for row in range(2):
-                if col > 0:
-                    axes[row, col].set_yticklabels([])
+            im2 = axes[2, col].contourf(x, y, width_blocks[col], levels=width_levels,
+                                         cmap='viridis', extend='max')
+            axes[2, col].set_aspect('equal')
 
         axes[0, 0].set_ylabel('True', fontsize=12)
-        axes[1, 0].set_ylabel('ROM', fontsize=12)
+        axes[1, 0].set_ylabel('ROM median', fontsize=12)
+        axes[2, 0].set_ylabel('ROM width\n(q95 − q05)', fontsize=12)
+
+        fig.colorbar(im0, ax=axes[0, :].tolist(), shrink=0.85,
+                     format='%.2f', pad=0.02)
+        fig.colorbar(im1, ax=axes[1, :].tolist(), shrink=0.85,
+                     format='%.2f', pad=0.02)
+        fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.85,
+                     format='%.3f', pad=0.02)
         fig.suptitle(f'2D Field Reconstruction — {schema["label"]}', fontsize=14)
-        fig.tight_layout()
         path = os.path.join(save_dir, f"{prefix}_2d_contours.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")

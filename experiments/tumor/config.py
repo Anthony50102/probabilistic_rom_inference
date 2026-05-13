@@ -31,8 +31,12 @@ __all__ = [
     "get_fom_data_path",
     "load_multitraj_fom_data",
     "input_func_factory",
+    "chemo_input_func_factory",
+    "load_chemo_fom_data",
+    "make_jax_input_func",
     "Basis",
     "ReducedOrderModel",
+    "ChemoReducedOrderModel",
     "CONSTANT_VALUE_BOUNDS",
     "LENGTH_SCALE_BOUNDS",
     "NOISE_LEVEL_BOUNDS",
@@ -51,6 +55,7 @@ from opinf.operators import (
     LinearOperator,
     QuadraticOperator,
     InputOperator,
+    StateInputOperator,
 )
 
 # Add core to path
@@ -96,6 +101,251 @@ def get_fom_data_path(k, d):
     """Return NPZ path for a specific (k, d) parameter pair."""
     return os.path.join(os.path.dirname(__file__), 'data',
                         f'TNBC_demo_001_k{k:.3f}_d{d:.3f}_fom.npz')
+
+
+# =============================================================================
+# Chemotherapy input — wrapper around TumorTwin's chemo concentration API
+# =============================================================================
+# We delegate the chemo concentration math to TumorTwin's
+# `compute_total_cell_death_chemo` so the ROM training input is identical to
+# what the FOM solver saw. The wrapper just translates "days since IC" (the
+# units our ROM uses) into TumorTwin's datetime-based API and packages the
+# scalar cell-death rate into a length-1 input vector.
+#
+# α(t_days) = sensitivity · Σᵢ dose_i · 1[t ≥ t_dose_i] · exp(−decay·(t − t_dose_i))
+#
+# This is the canonical hard-onset form. Discontinuities at dose times will
+# induce GP fit limitations near those instants, but that is an inherent
+# property of the underlying physics, not something to mask with smoothing.
+
+from datetime import timedelta as _timedelta
+
+
+def _build_chemo_spec_from_schedule(patient_id, sensitivity, decay_rate,
+                                    dose_days, dose_amts):
+    """Build a ChemotherapySpecification from a custom schedule (in days
+    since the patient's first visit). Uses the patient JSON only to fetch
+    the reference t0.
+
+    Parameters
+    ----------
+    patient_id : str
+        e.g. "TNBC_demo_001".
+    sensitivity, decay_rate : float
+    dose_days : array-like of float
+        Times of doses, in days since t0.
+    dose_amts : array-like of float
+        Dose magnitudes (already at FOM scale; the spec validator will
+        renormalize to max=1).
+
+    Returns
+    -------
+    chemo_spec : ChemotherapySpecification
+    t0 : datetime
+    """
+    tumor_twin_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'TumorTwin')
+    )
+    if tumor_twin_dir not in sys.path:
+        sys.path.insert(0, tumor_twin_dir)
+    from tumortwin.types import (
+        TNBCPatientData, CropSettings, CropTarget, ChemotherapySpecification,
+    )
+    data_dir = os.path.join(tumor_twin_dir, 'input_files', patient_id)
+    patient_data = TNBCPatientData.from_file(
+        os.path.join(data_dir, f'{patient_id}.json'),
+        image_dir=data_dir,
+        crop_settings=CropSettings(crop_to=CropTarget.ROI_ENHANCE, padding=10),
+    )
+    t0 = patient_data.visits[0].time
+    dose_times = [t0 + _timedelta(days=float(dd)) for dd in dose_days]
+    spec = ChemotherapySpecification(
+        sensitivity=sensitivity,
+        decay_rate=decay_rate,
+        times=dose_times,
+        doses=[float(x) for x in dose_amts],
+    )
+    return spec, t0
+
+
+def _build_chemo_spec_from_patient(patient_id, sensitivity, decay_rate,
+                                   dose_scale=1.0):
+    """Reconstruct a TumorTwin ChemotherapySpecification + reference t0
+    from a patient JSON file.
+
+    Parameters
+    ----------
+    patient_id : str
+        e.g. "TNBC_demo_001". Loads from
+        TumorTwin/input_files/<patient_id>/<patient_id>.json.
+    sensitivity, decay_rate : float
+        Drug parameters.
+    dose_scale : float
+        Multiplier on every dose (for B7 dosage variation).
+
+    Returns
+    -------
+    chemo_spec : ChemotherapySpecification
+    t0 : datetime
+        Reference time (first imaging visit).
+    """
+    tumor_twin_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'TumorTwin')
+    )
+    if tumor_twin_dir not in sys.path:
+        sys.path.insert(0, tumor_twin_dir)
+    from tumortwin.types import (
+        TNBCPatientData, CropSettings, CropTarget, ChemotherapySpecification,
+    )
+    data_dir = os.path.join(tumor_twin_dir, 'input_files', patient_id)
+    patient_data = TNBCPatientData.from_file(
+        os.path.join(data_dir, f'{patient_id}.json'),
+        image_dir=data_dir,
+        crop_settings=CropSettings(crop_to=CropTarget.ROI_ENHANCE, padding=10),
+    )
+    t0 = patient_data.visits[0].time
+    dose_times = [c.time for c in patient_data.chemotherapy]
+    dose_amts = [float(dose_scale) * float(c.dose) for c in patient_data.chemotherapy]
+    spec = ChemotherapySpecification(
+        sensitivity=sensitivity,
+        decay_rate=decay_rate,
+        times=dose_times,
+        doses=dose_amts,
+    )
+    return spec, t0
+
+
+def chemo_input_func_factory(chemo_spec, t0, dose_scale=1.0):
+    """Wrap TumorTwin's chemo cell-death-rate function as α(t_days).
+
+    Parameters
+    ----------
+    chemo_spec : tumortwin.types.ChemotherapySpecification
+        Drug schedule (sensitivity, decay_rate, dose times/amounts).
+    t0 : datetime
+        Reference datetime (corresponds to t_days = 0). Should match the
+        FOM solver's `initial_time`.
+    dose_scale : float
+        Post-computation multiplier on α(t). Used for B7 dosage variation
+        at evaluation time. Note that TumorTwin's pydantic validator
+        normalizes doses to max=1 inside the spec, so dose scaling MUST be
+        applied as a global multiplier here rather than by re-scaling the
+        spec.
+
+    Returns
+    -------
+    input_func : callable t_days -> ndarray, shape (1,)
+        α(t_days) = dose_scale · sensitivity · Σ_i dose_i · 1[t≥t_i] ·
+        exp(−decay·(t−t_i)),
+        wrapped as a length-1 array (input dimension 1) for ROM compatibility.
+    """
+    tumor_twin_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'TumorTwin')
+    )
+    if tumor_twin_dir not in sys.path:
+        sys.path.insert(0, tumor_twin_dir)
+    from tumortwin.treatments.chemotherapy import compute_total_cell_death_chemo
+
+    scale = float(dose_scale)
+
+    def input_func(t):
+        t_days = float(np.asarray(t).item()) if np.asarray(t).ndim == 0 \
+            else float(np.asarray(t).ravel()[0])
+        t_dt = t0 + _timedelta(days=t_days)
+        rate = compute_total_cell_death_chemo(t_dt, [chemo_spec])
+        return np.array([scale * float(rate)])
+
+    input_func.chemo_spec = chemo_spec
+    input_func.t0 = t0
+    input_func.dose_scale = scale
+    return input_func
+
+
+def load_chemo_fom_data(data_path, prediction_time_domain, training_span,
+                         num_samples, noise_level, seed=None,
+                         dose_scale=1.0):
+    """Load chemo FOM data and build the matching α(t) input function.
+
+    The input function delegates to TumorTwin's
+    `compute_total_cell_death_chemo`, so the ROM sees exactly the same
+    chemo concentration profile that was used to generate the FOM data.
+
+    Parameters
+    ----------
+    data_path : str
+        Path to NPZ file produced by generate_fom_data_chemo.py.
+    prediction_time_domain : ndarray
+        Full time grid (days) for ground truth.
+    training_span : (float, float)
+        (t_start, t_end) for training samples.
+    num_samples : int
+        Number of (random) training timepoints.
+    noise_level : float
+        Gaussian noise level (fraction of state range).
+    seed : int, optional
+        RNG seed for reproducibility.
+    dose_scale : float
+        Multiplier on every dose (for B7 dosage variation at evaluation
+        time). Defaults to 1.0 (matches training FOM).
+
+    Returns
+    -------
+    fom : TumorTwinFOM
+    t_full : ndarray
+    true_states : ndarray, (n_dof, n_pred)
+    t_sampled : ndarray, (num_samples,)
+    snaps_noisy : ndarray, (n_dof, num_samples)
+    chemo_input_func : callable
+    chemo_meta : dict
+    """
+    fom = TumorTwinFOM(data_path)
+    raw = np.load(data_path)
+    decay_rate = float(raw['decay_rate']) if 'decay_rate' in raw.files else 0.7
+    sensitivity = float(raw['sensitivity']) if 'sensitivity' in raw.files else 0.2
+    patient_id = str(raw['patient_id']) if 'patient_id' in raw.files else 'TNBC_demo_001'
+
+    # Rebuild the chemo spec from the NPZ schedule so custom-schedule
+    # FOM data files (e.g. sparser/larger doses) are honored on the ROM
+    # side instead of silently falling back to the patient JSON.
+    if 'chemo_dose_days' in raw.files and 'chemo_doses' in raw.files:
+        spec, t0 = _build_chemo_spec_from_schedule(
+            patient_id=patient_id,
+            sensitivity=sensitivity,
+            decay_rate=decay_rate,
+            dose_days=raw['chemo_dose_days'],
+            dose_amts=raw['chemo_doses'],
+        )
+    else:
+        spec, t0 = _build_chemo_spec_from_patient(
+            patient_id=patient_id,
+            sensitivity=sensitivity,
+            decay_rate=decay_rate,
+            dose_scale=1.0,
+        )
+
+    true_states = fom.get_states(prediction_time_domain)
+
+    rng = np.random.default_rng(seed)
+    t_sampled = np.sort(
+        rng.uniform(training_span[0], training_span[1], size=num_samples)
+    )
+    t_sampled[0] = training_span[0]
+    t_sampled[-1] = training_span[1]
+    snaps_noisy = fom.noise(fom.get_states(t_sampled), noise_level)
+
+    chemo_input_func = chemo_input_func_factory(spec, t0, dose_scale=dose_scale)
+
+    chemo_meta = dict(
+        dose_days=raw['chemo_dose_days'],
+        doses=raw['chemo_doses'],
+        decay_rate=decay_rate,
+        sensitivity=sensitivity,
+        patient_id=patient_id,
+        t0=t0,
+        chemo_spec=spec,
+    )
+    return fom, prediction_time_domain, true_states, t_sampled, snaps_noisy, \
+        chemo_input_func, chemo_meta
 
 
 def input_func_factory(params):
@@ -400,6 +650,57 @@ def quadratic_apply(state, entries, _mask):
     return entries @ jnp.prod(state[_mask], axis=1)
 
 
+def state_input_apply(state, input_, entries):
+    """N[u ⊗ q] for the chemo bilinear term.
+
+    With input_dim=1 (scalar α), kron(input_, state) = α·q, so the result
+    is α·(N @ q). General form handles arbitrary input dimension.
+    """
+    if input_ is None:
+        return jnp.zeros_like(state)
+    return entries @ jnp.kron(jnp.atleast_1d(input_), state)
+
+
+def make_jax_input_func(input_func, t_min, t_max, n_points=4001):
+    """Pre-tabulate α(t) on a dense grid and return a JAX-traceable callable.
+
+    The chemo input function is backed by TumorTwin (torch-based), which is
+    not JAX-traceable. We sample it on a fine grid (n_points across
+    [t_min, t_max]) and return a JAX-friendly linear interpolator. The
+    interpolator returns a length-1 jax array per call, matching the
+    `ChemoReducedOrderModel` rhs expectation.
+
+    Parameters
+    ----------
+    input_func : callable t -> ndarray, shape (1,)
+        Original chemo input function (e.g. from chemo_input_func_factory).
+    t_min, t_max : float
+        Time range for tabulation. Should cover the diffrax integration
+        interval.
+    n_points : int
+        Number of samples (default 4001 → ~30 ms grid for a 120-day span,
+        far below TumorTwin's 0.5-day snapshot spacing).
+
+    Returns
+    -------
+    jax_input_func : callable t -> jnp.ndarray, shape (1,)
+        Linear interpolator. Outside [t_min, t_max] returns the boundary
+        value (jnp.interp default).
+    """
+    t_grid = np.linspace(float(t_min), float(t_max), int(n_points))
+    alpha_grid = np.array([float(input_func(ti)[0]) for ti in t_grid])
+    t_jax = jnp.asarray(t_grid)
+    a_jax = jnp.asarray(alpha_grid)
+
+    def jax_input_func(t):
+        return jnp.atleast_1d(jnp.interp(jnp.asarray(t), t_jax, a_jax))
+
+    jax_input_func.t_grid = t_grid
+    jax_input_func.alpha_grid = alpha_grid
+    jax_input_func.source = input_func
+    return jax_input_func
+
+
 # =============================================================================
 # Reduced-Order Model
 # =============================================================================
@@ -448,6 +749,102 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
             saveat=saveat,
         )
         return sol.ys.T
+
+
+# =============================================================================
+# Chemotherapy-aware Reduced-Order Model (cAHN structure)
+# =============================================================================
+# PDE with chemo:
+#     du/dt = d ∇²u + k u (1 − u/θ) − sensitivity · α(t) · u
+# Reduced form (POD with mean shift produces a constant term):
+#     dq̂/dt = ĉ + Â q̂ + Ĥ [q̂ ⊗ q̂] + N̂ [α(t) ⊗ q̂]
+# where α(t) is a scalar (input_dimension = 1) so N̂ is r×r.
+#
+# Inherits from JaxCompatibleModel for the StateInputOperator-aware data
+# matrix assembly; we just add the matching rhs term.
+#
+# Operator string: "cAHN" by default.
+from core.bayesian_opinf import JaxCompatibleModel as _JaxCompatibleModel
+
+
+class ChemoReducedOrderModel(_JaxCompatibleModel):
+    """ROM for tumor growth WITH chemotherapy (cAHN structure).
+
+    Operators (all learned from data):
+      - c  ConstantOperator       (POD shift residual)
+      - A  LinearOperator         (diffusion + linear part of growth)
+      - H  QuadraticOperator      (logistic saturation −k/θ · u²)
+      - N  StateInputOperator     (chemo: −sensitivity · α(t) · u)
+
+    Input is the scalar chemo cell-death rate α(t) wrapped as a length-1
+    array. The factory `chemo_input_func_factory` in this module produces
+    the canonical α(t) using TumorTwin's API.
+    """
+
+    ivp_method = "RK45"
+    input_dimension = 1
+    input_func = None
+    operator_string = "cAHN"
+
+    def __init__(self, operator_string=None, *args, **kwargs):
+        op_str = operator_string if operator_string is not None else self.operator_string
+        super().__init__(op_str, *args, **kwargs)
+
+    def rhs(self, state, input_):
+        out = jnp.zeros_like(state)
+        for op in self.operators:
+            if isinstance(op, ConstantOperator):
+                out = out + constant_apply(state, input_, op.entries)
+            elif isinstance(op, LinearOperator):
+                out = out + linear_apply(state, op.entries)
+            elif isinstance(op, QuadraticOperator):
+                out = out + quadratic_apply(state, op.entries, op._mask)
+            elif isinstance(op, InputOperator):
+                out = out + op.entries @ jnp.atleast_1d(input_)
+            elif isinstance(op, StateInputOperator):
+                out = out + state_input_apply(state, input_, op.entries)
+            else:
+                raise RuntimeError(f"Unknown operator: {type(op)}")
+        return out
+
+    def predict(self, state0, t, input_func=None):
+        """Integrate the chemo ROM forward.
+
+        Uses scipy `solve_ivp` (LSODA) because the chemo input has hard
+        step discontinuities at dose times that defeat JIT-compiled
+        adaptive RK methods. Performance for r-dim ROMs (r ~ 4–10) is
+        ample for our use cases.
+        """
+        from scipy.integrate import solve_ivp
+
+        ifunc = input_func if input_func is not None else self.input_func
+        if ifunc is None:
+            raise ValueError(
+                "ChemoReducedOrderModel.predict requires an input_func "
+                "(scalar α(t) as length-1 array)."
+            )
+
+        # Convert state-side ops to numpy for scipy compat.
+        state0_np = np.asarray(state0, dtype=float)
+        t_np = np.asarray(t, dtype=float)
+
+        def f(t_, y):
+            u = np.asarray(ifunc(t_)).reshape(-1)
+            return np.asarray(self.rhs(jnp.asarray(y), jnp.asarray(u)))
+
+        sol = solve_ivp(
+            f,
+            t_span=(float(t_np[0]), float(t_np[-1])),
+            y0=state0_np,
+            method='LSODA',
+            t_eval=t_np,
+            rtol=1e-6,
+            atol=1e-9,
+            max_step=0.5,  # keep step ≤ snapshot spacing → catches dose onsets
+        )
+        if not sol.success:
+            raise RuntimeError(f"ChemoReducedOrderModel.predict failed: {sol.message}")
+        return sol.y
 
 
 # =============================================================================
