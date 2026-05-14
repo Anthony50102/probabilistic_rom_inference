@@ -43,7 +43,7 @@ import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import SVI, Trace_ELBO, Predictive, autoguide
-from numpyro.infer.initialization import init_to_value
+from numpyro.infer.initialization import init_to_median
 from numpyro.optim import ClippedAdam
 from jax import random
 from scipy.interpolate import interp1d
@@ -55,7 +55,6 @@ from core import (
     generate_trajectory, JaxCompatibleModel, compute_gp_derivatives,
     generate_rom_predictions, rbf_eval,
 )
-from core.bayesian_opinf import fit_gp_hyperparameters_mle
 from core.diagnostics import plot_trace
 from core.plotting import plot_full_order_error
 import opinf
@@ -369,11 +368,6 @@ def run_experiment(schema, p=None):
                                  solver=opinf.lstsq.L2Solver(regularizer=1e0)))
     rom.fit(states=snaps_samp)
 
-    # GP-MLE only for θ warm-start; O is never optimised
-    Ls, Vs, Ns, _ = fit_gp_hyperparameters_mle(t_samp, snaps_comp, verbose=False)
-    print(f"  GP-MLE hypers: ℓ≈{np.mean(Ls):.4f}  σ²≈{np.mean(Vs):.3f}  "
-          f"ν≈{np.mean(Ns):.6f}")
-
     model, posterior_O_fn, time_eval = build_model(
         rom=rom, num_modes=nmodes,
         time_sampled=t_samp, snapshots_comp=snaps_comp,
@@ -384,13 +378,10 @@ def run_experiment(schema, p=None):
         bump_p=p['BUMP_P'], num_test_funcs=p['NUM_TEST_FUNCS'],
         bump_radius_frac=p['BUMP_RADIUS_FRAC'])
 
-    # Warm-start θ at GP-MLE values (low-dim, no null basin to worry about)
-    init_values = {}
-    for i in range(nmodes):
-        init_values[f'lengthscale_{i}'] = jnp.asarray(Ls[i])
-        init_values[f'variance_{i}'] = jnp.asarray(Vs[i])
-        init_values[f'noise_{i}'] = jnp.asarray(Ns[i])
-    guide = autoguide.AutoNormal(model, init_loc_fn=init_to_value(values=init_values))
+    # No MLE warm-start: priors are already on physical scales and the
+    # marginalised-O landscape is low-dimensional enough that SVI initialised
+    # at the prior median converges reliably.
+    guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
 
     optimizer = ClippedAdam(step_size=p['LEARNING_RATE'])
     svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
