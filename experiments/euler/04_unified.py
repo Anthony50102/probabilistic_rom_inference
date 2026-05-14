@@ -209,6 +209,24 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         [float(jnp.log(jnp.var(jnp.array(snapshots_comp[i])) + 1e-12))
          for i in range(num_modes)])
 
+    # Optional fully uninformative priors (for prior-sensitivity tests).
+    # PRIOR_MODE: "informative" (default), "wide" (data-scale anchored but
+    # ~5x wider), or "uninformative" (no data anchoring).
+    PRIOR_MODE = os.environ.get("PRIOR_MODE", "informative")
+    if PRIOR_MODE == "uninformative":
+        ell_loc, ell_scale = 0.0, 3.0
+        sig2_loc, sig2_scale = jnp.zeros(num_modes), 3.0
+        nu_loc, nu_scale = 0.0, 3.0
+    elif PRIOR_MODE == "wide":
+        # Keep data-derived scale hints but widen dramatically
+        ell_loc, ell_scale = broad_log_ell_loc, 2.5
+        sig2_loc, sig2_scale = broad_log_sig2_locs, 2.0
+        nu_loc, nu_scale = -8.0, 2.5
+    else:  # "informative"
+        ell_loc, ell_scale = broad_log_ell_loc, 1.0
+        sig2_loc, sig2_scale = broad_log_sig2_locs, 0.5
+        nu_loc, nu_scale = -8.0, 1.0
+
     inv_sigma_O2_default = 1.0 / (sigma_O ** 2)
     log_sigma_O2_default = 2.0 * jnp.log(sigma_O)
 
@@ -267,15 +285,15 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
     def model(gamma2=10.0):
         ells = jnp.stack([
             numpyro.sample(f"lengthscale_{i}",
-                           dist.LogNormal(broad_log_ell_loc, 1.0))
+                           dist.LogNormal(ell_loc, ell_scale))
             for i in range(num_modes)])
         sig2s = jnp.stack([
             numpyro.sample(f"variance_{i}",
-                           dist.LogNormal(broad_log_sig2_locs[i], 0.5))
+                           dist.LogNormal(sig2_loc[i], sig2_scale))
             for i in range(num_modes)])
         nus = jnp.stack([
             numpyro.sample(f"noise_{i}",
-                           dist.LogNormal(-8.0, 1.0))
+                           dist.LogNormal(nu_loc, nu_scale))
             for i in range(num_modes)])
 
         if HIERARCHICAL:
