@@ -42,8 +42,8 @@ import jax
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
-from numpyro.infer import SVI, Trace_ELBO, Predictive, autoguide
-from numpyro.infer.initialization import init_to_median
+from numpyro.infer import SVI, Trace_ELBO, Predictive, autoguide, MCMC, NUTS
+from numpyro.infer.initialization import init_to_median, init_to_value
 from numpyro.optim import ClippedAdam
 from jax import random
 from scipy.interpolate import interp1d
@@ -204,7 +204,22 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
     # Once O is marginalised the optimisation landscape is much cleaner, so
     # we follow 04g and use broad priors anchored only to physical scales.
     T_span = float(t_train[-1] - t_train[0])
-    broad_log_ell_loc = jnp.log(T_span / 20.0)
+    # ── GP lengthscale prior: principled, parameter-free derivation ──────
+    # Identifiability pins ℓ to [Δt, T]:
+    #   • Δt is the Nyquist limit (below which sampling cannot resolve),
+    #   • T is the observation window (above which the GP is
+    #     indistinguishable from a constant).
+    # We use a LogNormal with median at Δt and 99th percentile at T:
+    #     ℓ ~ LogNormal(log Δt, σ²),  σ = log(T/Δt) / z_{0.99}
+    # with z_{0.99} ≈ 2.326 the standard-normal 99% quantile. No knobs.
+    # Set ELL_PRIOR_MODE=legacy to recover the previous ad-hoc T/20 prior.
+    _dt_mean = T_span / max(int(n_train) - 1, 1)
+    if os.environ.get("ELL_PRIOR_MODE", "principled") == "legacy":
+        broad_log_ell_loc = float(jnp.log(T_span / 20.0))
+        broad_log_ell_scale = 1.0
+    else:
+        broad_log_ell_loc = float(jnp.log(_dt_mean))
+        broad_log_ell_scale = float(jnp.log(T_span / _dt_mean) / 2.3263)
     broad_log_sig2_locs = jnp.array(
         [float(jnp.log(jnp.var(jnp.array(snapshots_comp[i])) + 1e-12))
          for i in range(num_modes)])
@@ -212,20 +227,34 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
     # Optional fully uninformative priors (for prior-sensitivity tests).
     # PRIOR_MODE: "informative" (default), "wide" (data-scale anchored but
     # ~5x wider), or "uninformative" (no data anchoring).
+    # Per-mode noise prior anchor: 1% of mode energy.  Like sig2, this uses
+    # the POD singular value spectrum (a deterministic property of the basis)
+    # to set per-mode scale — not empirical Bayes on the noise itself.
+    broad_log_nu_locs = jnp.array(
+        [float(jnp.log(0.01 * jnp.var(jnp.array(snapshots_comp[i])) + 1e-12))
+         for i in range(num_modes)])
+
     PRIOR_MODE = os.environ.get("PRIOR_MODE", "informative")
     if PRIOR_MODE == "uninformative":
         ell_loc, ell_scale = 0.0, 3.0
         sig2_loc, sig2_scale = jnp.zeros(num_modes), 3.0
-        nu_loc, nu_scale = 0.0, 3.0
+        nu_loc, nu_scale = jnp.zeros(num_modes), 3.0
+    elif PRIOR_MODE == "weakly_physical":
+        ell_loc, ell_scale = jnp.log(T_span / 10.0), 2.0
+        sig2_loc, sig2_scale = jnp.zeros(num_modes), 3.0
+        nu_loc, nu_scale = -8.0 * jnp.ones(num_modes), 1.5
     elif PRIOR_MODE == "wide":
         # Keep data-derived scale hints but widen dramatically
         ell_loc, ell_scale = broad_log_ell_loc, 2.5
         sig2_loc, sig2_scale = broad_log_sig2_locs, 2.0
         nu_loc, nu_scale = -8.0, 2.5
-    else:  # "informative"
-        ell_loc, ell_scale = broad_log_ell_loc, 1.0
-        sig2_loc, sig2_scale = broad_log_sig2_locs, 0.5
-        nu_loc, nu_scale = -8.0, 1.0
+    else:  # "informative" (default)
+        # Spectrum-anchored priors: every location comes from either the
+        # observation window T (chosen) or the POD singular-value spectrum
+        # (a deterministic property of the basis). No data values feed in.
+        ell_loc, ell_scale = broad_log_ell_loc, broad_log_ell_scale
+        sig2_loc, sig2_scale = broad_log_sig2_locs, 1.0
+        nu_loc, nu_scale = broad_log_nu_locs, 1.0
 
     inv_sigma_O2_default = 1.0 / (sigma_O ** 2)
     log_sigma_O2_default = 2.0 * jnp.log(sigma_O)
@@ -293,7 +322,7 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
             for i in range(num_modes)])
         nus = jnp.stack([
             numpyro.sample(f"noise_{i}",
-                           dist.LogNormal(nu_loc, nu_scale))
+                           dist.LogNormal(nu_loc[i], nu_scale))
             for i in range(num_modes)])
 
         if HIERARCHICAL:
@@ -348,7 +377,11 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
             C_all.append(Ci)
         return jnp.stack(mu_all), jnp.stack(C_all), Xs, mu_zs
 
-    return model, posterior_O_fn, time_eval
+    return model, posterior_O_fn, time_eval, {
+        'ell': float(jnp.exp(broad_log_ell_loc)),
+        'sig2': [float(jnp.exp(broad_log_sig2_locs[i])) for i in range(num_modes)],
+        'nu': [float(jnp.exp(broad_log_nu_locs[i])) for i in range(num_modes)],
+    }
 
 
 # =============================================================================
@@ -386,7 +419,7 @@ def run_experiment(schema, p=None):
                                  solver=opinf.lstsq.L2Solver(regularizer=1e0)))
     rom.fit(states=snaps_samp)
 
-    model, posterior_O_fn, time_eval = build_model(
+    model, posterior_O_fn, time_eval, init_phys = build_model(
         rom=rom, num_modes=nmodes,
         time_sampled=t_samp, snapshots_comp=snaps_comp,
         num_eval_points=neval, window_size=p['WINDOW_SIZE'],
@@ -396,34 +429,85 @@ def run_experiment(schema, p=None):
         bump_p=p['BUMP_P'], num_test_funcs=p['NUM_TEST_FUNCS'],
         bump_radius_frac=p['BUMP_RADIUS_FRAC'])
 
-    # No MLE warm-start: priors are already on physical scales and the
-    # marginalised-O landscape is low-dimensional enough that SVI initialised
-    # at the prior median converges reliably.
-    guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
+    # ── Inference: SVI (default) or NUTS, with selectable init ───────────
+    INIT_MODE = os.environ.get("INIT_MODE", "median")
+    INFER = os.environ.get("INFER", "svi").lower()
+    print(f"  PRIOR_MODE={os.environ.get('PRIOR_MODE','informative')}  "
+          f"INIT_MODE={INIT_MODE}  INFER={INFER}")
 
-    optimizer = ClippedAdam(step_size=p['LEARNING_RATE'])
-    svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+    if INIT_MODE == "physical":
+        init_values = {}
+        for i in range(nmodes):
+            init_values[f"lengthscale_{i}"] = init_phys['ell']
+            init_values[f"variance_{i}"]    = init_phys['sig2'][i]
+            init_values[f"noise_{i}"]       = init_phys['nu'][i]
+        init_loc_fn = init_to_value(values=init_values)
+    else:
+        init_loc_fn = init_to_median
+
     model_kwargs = dict(gamma2=p['GAMMA2'])
-
     rng_key, ik = random.split(rng_key)
     t0 = time.time()
-    state = svi.init(ik, **model_kwargs)
 
-    @jax.jit
-    def _step(s, _):
-        return svi.update(s, **model_kwargs)
+    if INFER == "nuts":
+        # MCMC: only ~3*nmodes latent vars (O is marginalised) — fast.
+        num_warmup = int(os.environ.get("NUTS_WARMUP", "500"))
+        num_samples = int(os.environ.get("NUTS_SAMPLES", "500"))
+        kernel = NUTS(model, init_strategy=init_loc_fn,
+                      target_accept_prob=0.9)
+        mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
+                    num_chains=1, progress_bar=True)
+        mcmc.run(ik, **model_kwargs)
+        post = mcmc.get_samples()
+        npost = num_samples
+        losses = np.array([0.0])  # placeholder
+        # Trim deterministic X_i — they hold (n_samples, T_eval) but we don't
+        # need them for downstream O sampling.
+        post = {k: np.asarray(v) for k, v in post.items()
+                if not k.startswith("X_")}
+        print(f"  NUTS: {num_warmup}+{num_samples} samples ({time.time()-t0:.1f}s)")
+    else:
+        GUIDE = os.environ.get("GUIDE", "normal").lower()
+        init_scale = float(os.environ.get("INIT_SCALE", "0.1"))
+        if GUIDE == "mvn":
+            guide = autoguide.AutoMultivariateNormal(
+                model, init_loc_fn=init_loc_fn, init_scale=init_scale)
+        elif GUIDE == "lowrank":
+            guide = autoguide.AutoLowRankMultivariateNormal(
+                model, init_loc_fn=init_loc_fn, init_scale=init_scale, rank=5)
+        elif GUIDE == "dais":
+            K_dais = int(os.environ.get("DAIS_K", "8"))
+            eta_max = float(os.environ.get("DAIS_ETA_MAX", "0.1"))
+            eta_init = float(os.environ.get("DAIS_ETA_INIT", "0.01"))
+            guide = autoguide.AutoDAIS(
+                model, K=K_dais, eta_max=eta_max, eta_init=eta_init,
+                init_loc_fn=init_loc_fn, init_scale=init_scale)
+        else:
+            guide = autoguide.AutoNormal(
+                model, init_loc_fn=init_loc_fn, init_scale=init_scale)
+        print(f"  GUIDE={GUIDE}  init_scale={init_scale}"
+              + (f"  DAIS_K={os.environ.get('DAIS_K','8')}" if GUIDE == 'dais' else ''))
+        lr = float(os.environ.get("LR", p['LEARNING_RATE']))
+        nsteps = int(os.environ.get("NUM_STEPS", p['NUM_STEPS']))
+        optimizer = ClippedAdam(step_size=lr)
+        svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
 
-    nsteps = p['NUM_STEPS']
-    state, losses = jax.lax.scan(_step, state, jnp.arange(nsteps))
-    losses = np.array(losses)
-    print(f"  SVI: {nsteps} steps   loss {losses[0]:.2f} → {losses[-1]:.2f}   "
-          f"({time.time()-t0:.1f}s)")
+        state = svi.init(ik, **model_kwargs)
 
-    params = svi.get_params(state)
-    rng_key, sk = random.split(rng_key)
-    npost = p['NUM_POSTERIOR_SAMPLES']
-    post = guide.sample_posterior(sk, params, sample_shape=(npost,),
-                                   **model_kwargs)
+        @jax.jit
+        def _step(s, _):
+            return svi.update(s, **model_kwargs)
+
+        state, losses = jax.lax.scan(_step, state, jnp.arange(nsteps))
+        losses = np.array(losses)
+        print(f"  SVI: {nsteps} steps   loss {losses[0]:.2f} → {losses[-1]:.2f}   "
+              f"({time.time()-t0:.1f}s)")
+
+        params = svi.get_params(state)
+        rng_key, sk = random.split(rng_key)
+        npost = p['NUM_POSTERIOR_SAMPLES']
+        post = guide.sample_posterior(sk, params, sample_shape=(npost,),
+                                       **model_kwargs)
 
     # ── Sample O from its closed-form conditional posterior per θ-sample ──
     rng_key, ok = random.split(rng_key)
@@ -469,6 +553,7 @@ def run_experiment(schema, p=None):
     Os, Xs, rom_solves = generate_rom_predictions(
         samples=samples_for_rom, rom=rom, snapshots_compressed=snaps_comp,
         time_eval=t_pred, num_modes=nmodes, num_pulls=min(200, npost))
+
     n_stable = len(rom_solves)
     n_total = len(Os)
     stability_pct = n_stable / max(n_total, 1) * 100
@@ -504,7 +589,7 @@ def run_experiment(schema, p=None):
     out_dir = os.path.join(SCRIPT_DIR, 'results', 'comparison', schema['name'])
     os.makedirs(out_dir, exist_ok=True)
     rom_arr = np.array(rom_solves) if n_stable > 0 else np.empty((0, nmodes, len(t_pred)))
-    np.savez(os.path.join(out_dir, '04_unified.npz'),
+    np.savez(os.path.join(out_dir, f'04_unified{os.environ.get("OUTPUT_SUFFIX","")}.npz'),
              rom_solves=rom_arr, t_pred=t_pred,
              train_error=train_err, pred_error=pred_err,
              stability_pct=stability_pct, ci_coverage=ci_cov,

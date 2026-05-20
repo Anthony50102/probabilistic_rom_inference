@@ -21,8 +21,8 @@ import jax
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
-from numpyro.infer import SVI, Trace_ELBO, autoguide
-from numpyro.infer.initialization import init_to_value
+from numpyro.infer import SVI, Trace_ELBO, autoguide, MCMC, NUTS
+from numpyro.infer.initialization import init_to_value, init_to_median
 from numpyro.optim import ClippedAdam
 from jax import random
 from scipy.interpolate import interp1d
@@ -69,7 +69,7 @@ MODEL_PARAMS = dict(
     LEARNING_RATE=3e-3,
     NUM_POSTERIOR_SAMPLES=500,
     REGULARIZER=1.0,
-    GP_PRIOR_SCALE=0.1,
+    GP_PRIOR_SCALE=1.0,
     SEED=42,
 )
 
@@ -153,12 +153,28 @@ def build_model(
         wpsi = trap_w_jnp[None, :] * psi_arr
         wpsi_dot = trap_w_jnp[None, :] * psi_dot_arr
 
-        mle_log_ells = jnp.array([float(np.log(all_mle_Ls[ic][j]))
-                                  for j in range(num_modes)])
-        mle_log_sig2s = jnp.array([float(np.log(all_mle_Vs[ic][j]))
-                                   for j in range(num_modes)])
-        mle_log_nus = jnp.array([float(np.log(all_mle_Ns[ic][j]))
-                                 for j in range(num_modes)])
+        T_span = float(t_train[-1] - t_train[0])
+        snaps_ic = np.asarray(all_snapshots_comp[ic])
+        var_modes = np.array([float(np.var(snaps_ic[j]) + 1e-12)
+                              for j in range(num_modes)])
+        # ── GP lengthscale prior: principled, parameter-free ─────────────
+        # LogNormal with median at the Nyquist limit Δt and 99th
+        # percentile at the observation window T (the identifiable range
+        # of ℓ). ELL_PRIOR_MODE=legacy recovers the ad-hoc T/20 prior.
+        _dt_mean = T_span / max(int(n_train) - 1, 1)
+        if os.environ.get("ELL_PRIOR_MODE", "principled") == "legacy":
+            _ell_loc = float(np.log(T_span / 20.0))
+            _ell_scale = None  # use shared gp_prior_scale
+        else:
+            _ell_loc = float(np.log(_dt_mean))
+            _ell_scale = float(np.log(T_span / _dt_mean) / 2.3263)
+        mle_log_ells = jnp.full((num_modes,), _ell_loc)
+        mle_log_ell_scales = (
+            None if _ell_scale is None
+            else jnp.full((num_modes,), float(_ell_scale)))
+        mle_log_sig2s = jnp.array([float(np.log(v)) for v in var_modes])
+        # Spectrum-anchored noise prior: 1% of mode energy
+        mle_log_nus = jnp.array([float(np.log(0.01 * v)) for v in var_modes])
 
         all_ic_data.append(dict(
             t_train=t_train, n_train=n_train, y_obs=y_obs,
@@ -171,6 +187,7 @@ def build_model(
             wpsi=wpsi, wpsi_dot=wpsi_dot, K_test=wpsi.shape[0],
             mle_log_ells=mle_log_ells, mle_log_sig2s=mle_log_sig2s,
             mle_log_nus=mle_log_nus,
+            mle_log_ell_scales=mle_log_ell_scales,
         ))
 
     def _rbf_sq(ell, sig2, sq_diffs):
@@ -271,10 +288,17 @@ def build_model(
         nus_per = []
         for ic in range(num_ics):
             d = all_ic_data[ic]
-            ells = jnp.stack([
-                numpyro.sample(f"lengthscale_{ic}_{j}",
-                    dist.LogNormal(d['mle_log_ells'][j], gp_prior_scale))
-                for j in range(num_modes)])
+            _ell_sc = d.get('mle_log_ell_scales', None)
+            if _ell_sc is None:
+                ells = jnp.stack([
+                    numpyro.sample(f"lengthscale_{ic}_{j}",
+                        dist.LogNormal(d['mle_log_ells'][j], gp_prior_scale))
+                    for j in range(num_modes)])
+            else:
+                ells = jnp.stack([
+                    numpyro.sample(f"lengthscale_{ic}_{j}",
+                        dist.LogNormal(d['mle_log_ells'][j], _ell_sc[j]))
+                    for j in range(num_modes)])
             sig2s = jnp.stack([
                 numpyro.sample(f"variance_{ic}_{j}",
                     dist.LogNormal(d['mle_log_sig2s'][j], gp_prior_scale))
@@ -408,16 +432,10 @@ def run_experiment(schema, p=None):
         in_func = input_func_factory(train_params[ic])
         all_inputs_eval.append(in_func(t_eval_ic))
 
-    # GP-MLE per IC
-    all_mle_Ls, all_mle_Vs, all_mle_Ns = [], [], []
-    for ic in range(nics):
-        Ls, Vs, Ns, _ = fit_gp_hyperparameters_mle(
-            all_time_sampled[ic], all_snapshots_comp[ic], verbose=False)
-        all_mle_Ls.append(Ls)
-        all_mle_Vs.append(Vs)
-        all_mle_Ns.append(Ns)
-        print(f"  GP-MLE IC{ic} {train_params[ic]}: ℓ̄={np.mean(Ls):.4f} "
-              f"σ̄²={np.mean(Vs):.3f} ν̄={np.mean(Ns):.6f}")
+    # No GP-MLE warm-start: spectrum-anchored priors used inside build_model
+    all_mle_Ls = [None] * nics
+    all_mle_Vs = [None] * nics
+    all_mle_Ns = [None] * nics
 
     # ── Build model ──────────────────────────────────────────────────────
     model, posterior_O_fn = build_model(
@@ -435,48 +453,60 @@ def run_experiment(schema, p=None):
         gp_prior_scale=p['GP_PRIOR_SCALE'],
     )
 
-    init_values = {}
-    for ic in range(nics):
-        for j in range(nmodes):
-            init_values[f'lengthscale_{ic}_{j}'] = jnp.asarray(all_mle_Ls[ic][j])
-            init_values[f'variance_{ic}_{j}'] = jnp.asarray(all_mle_Vs[ic][j])
-            init_values[f'noise_{ic}_{j}'] = jnp.asarray(all_mle_Ns[ic][j])
+    # ── Inference: SVI (default) or NUTS ─────────────────────────────────
+    INFER = os.environ.get("INFER", "svi").lower()
+    print(f"  INFER={INFER}")
 
-    guide = autoguide.AutoNormal(model,
-        init_loc_fn=init_to_value(values=init_values))
-    optimizer = ClippedAdam(step_size=p['LEARNING_RATE'])
-    svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
     model_kwargs = dict(gamma2=p['GAMMA2'])
-
     rng_key, ik = random.split(rng_key)
     t0 = time.time()
-    state = svi.init(ik, **model_kwargs)
 
-    @jax.jit
-    def _step(s, _):
-        return svi.update(s, **model_kwargs)
+    if INFER == "nuts":
+        num_warmup = int(os.environ.get("NUTS_WARMUP", "500"))
+        num_samples = int(os.environ.get("NUTS_SAMPLES", "500"))
+        kernel = NUTS(model, init_strategy=init_to_median,
+                      target_accept_prob=0.9)
+        mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples,
+                    num_chains=1, progress_bar=False)
+        mcmc.run(ik, **model_kwargs)
+        post = mcmc.get_samples()
+        npost = num_samples
+        losses = np.array([0.0])
+        post = {k: np.asarray(v) for k, v in post.items()
+                if not k.startswith("X_") and not k.startswith("Xs_")}
+        print(f"  NUTS: {num_warmup}+{num_samples} samples ({time.time()-t0:.1f}s)")
+    else:
+        # No MLE warm-start: spectrum-anchored priors are sufficient
+        guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
+        optimizer = ClippedAdam(step_size=p['LEARNING_RATE'])
+        svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+        state = svi.init(ik, **model_kwargs)
 
-    nsteps = p['NUM_STEPS']
-    seg_size = max(1, nsteps // 10)
-    all_losses = []
-    for seg in range(10):
-        start = seg * seg_size
-        end = min(start + seg_size, nsteps)
-        if seg == 9:
-            end = nsteps
-        if start >= nsteps:
-            break
-        state, seg_losses = jax.lax.scan(_step, state, jnp.arange(end - start))
-        seg_np = np.array(seg_losses)
-        all_losses.extend(seg_np.tolist())
-        print(f"    step {end:6d}/{nsteps}  loss={seg_np[-1]:10.2f}")
-    losses = np.array(all_losses)
+        @jax.jit
+        def _step(s, _):
+            return svi.update(s, **model_kwargs)
 
-    params = svi.get_params(state)
-    rng_key, sk = random.split(rng_key)
-    npost = p['NUM_POSTERIOR_SAMPLES']
-    post = guide.sample_posterior(sk, params, sample_shape=(npost,),
-                                  **model_kwargs)
+        nsteps = p['NUM_STEPS']
+        seg_size = max(1, nsteps // 10)
+        all_losses = []
+        for seg in range(10):
+            start = seg * seg_size
+            end = min(start + seg_size, nsteps)
+            if seg == 9:
+                end = nsteps
+            if start >= nsteps:
+                break
+            state, seg_losses = jax.lax.scan(_step, state, jnp.arange(end - start))
+            seg_np = np.array(seg_losses)
+            all_losses.extend(seg_np.tolist())
+            print(f"    step {end:6d}/{nsteps}  loss={seg_np[-1]:10.2f}")
+        losses = np.array(all_losses)
+
+        params = svi.get_params(state)
+        rng_key, sk = random.split(rng_key)
+        npost = p['NUM_POSTERIOR_SAMPLES']
+        post = guide.sample_posterior(sk, params, sample_shape=(npost,),
+                                      **model_kwargs)
 
     # ── Draw O from closed-form conditional per θ-sample ──────────────────
     def _stack(d, key):
@@ -546,8 +576,7 @@ def run_experiment(schema, p=None):
     print(f"\n  Results ({runtime:.0f}s):")
     for ic_idx, (params_ic, true_c) in enumerate(zip(eval_params, eval_true_comp)):
         q0 = eval_snaps_comp[ic_idx][:, 0]
-        _jax_input = input_func_factory(params_ic)
-        ic_input_func = lambda t, _f=_jax_input: np.asarray(_f(t))
+        ic_input_func = input_func_factory(params_ic)
         ic_solves = _generate_rom_solves(
             operator_samples=O_samples, rom=rom, q0=q0,
             time_eval=t_pred, input_func=ic_input_func,
@@ -621,7 +650,7 @@ def run_experiment(schema, p=None):
         else:
             save_dict[f'rom_solves_{ic_idx}'] = np.empty(
                 (0, p['NUM_MODES'], len(t_pred)))
-    np.savez(os.path.join(out_dir, '04_unified.npz'), **save_dict)
+    np.savez(os.path.join(out_dir, f'04_unified{os.environ.get("OUTPUT_SUFFIX","")}.npz'), **save_dict)
 
     return {
         'schema': schema,
