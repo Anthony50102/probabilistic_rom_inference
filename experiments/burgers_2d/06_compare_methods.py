@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
 from config import Basis
 from core import generate_trajectory
+from core.plotting import save_metrics_table
 
 # ── Constants ────────────────────────────────────────────────────────
 SCHEMAS = [
@@ -36,20 +37,14 @@ SCHEMAS = [
 
 METHODS = [
     {
-        "name": "04_conditional_integral",
-        "label": "Conditional Integral (2-stage)",
-        "color": "tab:purple",
-        "linestyle": "--",
-    },
-    {
         "name": "04_unified",
-        "label": "Marg-O × Weak-Form",
-        "color": "tab:green",
+        "label": "Bayesian OpInf",
+        "color": "tab:purple",
         "linestyle": "-",
     },
     {
         "name": "05_neural_ode",
-        "label": "MLP Ensemble (baseline)",
+        "label": "Neural ODE",
         "color": "tab:orange",
         "linestyle": "-.",
     },
@@ -186,39 +181,42 @@ def plot_error_comparison(methods_data, projection_error, t_pred, training_span,
 
 
 def plot_metrics_comparison(methods_data, title_suffix, save_path):
-    """Bar chart comparing train error, pred error, stability across methods."""
+    """Bar chart: relative L2 errors and CI coverage."""
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
     labels = [m["label"] for m in methods_data]
     colors = [m["color"] for m in methods_data]
     x = np.arange(len(labels))
 
-    # Training error
     train_errors = [m["train_error"] for m in methods_data]
-    axes[0].bar(x, train_errors, color=colors, alpha=0.8)
-    axes[0].set_xticks(x)
-    axes[0].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
-    axes[0].set_ylabel("Relative Error")
-    axes[0].set_title("Training Error")
+    b = axes[0].bar(x, train_errors, color=colors, edgecolor="black", linewidth=0.5)
+    for bar, v in zip(b, train_errors):
+        axes[0].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                     f"{v:.3f}", ha="center", va="bottom", fontsize=9)
+    axes[0].set_xticks(x); axes[0].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
+    axes[0].set_ylabel("Relative L2 Error"); axes[0].set_title("Training-region Error")
 
-    # Prediction error
     pred_errors = [m["pred_error"] for m in methods_data]
-    axes[1].bar(x, pred_errors, color=colors, alpha=0.8)
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
-    axes[1].set_ylabel("Relative Error")
-    axes[1].set_title("Prediction Error")
+    b = axes[1].bar(x, pred_errors, color=colors, edgecolor="black", linewidth=0.5)
+    for bar, v in zip(b, pred_errors):
+        axes[1].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                     f"{v:.3f}", ha="center", va="bottom", fontsize=9)
+    axes[1].set_xticks(x); axes[1].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
+    axes[1].set_ylabel("Relative L2 Error"); axes[1].set_title("Prediction-region Error")
 
-    # Stability
-    stabilities = [m["stability_pct"] for m in methods_data]
-    axes[2].bar(x, stabilities, color=colors, alpha=0.8)
-    axes[2].set_xticks(x)
-    axes[2].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
-    axes[2].set_ylabel("Stability %")
-    axes[2].set_title("Stability")
+    ci_covs = [(m["ci_coverage"] * 100) if not np.isnan(m["ci_coverage"]) else 0.0
+               for m in methods_data]
+    b = axes[2].bar(x, ci_covs, color=colors, edgecolor="black", linewidth=0.5)
+    axes[2].axhline(90.0, color='k', linestyle='--', lw=1, alpha=0.6, label='Target 90%')
+    for bar, v in zip(b, ci_covs):
+        axes[2].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                     f"{v:.0f}%", ha="center", va="bottom", fontsize=9)
+    axes[2].set_xticks(x); axes[2].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
+    axes[2].set_ylabel("CI Coverage (%)"); axes[2].set_title("90% CI Coverage")
     axes[2].set_ylim(0, 105)
+    axes[2].legend(fontsize=8, loc='upper right')
 
-    fig.suptitle(f"Method Comparison — {title_suffix}", fontsize=13, y=1.02)
-    plt.tight_layout()
+    fig.suptitle(f"Method Comparison — {title_suffix}", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -244,13 +242,16 @@ def plot_2d_contour_comparison(methods_data, fom, basis, t_full, true_states,
 
         # Compute shared colorbar range from true solution
         vmin_true, vmax_true = u_true.min(), u_true.max()
-        levels = np.linspace(vmin_true, vmax_true, 30)
+        levels = np.linspace(vmin_true, vmax_true, 14)
+        ticks = np.linspace(vmin_true, vmax_true, 5)
 
         im0 = axes[0, col].contourf(x, y, u_true, levels=levels,
                                      cmap='RdBu_r', extend='both')
         axes[0, col].set_aspect('equal')
         axes[0, col].set_title(f't = {t_snap:.1f}', fontsize=11)
-        plt.colorbar(im0, ax=axes[0, col], fraction=0.046, pad=0.04)
+        cb = plt.colorbar(im0, ax=axes[0, col], fraction=0.046, pad=0.04,
+                          format='%.2g')
+        cb.set_ticks(ticks)
 
         # Each method
         for row_idx, md in enumerate(methods_data, start=1):
@@ -265,7 +266,9 @@ def plot_2d_contour_comparison(methods_data, fom, basis, t_full, true_states,
             im = axes[row_idx, col].contourf(x, y, u_rom, levels=levels,
                                               cmap='RdBu_r', extend='both')
             axes[row_idx, col].set_aspect('equal')
-            plt.colorbar(im, ax=axes[row_idx, col], fraction=0.046, pad=0.04)
+            cb = plt.colorbar(im, ax=axes[row_idx, col], fraction=0.046,
+                              pad=0.04, format='%.2g')
+            cb.set_ticks(ticks)
 
         # Clean up axis labels
         for row in range(n_rows):
@@ -343,6 +346,13 @@ def compare_regime(schema):
         methods_data, fom, basis, t_full, true_states,
         title_suffix=label,
         save_path=os.path.join(out_dir, "2d_contour_comparison.png"),
+    )
+
+    # Plot 4: ML-style metrics table
+    save_metrics_table(
+        methods_data,
+        title=f"Method Comparison — {label}",
+        png_path=os.path.join(out_dir, "metrics_table.png"),
     )
 
     return methods_data

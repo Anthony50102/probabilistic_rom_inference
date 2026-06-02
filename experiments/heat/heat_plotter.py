@@ -274,8 +274,7 @@ class HeatPlotter(Plotter):
                     ax.set_title(f'Mode {col + 1}')
                 # Row labels (left column)
                 if col == 0:
-                    ax.set_ylabel(f'{label}\n({n_stable}/{n_tried} stable)',
-                                  fontsize=9)
+                    ax.set_ylabel(label, fontsize=9)
                 # X-axis label (bottom row)
                 if row == n_traj - 1:
                     ax.set_xlabel('Time')
@@ -289,11 +288,12 @@ class HeatPlotter(Plotter):
         handles, labels = axes[0, 0].get_legend_handles_labels()
         if handles:
             fig.legend(handles, labels, loc='upper center',
-                       ncol=len(handles), fontsize=9,
+                       ncol=len(handles), fontsize=11,
                        bbox_to_anchor=(0.5, 1.02))
 
-        fig.suptitle('ROM Predictions: All Trajectories', fontsize=14, y=1.05)
+        fig.suptitle('ROM Predictions: All Trajectories', fontsize=14, y=0.995)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.94)
         return fig, axes, all_rom_solves
 
     # -----------------------------------------------------------------
@@ -388,8 +388,6 @@ class HeatPlotter(Plotter):
                 )
 
             ax.set_ylabel(f'Mode {i + 1}')
-            if i == 0:
-                ax.legend(loc='upper right', fontsize=9)
 
             # Fix y-axis to truth for cross-method comparison
             if true_compressed is not None:
@@ -397,8 +395,14 @@ class HeatPlotter(Plotter):
                 ax.set_ylim(*_ylim_from_truth(true_compressed[i]))
 
         axes[-1].set_xlabel('Time')
-        fig.suptitle(f'{title}  ({n_stable}/{n_tried} stable)', fontsize=14)
+        handles, labels = axes[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc='upper center',
+                       ncol=len(handles), fontsize=10,
+                       bbox_to_anchor=(0.5, 0.97))
+        fig.suptitle(title, fontsize=14, y=0.995)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.92)
         return fig, axes, rom_solves
 
 

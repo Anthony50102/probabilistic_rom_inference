@@ -422,6 +422,13 @@ def plot_results(result, save_dir=None):
 
     schema = result['schema']
     prefix = f"04_{schema['name']}"
+
+    # ── Snapshot result for replotting ───────────────────────────────
+    try:
+        from core.plotting import save_plot_data
+        save_plot_data(result, os.path.join(save_dir, "plot_data", f"{prefix}.pkl"))
+    except Exception as _e:
+        print(f"  ⚠ snapshot failed: {_e}")
     samples = result['samples']
     losses = result['losses']
     rom_solves = result['rom_solves']
@@ -496,8 +503,9 @@ def plot_results(result, save_dir=None):
         for j in range(3):
             ax[-1, j].set_xlabel('Time')
 
-        fig.suptitle(f"ROM Trajectories — {schema['label']}", fontsize=14)
+        fig.suptitle(f"ROM Trajectories — Bayesian OpInf — {schema['label']}", fontsize=14)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.92)
         path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -531,11 +539,15 @@ def plot_results(result, save_dir=None):
             ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
             pad = max(abs(ymax - ymin) * 0.3, 1e-6)
             ax[i].set_ylim(ymin - pad, ymax + pad)
-            if i == 0:
-                ax[i].legend(loc='upper right', fontsize=9)
         ax[-1].set_xlabel('Time')
-        fig.suptitle(f'Conditional Integral — {schema["label"]}  ({n_stable}/{n_total} stable)', fontsize=14)
+        handles, labels = ax[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc='upper center',
+                       ncol=len(handles), fontsize=10,
+                       bbox_to_anchor=(0.5, 0.95))
+        fig.suptitle(f'Bayesian OpInf — {schema["label"]}', fontsize=14, y=0.995)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.90)
         path = os.path.join(save_dir, f"{prefix}_rom_notebook.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -554,8 +566,8 @@ def plot_results(result, save_dir=None):
             time_domain_eval=t_pred,
             training_span=training_span,
             error_type='relative',
+            suptitle=f'Full-Order Error — {schema["label"]}',
         )
-        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
         path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
         fig_foe.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -663,5 +675,18 @@ def main(schema_names=None):
 
 
 if __name__ == "__main__":
-    schema_names = sys.argv[1:] if len(sys.argv) > 1 else None
-    main(schema_names)
+    args = sys.argv[1:]
+    if args and args[0] == "--replot":
+        # Replot from a saved snapshot: --replot <path/to/plot_data/PREFIX.pkl> [save_dir]
+        from core.plotting import load_plot_data
+        pkl_path = args[1]
+        result = load_plot_data(pkl_path)
+        if len(args) > 2:
+            save_dir = args[2]
+        else:
+            # plot_data/ lives inside save_dir
+            save_dir = os.path.dirname(os.path.dirname(os.path.abspath(pkl_path)))
+        plot_results(result, save_dir=save_dir)
+    else:
+        schema_names = args if args else None
+        main(schema_names)

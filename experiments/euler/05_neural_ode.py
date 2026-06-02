@@ -70,8 +70,8 @@ MODEL_PARAMS = dict(
     NUM_LAYERS=3,
     ACTIVATION='tanh',
     ENSEMBLE_SIZE=20,
-    NUM_TRAIN_STEPS=2000,
-    LEARNING_RATE=1e-3,
+    NUM_TRAIN_STEPS=4000,
+    LEARNING_RATE=2e-3,
     SEED=42,
 )
 
@@ -85,10 +85,11 @@ FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
 # Neural ODE model
 # =============================================================================
 class NeuralODE(eqx.Module):
-    """MLP dynamics: dq/dt = f_theta(q), with tanh activations."""
+    """MLP dynamics: dq/dt = output_scale * f_theta(q), with tanh activations."""
     layers: list
+    output_scale: float = eqx.field(static=True)
 
-    def __init__(self, in_dim, hidden_dim, num_layers, *, key):
+    def __init__(self, in_dim, hidden_dim, num_layers, *, key, output_scale=1.0):
         keys = random.split(key, num_layers + 1)
         self.layers = []
         d_in = in_dim
@@ -96,12 +97,13 @@ class NeuralODE(eqx.Module):
             self.layers.append(eqx.nn.Linear(d_in, hidden_dim, key=keys[i]))
             d_in = hidden_dim
         self.layers.append(eqx.nn.Linear(hidden_dim, in_dim, key=keys[num_layers]))
+        self.output_scale = float(output_scale)
 
     def __call__(self, t, y, args):
         x = y
         for layer in self.layers[:-1]:
             x = jnp.tanh(layer(x))
-        return self.layers[-1](x)
+        return self.layers[-1](x) * self.output_scale
 
 
 # =============================================================================
@@ -122,7 +124,9 @@ def train_single(model, t_train, y_train, q0, num_steps, lr, key):
     saveat = diffrax.SaveAt(ts=t_train_jnp)
     adjoint = diffrax.RecursiveCheckpointAdjoint()
 
-    opt = optax.adam(lr)
+    schedule = optax.cosine_decay_schedule(init_value=lr, decay_steps=num_steps,
+                                            alpha=0.05)
+    opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(schedule))
     opt_state = opt.init(eqx.filter(model, eqx.is_array))
 
     @eqx.filter_jit
@@ -183,6 +187,17 @@ def run_experiment(schema):
 
     q0 = snaps_comp[:, 0]
 
+    # ── Estimate dynamics magnitude from finite-difference derivatives ──
+    # Euler signals oscillate on a much faster timescale than the training horizon,
+    # so dq/dt ~ amplitude * omega can be O(100-1000). A standard tanh MLP outputs
+    # values of order 1, so without rescaling the network cannot represent the
+    # true vector field magnitude and converges to a smoothed (low-pass) fit.
+    _dy = np.diff(snaps_comp, axis=1)
+    _dt = np.diff(t_samp)[None, :]
+    _dydt = _dy / _dt
+    output_scale = float(np.std(_dydt))
+    print(f"  Dynamics scale (from data dq/dt): {output_scale:.2f}")
+
     # ── Train ensemble ───────────────────────────────────────────────────
     ensemble_size = p['ENSEMBLE_SIZE']
     num_steps = p['NUM_TRAIN_STEPS']
@@ -201,6 +216,7 @@ def run_experiment(schema):
             hidden_dim=p['HIDDEN_DIM'],
             num_layers=p['NUM_LAYERS'],
             key=key,
+            output_scale=output_scale,
         )
         model, losses = train_single(model, t_samp, snaps_comp, q0, num_steps, lr, key)
         trained_models.append(model)
@@ -304,6 +320,13 @@ def plot_results(result, save_dir=None):
 
     schema = result['schema']
     prefix = f"05_{schema['name']}"
+
+    # ── Snapshot result for replotting ───────────────────────────────
+    try:
+        from core.plotting import save_plot_data
+        save_plot_data(result, os.path.join(save_dir, "plot_data", f"{prefix}.pkl"))
+    except Exception as _e:
+        print(f"  ⚠ snapshot failed: {_e}")
     losses = result['losses']  # list of lists (per ensemble member)
     rom_solves = result['rom_solves']
     snaps_comp = result['snaps_comp']
@@ -379,6 +402,7 @@ def plot_results(result, save_dir=None):
 
         fig.suptitle(f"Neural ODE — {schema['label']}", fontsize=14)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.92)
         path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -412,11 +436,15 @@ def plot_results(result, save_dir=None):
             ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
             pad = max(abs(ymax - ymin) * 0.3, 1e-6)
             ax[i].set_ylim(ymin - pad, ymax + pad)
-            if i == 0:
-                ax[i].legend(loc='upper right', fontsize=9)
         ax[-1].set_xlabel('Time')
-        fig.suptitle(f'Neural ODE — {schema["label"]}  ({n_stable}/{n_total} stable)', fontsize=14)
+        handles, labels = ax[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc='upper center',
+                       ncol=len(handles), fontsize=10,
+                       bbox_to_anchor=(0.5, 0.95))
+        fig.suptitle(f'Neural ODE — {schema["label"]}', fontsize=14, y=0.995)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.90)
         path = os.path.join(save_dir, f"{prefix}_rom_notebook.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -435,8 +463,8 @@ def plot_results(result, save_dir=None):
             time_domain_eval=t_pred,
             training_span=training_span,
             error_type='relative',
+            suptitle=f'Full-Order Error — {schema["label"]}',
         )
-        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
         path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
         fig_foe.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -511,6 +539,7 @@ def plot_results(result, save_dir=None):
 
         fig.suptitle(f"Ensemble Trajectories — {schema['label']}", fontsize=14)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.92)
         path = os.path.join(save_dir, f"{prefix}_ensemble_spread.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -590,5 +619,18 @@ def main(schema_names=None):
 
 
 if __name__ == "__main__":
-    schema_names = sys.argv[1:] if len(sys.argv) > 1 else None
-    main(schema_names)
+    args = sys.argv[1:]
+    if args and args[0] == "--replot":
+        # Replot from a saved snapshot: --replot <path/to/plot_data/PREFIX.pkl> [save_dir]
+        from core.plotting import load_plot_data
+        pkl_path = args[1]
+        result = load_plot_data(pkl_path)
+        if len(args) > 2:
+            save_dir = args[2]
+        else:
+            # plot_data/ lives inside save_dir
+            save_dir = os.path.dirname(os.path.dirname(os.path.abspath(pkl_path)))
+        plot_results(result, save_dir=save_dir)
+    else:
+        schema_names = args if args else None
+        main(schema_names)

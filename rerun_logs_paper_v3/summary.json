@@ -1,0 +1,114 @@
+[
+  {
+    "pde": "euler",
+    "tag": "paper_v3",
+    "results": [
+      {
+        "script": "04_unified.py",
+        "status": "success",
+        "elapsed_s": 698.1
+      },
+      {
+        "script": "04_conditional_integral.py",
+        "status": "success",
+        "elapsed_s": 529.1
+      },
+      {
+        "script": "05_neural_ode.py",
+        "status": "success",
+        "elapsed_s": 20693.1
+      },
+      {
+        "script": "06_compare_methods.py",
+        "status": "failed(rc=1)",
+        "elapsed_s": 2.9
+      }
+    ],
+    "figures_dir": "experiments/euler/figures_rerun_paper_v3",
+    "comparison_dir": "experiments/euler/results/comparison_rerun_paper_v3"
+  },
+  {
+    "pde": "heat",
+    "tag": "paper_v3",
+    "results": [
+      {
+        "script": "04_unified.py",
+        "status": "success",
+        "elapsed_s": 229.4
+      },
+      {
+        "script": "04_conditional_integral.py",
+        "status": "success",
+        "elapsed_s": 263.2
+      },
+      {
+        "script": "05_neural_ode.py",
+        "status": "success",
+        "elapsed_s": 5639.5
+      },
+      {
+        "script": "06_compare_methods.py",
+        "status": "success",
+        "elapsed_s": 6.4
+      }
+    ],
+    "figures_dir": "experiments/heat/figures_rerun_paper_v3",
+    "comparison_dir": "experiments/heat/results/comparison_rerun_paper_v3"
+  },
+  {
+    "pde": "tumor",
+    "tag": "paper_v3",
+    "results": [
+      {
+        "script": "04_unified.py",
+        "status": "success",
+        "elapsed_s": 101.7
+      },
+      {
+        "script": "04_conditional_integral.py",
+        "status": "success",
+        "elapsed_s": 189.0
+      },
+      {
+        "script": "05_neural_ode.py",
+        "status": "success",
+        "elapsed_s": 3541.9
+      },
+      {
+        "script": "06_compare_methods.py",
+        "status": "success",
+        "elapsed_s": 2232.6
+      }
+    ],
+    "figures_dir": "experiments/tumor/figures_rerun_paper_v3",
+    "comparison_dir": "experiments/tumor/results/comparison_rerun_paper_v3"
+  },
+  {
+    "pde": "burgers_2d",
+    "tag": "paper_v3",
+    "results": [
+      {
+        "script": "04_unified.py",
+        "status": "success",
+        "elapsed_s": 18.0
+      },
+      {
+        "script": "04_conditional_integral.py",
+        "status": "success",
+        "elapsed_s": 30.8
+      },
+      {
+        "script": "05_neural_ode.py",
+        "status": "success",
+        "elapsed_s": 73.3
+      },
+      {
+        "script": "06_compare_methods.py",
+        "status": "success",
+        "elapsed_s": 4.1
+      }
+    ],
+    "figures_dir": "experiments/burgers_2d/figures_rerun_paper_v3",
+    "comparison_dir": "experiments/burgers_2d/results/comparison_rerun_paper_v3"
+  }
+]

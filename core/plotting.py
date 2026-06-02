@@ -1262,6 +1262,7 @@ def plot_full_order_error(
     training_span: Tuple[float, float],
     figsize: Optional[Tuple[float, float]] = None,
     error_type: str = 'relative',
+    suptitle: Optional[str] = None,
 ):
     """
     Plot full order prediction error over time, comparing ROM predictions to projection error.
@@ -1372,6 +1373,129 @@ def plot_full_order_error(
     ax_diff.legend(loc='upper left', fontsize=9)
     ax_diff.set_yscale('log')
 
-    plt.tight_layout()
+    if suptitle is not None:
+        fig.suptitle(suptitle, fontsize=14, y=0.995)
+        fig.tight_layout()
+        fig.subplots_adjust(top=0.88)
+    else:
+        fig.tight_layout()
 
     return fig, axes
+
+
+def save_metrics_table(methods_data, title, png_path, csv_path=None):
+    """
+    Render an ML-paper-style metrics table for method comparison and save it
+    as a PNG (and CSV).  `methods_data` is a list of dicts with keys
+    `label`, `train_error`, `pred_error`, `ci_coverage`, `ci_width`, `runtime`.
+    Train/Pred/CI are stored as fractions in [0, 1].
+    """
+    import csv
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    cols = ["Method", "Train Rel L2", "Pred Rel L2",
+            "CI Cov (%)", "CI Width", "Runtime (s)"]
+    rows = []
+    for md in methods_data:
+        ci_cov = md.get("ci_coverage", float("nan"))
+        ci_w = md.get("ci_width", float("nan"))
+        rows.append([
+            md["label"],
+            f"{md['train_error']:.4f}",
+            f"{md['pred_error']:.4f}",
+            f"{ci_cov * 100:.1f}" if not np.isnan(ci_cov) else "n/a",
+            f"{ci_w:.4g}" if not np.isnan(ci_w) else "n/a",
+            f"{md['runtime']:.1f}",
+        ])
+
+    os.makedirs(os.path.dirname(png_path), exist_ok=True)
+
+    if csv_path is None:
+        csv_path = os.path.splitext(png_path)[0] + ".csv"
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(cols)
+        w.writerows(rows)
+
+    n_rows = len(rows)
+    fig_h = 1.2 + 0.45 * max(n_rows, 1)
+    fig, ax = plt.subplots(figsize=(10, fig_h))
+    ax.axis("off")
+    tbl = ax.table(cellText=rows, colLabels=cols, loc="center",
+                   cellLoc="center", colLoc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    tbl.scale(1.0, 1.4)
+
+    for j in range(len(cols)):
+        tbl[(0, j)].set_facecolor("#444444")
+        tbl[(0, j)].set_text_props(color="white", fontweight="bold")
+    for i in range(1, n_rows + 1):
+        face = "#f4f4f4" if i % 2 == 0 else "#ffffff"
+        for j in range(len(cols)):
+            tbl[(i, j)].set_facecolor(face)
+
+    ax.set_title(title, fontsize=12, fontweight="bold", pad=10)
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return png_path, csv_path
+
+
+# =============================================================================
+# Plot data snapshot/replot helpers
+# =============================================================================
+def _sanitize_for_pickle(obj):
+    """Recursively keep only picklable parts of obj. Converts jax arrays to numpy."""
+    import pickle
+    # Convert JAX arrays to numpy for portability
+    try:
+        import jax.numpy as _jnp
+        if isinstance(obj, _jnp.ndarray):
+            return np.asarray(obj)
+    except Exception:
+        pass
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            try:
+                pickle.dumps(v)
+                out[k] = v
+            except Exception:
+                try:
+                    cleaned = _sanitize_for_pickle(v)
+                    pickle.dumps(cleaned)
+                    out[k] = cleaned
+                except Exception:
+                    print(f"    ⚠ snapshot: skipping unpicklable key '{k}' ({type(v).__name__})")
+        return out
+    if isinstance(obj, list):
+        return [_sanitize_for_pickle(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_sanitize_for_pickle(v) for v in obj)
+    try:
+        import pickle
+        pickle.dumps(obj)
+        return obj
+    except Exception:
+        return None
+
+
+def save_plot_data(data, path):
+    """Save a result dict to a pickle for later replotting. Best-effort: unpicklable items are skipped."""
+    import pickle, os as _os
+    _os.makedirs(_os.path.dirname(path), exist_ok=True)
+    sanitized = _sanitize_for_pickle(data)
+    with open(path, 'wb') as f:
+        pickle.dump(sanitized, f)
+    print(f"  💾 Snapshot: {path}")
+    return path
+
+
+def load_plot_data(path):
+    """Load a previously-saved plot data pickle."""
+    import pickle
+    with open(path, 'rb') as f:
+        return pickle.load(f)

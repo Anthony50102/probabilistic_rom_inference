@@ -160,7 +160,7 @@ def run_experiment():
     full_time = config.time_domain
 
     print(f"\n{'='*70}")
-    print(f"  Parametric MLP — {len(config.TRAINING_MUS)} training μ's, "
+    print(f"  Parametric Neural ODE — {len(config.TRAINING_MUS)} training μ's, "
           f"test μ={config.TEST_MU}")
     print(f"  samples={NUM_SAMPLES} noise={NOISE_LEVEL:.0%} "
           f"NUM_MODES={num_modes} ensemble={p['ENSEMBLE_SIZE']}")
@@ -315,7 +315,7 @@ def plot_results(result, save_dir=None):
             ax[i].axvspan(*training_span, color='gray', alpha=0.10)
             ax[i].plot(t_pred, ta[i], color='tab:gray', lw=2, label='FOM (test μ)')
             ax[i].plot(t_pred, rom_med[i], color='tab:orange', ls='--', lw=2,
-                       label='MLP median')
+                       label='Neural ODE median')
             ax[i].fill_between(t_pred, q05[i], q95[i], color='tab:orange',
                                alpha=0.15, label='Ensemble 5–95%')
             ax[i].axvline(training_span[1], color='k', ls=':', lw=0.8, alpha=0.5)
@@ -323,7 +323,7 @@ def plot_results(result, save_dir=None):
             if i == 0:
                 ax[i].legend(loc='upper right', fontsize=9)
         ax[-1].set_xlabel('Time')
-        fig.suptitle(f'Parametric MLP @ test μ={result["test_mu"]} '
+        fig.suptitle(f'Parametric Neural ODE @ test μ={result["test_mu"]} '
                      f'({result["n_stable"]}/{result["n_total"]} stable)',
                      fontsize=13)
         fig.tight_layout()
@@ -403,9 +403,9 @@ def plot_results(result, save_dir=None):
                 if col > 0:
                     axes[row, col].set_yticklabels([])
         axes[0, 0].set_ylabel('True', fontsize=12)
-        axes[1, 0].set_ylabel('MLP median', fontsize=12)
+        axes[1, 0].set_ylabel('Neural ODE median', fontsize=12)
         axes[2, 0].set_ylabel('Ensemble width\n(q95 − q05)', fontsize=12)
-        fig.suptitle(f'2D Field — MLP — test μ={result["test_mu"]}', fontsize=14)
+        fig.suptitle(f'2D Field — Neural ODE — test μ={result["test_mu"]}', fontsize=14)
         fig.tight_layout()
         path = os.path.join(save_dir, f"{prefix}_2d_contours.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
@@ -453,7 +453,7 @@ def save_predictions(result, save_dir=None):
 
 def main():
     print("=" * 70)
-    print("08 — Parametric MLP Ensemble — 2D Diffusion-Reaction")
+    print("08 — Parametric Neural ODE Ensemble — 2D Diffusion-Reaction")
     print("=" * 70)
     r = run_experiment()
     plot_results(r)

@@ -60,7 +60,7 @@ MODEL_PARAMS = dict(
     DERIV_WEIGHT=1.0,
     WEAKFORM_WEIGHT=2.0,
     MLL_WEIGHT=0.1,
-    SIGMA_O=3.0,
+    SIGMA_O=0.5,
     WINDOW_SIZE=20,
     BUMP_P=6,
     NUM_TEST_FUNCS=None,
@@ -92,8 +92,20 @@ def build_model(
     deriv_weight, weakform_weight, mll_weight,
     sigma_O, bump_p, num_test_funcs, bump_radius_frac,
     gp_prior_scale=0.1,
+    O_prior=None,
+    sigma_O_vec=None,
 ):
-    """Build multi-IC marginalised-O + weak-form Bayesian model."""
+    """Build multi-IC marginalised-O + weak-form Bayesian model.
+
+    If ``O_prior`` is provided (shape (num_modes, m)), the operator prior is
+    O ~ N(O_prior, sigma_O^2 I) instead of zero-mean. Centering on a
+    pre-computed stable OpInf solution prevents the marginal likelihood from
+    selecting trajectory-divergent operators.
+
+    If ``sigma_O_vec`` is provided (length m), it overrides the scalar
+    ``sigma_O`` with a per-entry prior std — useful for tightening on
+    structural-zero blocks (e.g. quadratic terms in a linear PDE).
+    """
 
     # ── Per-IC precompute ────────────────────────────────────────────────
     all_ic_data = []
@@ -215,23 +227,45 @@ def build_model(
     inv_sigma_O2_default = 1.0 / (sigma_O ** 2)
     log_sigma_O2_default = 2.0 * jnp.log(sigma_O)
 
-    def _per_mode_evidence(A, y_i, prec_i, m, inv_sigma_O2, log_sigma_O2):
+    if O_prior is None:
+        O_prior_jnp = jnp.zeros((num_modes, rom.model.operator_matrix.shape[1]))
+    else:
+        O_prior_jnp = jnp.asarray(O_prior)
+
+    if sigma_O_vec is None:
+        inv_sigma_O2_diag = None
+        log_sigma_O2_sum = None
+    else:
+        _v = jnp.asarray(sigma_O_vec)
+        inv_sigma_O2_diag = 1.0 / (_v ** 2)
+        log_sigma_O2_sum = 2.0 * jnp.sum(jnp.log(_v))
+
+    def _per_mode_evidence(A, y_i, prec_i, m, inv_sigma_O2, log_sigma_O2,
+                           O_prior_i):
         Aw = A * prec_i[:, None]
         M_i = A.T @ Aw
         M_i = 0.5 * (M_i + M_i.T)
-        ridge = (inv_sigma_O2 + LAMBDA_JITTER * jnp.maximum(
-            jnp.trace(M_i) / m, 1.0))
-        Lambda_i = M_i + ridge * jnp.eye(m)
+        if inv_sigma_O2_diag is None:
+            ridge = (inv_sigma_O2 + LAMBDA_JITTER * jnp.maximum(
+                jnp.trace(M_i) / m, 1.0))
+            Lambda_i = M_i + ridge * jnp.eye(m)
+            log_det_prior = m * log_sigma_O2
+        else:
+            jitter = LAMBDA_JITTER * jnp.maximum(jnp.trace(M_i) / m, 1.0)
+            Lambda_i = M_i + jnp.diag(inv_sigma_O2_diag) + jitter * jnp.eye(m)
+            log_det_prior = log_sigma_O2_sum
         L_i = jnp.linalg.cholesky(Lambda_i)
-        b_i = A.T @ (prec_i * y_i)
-        mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_i)
+        y_resid = y_i - A @ O_prior_i
+        b_i = A.T @ (prec_i * y_resid)
+        mu_centered = jax.scipy.linalg.cho_solve((L_i, True), b_i)
+        mu_i = mu_centered + O_prior_i
         log_det_Lambda = 2.0 * jnp.sum(jnp.log(jnp.diag(L_i)))
-        quad_y = jnp.sum(prec_i * y_i ** 2)
-        quad_mu = jnp.dot(mu_i, b_i)
+        quad_y = jnp.sum(prec_i * y_resid ** 2)
+        quad_mu = jnp.dot(mu_centered, b_i)
         log_det_Sigma = -jnp.sum(jnp.log(prec_i + 1e-30))
         N_i = prec_i.shape[0]
         log_p = -0.5 * ((quad_y - quad_mu) + log_det_Sigma +
-                        m * log_sigma_O2 + log_det_Lambda +
+                        log_det_prior + log_det_Lambda +
                         N_i * jnp.log(2.0 * jnp.pi))
         return log_p, mu_i, L_i
 
@@ -332,7 +366,8 @@ def build_model(
         for i in range(num_modes):
             log_p_i, _, _ = _per_mode_evidence(
                 A, y_per_mode[i], prec_per_mode[i], m,
-                inv_sigma_O2_default, log_sigma_O2_default)
+                inv_sigma_O2_default, log_sigma_O2_default,
+                O_prior_jnp[i])
             total_evidence = total_evidence + log_p_i
         numpyro.factor("marg_O_evidence", total_evidence)
 
@@ -350,23 +385,30 @@ def build_model(
         _, A, y_per_mode, prec_per_mode, _ = _build_AyP_all(theta)
         m = A.shape[1]
 
-        def _one(y_i, prec_i):
+        def _one(y_i, prec_i, O_prior_i):
             Aw = A * prec_i[:, None]
             M_i = A.T @ Aw
             M_i = 0.5 * (M_i + M_i.T)
-            ridge = (inv_sO2 + LAMBDA_JITTER *
-                     jnp.maximum(jnp.trace(M_i) / m, 1.0))
-            Lambda_i = M_i + ridge * jnp.eye(m)
+            if inv_sigma_O2_diag is None:
+                ridge = (inv_sO2 + LAMBDA_JITTER *
+                         jnp.maximum(jnp.trace(M_i) / m, 1.0))
+                Lambda_i = M_i + ridge * jnp.eye(m)
+            else:
+                jitter = LAMBDA_JITTER * jnp.maximum(jnp.trace(M_i) / m, 1.0)
+                Lambda_i = (M_i + jnp.diag(inv_sigma_O2_diag) +
+                            jitter * jnp.eye(m))
             L_i = jnp.linalg.cholesky(Lambda_i)
-            b_i = A.T @ (prec_i * y_i)
-            mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_i)
+            y_resid = y_i - A @ O_prior_i
+            b_i = A.T @ (prec_i * y_resid)
+            mu_centered = jax.scipy.linalg.cho_solve((L_i, True), b_i)
+            mu_i = mu_centered + O_prior_i
             C_i = jax.scipy.linalg.solve_triangular(
                 L_i, jnp.eye(m), lower=True).T
             return mu_i, C_i
 
         mu_all, C_all = [], []
         for i in range(num_modes):
-            mi, Ci = _one(y_per_mode[i], prec_per_mode[i])
+            mi, Ci = _one(y_per_mode[i], prec_per_mode[i], O_prior_jnp[i])
             mu_all.append(mi)
             C_all.append(Ci)
         return jnp.stack(mu_all), jnp.stack(C_all)
@@ -432,10 +474,98 @@ def run_experiment(schema, p=None):
         in_func = input_func_factory(train_params[ic])
         all_inputs_eval.append(in_func(t_eval_ic))
 
-    # No GP-MLE warm-start: spectrum-anchored priors used inside build_model
-    all_mle_Ls = [None] * nics
-    all_mle_Vs = [None] * nics
-    all_mle_Ns = [None] * nics
+    # ── OpInf prior center via per-IC MLE GP fit + LS regression ─────────
+    # The weak-form likelihood is locally satisfied by trajectory-divergent
+    # operators (heat is stiff & decay-dominated). Centering the operator
+    # prior on a stable OpInf solution prevents this failure mode.
+    print("  Computing OpInf prior center via MLE GP fits...")
+    from core import compute_gp_derivatives, rbf_eval
+    all_mle_Ls, all_mle_Vs, all_mle_Ns = [], [], []
+    for ic in range(nics):
+        Ls, Vs, Ns, _ = fit_gp_hyperparameters_mle(
+            all_time_sampled[ic], all_snapshots_comp[ic], verbose=False)
+        all_mle_Ls.append(Ls)
+        all_mle_Vs.append(Vs)
+        all_mle_Ns.append(Ns)
+
+    D_blocks, dXdt_blocks = [], []
+    for ic in range(nics):
+        t_eval_ic = np.linspace(
+            float(all_time_sampled[ic][0]),
+            float(all_time_sampled[ic][-1]), neval)
+        X_mle = np.zeros((nmodes, neval))
+        for j in range(nmodes):
+            ell = all_mle_Ls[ic][j]
+            sig2 = all_mle_Vs[ic][j]
+            nu = all_mle_Ns[ic][j]
+            K = rbf_eval(ell, sig2, all_time_sampled[ic],
+                         all_time_sampled[ic]) \
+                + (nu + 1e-5) * np.eye(len(all_time_sampled[ic]))
+            Ks = rbf_eval(ell, sig2, t_eval_ic, all_time_sampled[ic])
+            X_mle[j] = Ks @ np.linalg.solve(K, all_snapshots_comp[ic][j])
+        mu_z_ic, _ = compute_gp_derivatives(
+            all_mle_Ls[ic], all_mle_Vs[ic],
+            all_time_sampled[ic], t_eval_ic,
+            all_snapshots_comp[ic], Ns=all_mle_Ns[ic])
+        in_func = input_func_factory(train_params[ic])
+        inputs_ic = in_func(t_eval_ic)
+        D_ic = np.array(rom.model._assemble_data_matrix(
+            jnp.array(X_mle), inputs=jnp.array(inputs_ic)))
+        D_blocks.append(D_ic)
+        dXdt_blocks.append(np.array(mu_z_ic).T)
+
+    D_all = np.vstack(D_blocks)
+    dXdt_all = np.vstack(dXdt_blocks)
+    n_cols = D_all.shape[1]
+    # cAHBN block layout: c[0:1], A[1:1+r], H[1+r:1+r+r(r+1)/2],
+    # B[..:..+m_in], N[last r*m_in cols]
+    H_start = 1 + nmodes
+    H_end = H_start + nmodes * (nmodes + 1) // 2
+    n_input = (n_cols - H_end) // (nmodes + 1)
+    B_start, B_end = H_end, H_end + n_input
+    N_start, N_end = B_end, n_cols
+
+    # Heat is a *linear* PDE: H (quadratic) and N (bilinear) blocks are 0 in
+    # the true operator. LS regression on GP-smoothed derivatives overfits
+    # them, yielding stable A but unstable trajectories. We penalise them
+    # heavily in the LS solve and force them small in the SVI prior.
+    ridge_diag = np.ones(n_cols)
+    ridge_diag[H_start:H_end] = 1e3
+    ridge_diag[N_start:N_end] = 1e3
+    O_ls = np.linalg.solve(
+        D_all.T @ D_all + np.diag(ridge_diag),
+        D_all.T @ dXdt_all).T
+    print(f"  OpInf prior O_ls: ‖O_ls‖={np.linalg.norm(O_ls):.2f}, "
+          f"shape={O_ls.shape}  "
+          f"‖H‖={np.linalg.norm(O_ls[:, H_start:H_end]):.3f}  "
+          f"‖N‖={np.linalg.norm(O_ls[:, N_start:N_end]):.3f}")
+    _A_ls = O_ls[:, 1:1+nmodes]
+    _eigs = np.linalg.eigvals(_A_ls)
+    print(f"  O_ls A-block: ‖A‖={np.linalg.norm(_A_ls):.2f}  "
+          f"eig(A) real ∈ [{_eigs.real.min():.3f}, {_eigs.real.max():.3f}]")
+    print(f"  O_ls ‖c‖={np.linalg.norm(O_ls[:, 0:1]):.2f}  "
+          f"‖B‖={np.linalg.norm(O_ls[:, B_start:B_end]):.2f}")
+
+    # ── Force A-block strictly stable ───────────────────────────────────
+    # Heat is dissipative: eigenvalues of A should all be negative. GP-
+    # smoothed LS regression yields a marginal A (max eig ≈ 0). Shift the
+    # A diagonal so max real eigenvalue ≤ -DECAY_MARGIN.
+    DECAY_MARGIN = 0.5
+    max_eig = float(_eigs.real.max())
+    if max_eig > -DECAY_MARGIN:
+        shift = max_eig + DECAY_MARGIN
+        O_ls[:, 1:1+nmodes] = _A_ls - shift * np.eye(nmodes)
+        _eigs2 = np.linalg.eigvals(O_ls[:, 1:1+nmodes])
+        print(f"  Stability shift applied: −{shift:.3f}·I  →  "
+              f"eig(A) real ∈ [{_eigs2.real.min():.3f}, "
+              f"{_eigs2.real.max():.3f}]")
+
+    # Per-entry prior std vector: tight on H/N (linear PDE), moderate on
+    # A (so SVI doesn't push it back into instability), looser on c/B.
+    sigma_O_vec = np.full(n_cols, float(p['SIGMA_O']))
+    sigma_O_vec[1:1+nmodes] = 0.1            # A block — tight around stable shift
+    sigma_O_vec[H_start:H_end] = 0.02         # H block — heat is linear
+    sigma_O_vec[N_start:N_end] = 0.02         # N block — heat is linear
 
     # ── Build model ──────────────────────────────────────────────────────
     model, posterior_O_fn = build_model(
@@ -451,6 +581,8 @@ def run_experiment(schema, p=None):
         bump_p=p['BUMP_P'], num_test_funcs=p['NUM_TEST_FUNCS'],
         bump_radius_frac=p['BUMP_RADIUS_FRAC'],
         gp_prior_scale=p['GP_PRIOR_SCALE'],
+        O_prior=O_ls,
+        sigma_O_vec=sigma_O_vec,
     )
 
     # ── Inference: SVI (default) or NUTS ─────────────────────────────────
@@ -576,7 +708,8 @@ def run_experiment(schema, p=None):
     print(f"\n  Results ({runtime:.0f}s):")
     for ic_idx, (params_ic, true_c) in enumerate(zip(eval_params, eval_true_comp)):
         q0 = eval_snaps_comp[ic_idx][:, 0]
-        ic_input_func = input_func_factory(params_ic)
+        _ic_input_func = input_func_factory(params_ic)
+        ic_input_func = lambda t, f=_ic_input_func: np.asarray(f(t))
         ic_solves = _generate_rom_solves(
             operator_samples=O_samples, rom=rom, q0=q0,
             time_eval=t_pred, input_func=ic_input_func,

@@ -400,6 +400,13 @@ def plot_spatial_comparison(result, save_dir=None):
 
     schema = result['schema']
     prefix = f"05_{schema['name']}"
+
+    # ── Snapshot result for replotting ───────────────────────────────
+    try:
+        from core.plotting import save_plot_data
+        save_plot_data(result, os.path.join(save_dir, "plot_data", f"{prefix}.pkl"))
+    except Exception as _e:
+        print(f"  ⚠ snapshot failed: {_e}")
     basis = result['basis']
     t_full = result['t_full']
     t_pred = result['t_pred']
@@ -421,7 +428,8 @@ def plot_spatial_comparison(result, save_dir=None):
 
     timepoints_to_show = [5, 15, 30, 45, 60, 90]
     n_times = len(timepoints_to_show)
-    fig, axes = plt.subplots(3, n_times, figsize=(3.5 * n_times, 10))
+    fig, axes = plt.subplots(3, n_times, figsize=(3.5 * n_times, 10),
+                             constrained_layout=True)
 
     for col, t_target in enumerate(timepoints_to_show):
         idx_full = np.argmin(np.abs(t_full - t_target))
@@ -451,15 +459,14 @@ def plot_spatial_comparison(result, save_dir=None):
         if col == 0:
             axes[0, col].set_ylabel('FOM Truth', fontsize=12, fontweight='bold')
             axes[1, col].set_ylabel('Neural ODE', fontsize=12, fontweight='bold')
-            axes[2, col].set_ylabel('|Error|', fontsize=12, fontweight='bold')
+            axes[2, col].set_ylabel('Cellularity |Δ|', fontsize=12, fontweight='bold')
 
     fig.colorbar(im0, ax=axes[0, :].tolist(), shrink=0.8, label='Cellularity')
     fig.colorbar(im1, ax=axes[1, :].tolist(), shrink=0.8, label='Cellularity')
-    fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.8, label='|Error|')
+    fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.8, label='Cellularity |Δ|')
     k_t, d_t = TEST_PARAMS
     fig.suptitle(f'Test IC (k={k_t:.3f}, d={d_t:.3f}): FOM vs Neural ODE (axial)',
-                 fontsize=14, y=1.02)
-    fig.tight_layout()
+                 fontsize=14)
     path = os.path.join(save_dir, f"{prefix}_spatial_comparison.png")
     fig.savefig(path, dpi=200, bbox_inches='tight')
     print(f"  📊 Saved: {path}")
@@ -470,9 +477,9 @@ def plot_spatial_comparison(result, save_dir=None):
 # Plotting — Tumor volume (all ICs)
 # =============================================================================
 def plot_tumor_volume(result, save_dir=None):
-    """Plot total tumor burden for all ICs: FOM truth vs Neural ODE ensemble.
+    """Plot total tumor burden for the **test IC**: FOM truth vs Neural ODE.
 
-    Uses reduced-space dot product to avoid decompressing full 646K DOF fields.
+    Single-IC view matching the 04 (Bayesian OpInf) plot for direct comparison.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -490,52 +497,42 @@ def plot_tumor_volume(result, save_dir=None):
     all_rom_solves = result['all_rom_solves']
     all_true_states = result['all_true_states']
     all_foms = result['all_foms']
-    eval_labels = result['eval_labels']
     num_ics = len(all_rom_solves)
+    test_idx = num_ics - 1
 
-    # Precompute efficient volume projection: vol = vol_proj @ q + shift_vol
-    V = basis.entries   # (n_dof, r)
+    # Efficient reduced-space volume projection
+    V = basis.entries
     ones = np.ones(V.shape[0])
-    vol_proj = V.T @ ones          # (r,)
-    shift_vol = ones @ basis.shift_  # scalar
-
-    train_colors = plt.cm.tab10(np.linspace(0, 0.5, num_ics - 1))
-    test_color = 'tab:red'
+    vol_proj = V.T @ ones
+    shift_vol = ones @ basis.shift_
+    fom = all_foms[test_idx]
+    voxel_vol = float(np.prod(fom.spacing))
+    true_states = all_true_states[test_idx]
+    ic_solves = all_rom_solves[test_idx]
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    for ic_idx in range(num_ics):
-        fom = all_foms[ic_idx]
-        true_states = all_true_states[ic_idx]
-        voxel_vol = float(np.prod(fom.spacing))
-        is_test = (ic_idx == num_ics - 1)
-        color = test_color if is_test else train_colors[ic_idx]
-        lw_truth = 2.5 if is_test else 1.5
-        alpha_truth = 1.0 if is_test else 0.6
+    fom_vol = np.array([true_states[:, i].sum() * voxel_vol
+                        for i in range(true_states.shape[1])])
+    ax.plot(t_full, fom_vol, color='tab:gray', lw=2.5, label='FOM Truth')
 
-        # FOM truth volume
-        fom_vol = np.array([true_states[:, i].sum() * voxel_vol
-                            for i in range(true_states.shape[1])])
-        label_truth = eval_labels[ic_idx]
-        ax.plot(t_full, fom_vol, color=color, lw=lw_truth, alpha=alpha_truth,
-                label=label_truth)
+    if len(ic_solves) > 0:
+        ens_vols = np.array([vol_proj @ ic_solves[s] + shift_vol
+                             for s in range(len(ic_solves))]) * voxel_vol
+        ens_med = np.median(ens_vols, axis=0)
+        ens_lo = np.percentile(ens_vols, 5, axis=0)
+        ens_hi = np.percentile(ens_vols, 95, axis=0)
+        ax.plot(t_pred, ens_med, color='tab:orange', lw=2, ls='--',
+                label='Neural ODE median')
+        ax.fill_between(t_pred, ens_lo, ens_hi, color='tab:orange', alpha=0.15,
+                        label='Neural ODE 90% CI')
 
-        # ROM ensemble volume
-        ic_solves = all_rom_solves[ic_idx]
-        if len(ic_solves) > 0:
-            ens_vols = np.array([vol_proj @ ic_solves[s] + shift_vol
-                                 for s in range(len(ic_solves))]) * voxel_vol
-            ens_med = np.median(ens_vols, axis=0)
-            ens_lo = np.percentile(ens_vols, 5, axis=0)
-            ens_hi = np.percentile(ens_vols, 95, axis=0)
-            ax.plot(t_pred, ens_med, color=color, ls='--', lw=1.5, alpha=0.8)
-            ax.fill_between(t_pred, ens_lo, ens_hi, color=color, alpha=0.10)
-
-    ax.axvline(TRAINING_SPAN[1], color='gray', ls='--', alpha=0.5, label='Train/Predict')
+    ax.axvline(TRAINING_SPAN[1], color='gray', ls='--', alpha=0.5,
+               label='Train/Predict')
     ax.set_xlabel('Time (days)')
     ax.set_ylabel('Total Tumor Burden (mm³)')
-    ax.set_title('Tumor Volume: All ICs (solid=FOM, dashed=NeuralODE)')
-    ax.legend(fontsize=7, loc='upper left')
+    ax.set_title(f'Tumor Volume Over Time (test IC) — {schema["label"]}')
+    ax.legend(fontsize=9)
     fig.tight_layout()
     path = os.path.join(save_dir, f"{prefix}_tumor_volume.png")
     fig.savefig(path, dpi=200, bbox_inches='tight')
@@ -632,8 +629,7 @@ def plot_results(result, save_dir=None):
                 if row == 0:
                     ax.set_title(f'Mode {col + 1}')
                 if col == 0:
-                    ax.set_ylabel(f'{label}\n({n_stable}/{max_samp} stable)',
-                                  fontsize=8)
+                    ax.set_ylabel(label, fontsize=8)
                 if row == n_ics_total - 1:
                     ax.set_xlabel('Time (days)')
 
@@ -641,10 +637,11 @@ def plot_results(result, save_dir=None):
         if handles:
             fig.legend(handles, labels_leg, loc='upper center',
                        ncol=len(handles), fontsize=9,
-                       bbox_to_anchor=(0.5, 1.02))
+                       bbox_to_anchor=(0.5, 0.95))
 
-        fig.suptitle(f"Neural ODE — {schema['label']}", fontsize=14, y=1.05)
+        fig.suptitle(f"Neural ODE — {schema['label']}", fontsize=14, y=0.995)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.90)
         path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -724,8 +721,8 @@ def plot_results(result, save_dir=None):
                 time_domain_eval=t_pred,
                 training_span=training_span,
                 error_type='relative',
+                suptitle=f'Full-Order Error (IC 0) — {schema["label"]}',
             )
-            fig_foe.suptitle(f'Full-Order Error (IC 0) — {schema["label"]}', fontsize=14)
             path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
             fig_foe.savefig(path, dpi=200, bbox_inches='tight')
             print(f"  📊 Saved: {path}")
@@ -857,5 +854,18 @@ def main(schema_names=None):
 
 
 if __name__ == "__main__":
-    schema_names = sys.argv[1:] if len(sys.argv) > 1 else None
-    main(schema_names)
+    args = sys.argv[1:]
+    if args and args[0] == "--replot":
+        # Replot from a saved snapshot: --replot <path/to/plot_data/PREFIX.pkl> [save_dir]
+        from core.plotting import load_plot_data
+        pkl_path = args[1]
+        result = load_plot_data(pkl_path)
+        if len(args) > 2:
+            save_dir = args[2]
+        else:
+            # plot_data/ lives inside save_dir
+            save_dir = os.path.dirname(os.path.dirname(os.path.abspath(pkl_path)))
+        plot_results(result, save_dir=save_dir)
+    else:
+        schema_names = args if args else None
+        main(schema_names)

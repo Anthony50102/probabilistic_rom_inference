@@ -489,6 +489,13 @@ def plot_results(result, save_dir=None):
 
     schema = result['schema']
     prefix = f"04_{schema['name']}"
+
+    # ── Snapshot result for replotting ───────────────────────────────
+    try:
+        from core.plotting import save_plot_data
+        save_plot_data(result, os.path.join(save_dir, "plot_data", f"{prefix}.pkl"))
+    except Exception as _e:
+        print(f"  ⚠ snapshot failed: {_e}")
     samples = result['samples']
     losses = result['losses']
     rom_solves = result['rom_solves']
@@ -536,12 +543,15 @@ def plot_results(result, save_dir=None):
             ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
             pad = max(abs(ymax - ymin) * 0.3, 1e-6)
             ax[i].set_ylim(ymin - pad, ymax + pad)
-            if i == 0:
-                ax[i].legend(loc='upper right', fontsize=9)
         ax[-1].set_xlabel('Time (days)')
-        fig.suptitle(f'Conditional Integral — {schema["label"]}  '
-                     f'({n_stable}/{n_total} stable)', fontsize=14)
+        handles, labels = ax[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc='upper center',
+                       ncol=len(handles), fontsize=10,
+                       bbox_to_anchor=(0.5, 0.95))
+        fig.suptitle(f'Bayesian OpInf — {schema["label"]}', fontsize=14, y=0.995)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.90)
         path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -591,8 +601,8 @@ def plot_results(result, save_dir=None):
             time_domain_eval=t_pred,
             training_span=training_span,
             error_type='relative',
+            suptitle=f'Full-Order Error — {schema["label"]}',
         )
-        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
         path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
         fig_foe.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -631,7 +641,8 @@ def plot_spatial_comparison(result, save_dir, timepoints_to_show=None):
         timepoints_to_show = [5, 15, 30, 45, 60, 90]
 
     n_times = len(timepoints_to_show)
-    fig, axes = plt.subplots(3, n_times, figsize=(3.5 * n_times, 10))
+    fig, axes = plt.subplots(3, n_times, figsize=(3.5 * n_times, 10),
+                             constrained_layout=True)
 
     for col, t_target in enumerate(timepoints_to_show):
         idx_full = np.argmin(np.abs(t_full - t_target))
@@ -661,14 +672,13 @@ def plot_spatial_comparison(result, save_dir, timepoints_to_show=None):
         if col == 0:
             axes[0, col].set_ylabel('FOM Truth', fontsize=12, fontweight='bold')
             axes[1, col].set_ylabel('Bayesian OpInf', fontsize=12, fontweight='bold')
-            axes[2, col].set_ylabel('|Error|', fontsize=12, fontweight='bold')
+            axes[2, col].set_ylabel('Cellularity |Δ|', fontsize=12, fontweight='bold')
 
     fig.colorbar(im0, ax=axes[0, :].tolist(), shrink=0.8, label='Cellularity')
     fig.colorbar(im1, ax=axes[1, :].tolist(), shrink=0.8, label='Cellularity')
-    fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.8, label='|Error|')
-    fig.suptitle(f'Tumor Growth: FOM vs ROM (axial slice) — {schema["label"]}',
-                 fontsize=14, y=1.02)
-    fig.tight_layout()
+    fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.8, label='Cellularity |Δ|')
+    fig.suptitle(f'Tumor Growth: FOM vs Bayesian OpInf (axial slice) — {schema["label"]}',
+                 fontsize=14)
     path = os.path.join(save_dir, f"{prefix}_spatial_comparison.png")
     fig.savefig(path, dpi=200, bbox_inches='tight')
     print(f"  📊 Saved: {path}")
@@ -717,9 +727,9 @@ def plot_tumor_volume(result, save_dir):
         rom_lo = np.percentile(rom_vols, 5, axis=0)
         rom_hi = np.percentile(rom_vols, 95, axis=0)
         ax.plot(t_pred, rom_med, color='tab:purple', lw=2, ls='--',
-                label='ROM median')
+                label='Bayesian OpInf median')
         ax.fill_between(t_pred, rom_lo, rom_hi, color='tab:purple', alpha=0.15,
-                        label='ROM 90% CI')
+                        label='Bayesian OpInf 90% CI')
 
     ax.axvline(training_span[1], color='gray', ls='--', alpha=0.5,
                label='Train/Predict')
@@ -809,5 +819,18 @@ def main(schema_names=None):
 
 
 if __name__ == "__main__":
-    schema_names = sys.argv[1:] if len(sys.argv) > 1 else None
-    main(schema_names)
+    args = sys.argv[1:]
+    if args and args[0] == "--replot":
+        # Replot from a saved snapshot: --replot <path/to/plot_data/PREFIX.pkl> [save_dir]
+        from core.plotting import load_plot_data
+        pkl_path = args[1]
+        result = load_plot_data(pkl_path)
+        if len(args) > 2:
+            save_dir = args[2]
+        else:
+            # plot_data/ lives inside save_dir
+            save_dir = os.path.dirname(os.path.dirname(os.path.abspath(pkl_path)))
+        plot_results(result, save_dir=save_dir)
+    else:
+        schema_names = args if args else None
+        main(schema_names)

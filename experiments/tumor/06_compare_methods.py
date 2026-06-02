@@ -30,6 +30,7 @@ from scipy.interpolate import interp1d
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
 from config import Basis, load_fom_data
+from core.plotting import save_metrics_table
 
 # ── Constants ────────────────────────────────────────────────────────
 SCHEMAS = [
@@ -43,20 +44,14 @@ SCHEMAS = [
 
 METHODS = [
     {
-        "name": "04_conditional_integral",
-        "label": "Conditional Integral (2-stage)",
-        "color": "tab:purple",
-        "linestyle": "--",
-    },
-    {
         "name": "04_unified",
-        "label": "Marg-O × Weak-Form",
-        "color": "tab:green",
+        "label": "Bayesian OpInf",
+        "color": "tab:purple",
         "linestyle": "-",
     },
     {
         "name": "05_neural_ode",
-        "label": "Neural ODE (baseline)",
+        "label": "Neural ODE",
         "color": "tab:orange",
         "linestyle": "-.",
     },
@@ -79,7 +74,13 @@ def load_method_data(schema_name, method):
         print(f"  ⚠ Not found: {path}")
         return None
     data = np.load(path)
-    rom_solves = data["rom_solves"]
+    if "rom_solves" in data.files:
+        rom_solves = data["rom_solves"]
+    elif "rom_solves_0" in data.files:
+        rom_solves = data["rom_solves_0"]
+    else:
+        print(f"  ⚠ No rom_solves[_0] in {path}")
+        return None
     if rom_solves.size == 0:
         print(f"  ⚠ Empty rom_solves in {path}")
         return None
@@ -198,33 +199,42 @@ def plot_error_comparison(methods_data, t_pred, training_span,
 
 
 def plot_metrics_comparison(methods_data, title_suffix, save_path):
-    """Bar chart: train error, pred error, stability."""
+    """Bar chart: relative L2 errors and CI coverage."""
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
     labels = [m["label"] for m in methods_data]
     colors = [m["color"] for m in methods_data]
     x = np.arange(len(labels))
 
-    axes[0].bar(x, [m["train_error"] for m in methods_data],
-                color=colors, alpha=0.8)
-    axes[0].set_xticks(x); axes[0].set_xticklabels(labels, rotation=20,
-                                                     ha="right", fontsize=9)
-    axes[0].set_ylabel("Relative Error"); axes[0].set_title("Training Error")
+    train_errors = [m["train_error"] for m in methods_data]
+    b = axes[0].bar(x, train_errors, color=colors, edgecolor="black", linewidth=0.5)
+    for bar, v in zip(b, train_errors):
+        axes[0].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                     f"{v:.3f}", ha="center", va="bottom", fontsize=9)
+    axes[0].set_xticks(x); axes[0].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
+    axes[0].set_ylabel("Relative L2 Error"); axes[0].set_title("Training-region Error")
 
-    axes[1].bar(x, [m["pred_error"] for m in methods_data],
-                color=colors, alpha=0.8)
-    axes[1].set_xticks(x); axes[1].set_xticklabels(labels, rotation=20,
-                                                     ha="right", fontsize=9)
-    axes[1].set_ylabel("Relative Error"); axes[1].set_title("Prediction Error")
+    pred_errors = [m["pred_error"] for m in methods_data]
+    b = axes[1].bar(x, pred_errors, color=colors, edgecolor="black", linewidth=0.5)
+    for bar, v in zip(b, pred_errors):
+        axes[1].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                     f"{v:.3f}", ha="center", va="bottom", fontsize=9)
+    axes[1].set_xticks(x); axes[1].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
+    axes[1].set_ylabel("Relative L2 Error"); axes[1].set_title("Prediction-region Error")
 
-    axes[2].bar(x, [m["stability_pct"] for m in methods_data],
-                color=colors, alpha=0.8)
-    axes[2].set_xticks(x); axes[2].set_xticklabels(labels, rotation=20,
-                                                     ha="right", fontsize=9)
-    axes[2].set_ylabel("Stability %"); axes[2].set_title("Stability")
+    ci_covs = [(m["ci_coverage"] * 100) if not np.isnan(m["ci_coverage"]) else 0.0
+               for m in methods_data]
+    b = axes[2].bar(x, ci_covs, color=colors, edgecolor="black", linewidth=0.5)
+    axes[2].axhline(90.0, color='k', linestyle='--', lw=1, alpha=0.6, label='Target 90%')
+    for bar, v in zip(b, ci_covs):
+        axes[2].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                     f"{v:.0f}%", ha="center", va="bottom", fontsize=9)
+    axes[2].set_xticks(x); axes[2].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
+    axes[2].set_ylabel("CI Coverage (%)"); axes[2].set_title("90% CI Coverage")
     axes[2].set_ylim(0, 105)
+    axes[2].legend(fontsize=8, loc='upper right')
 
-    fig.suptitle(f"Method Comparison — {title_suffix}", fontsize=13, y=1.02)
-    plt.tight_layout()
+    fig.suptitle(f"Method Comparison — {title_suffix}", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -262,6 +272,11 @@ def compare_regime(schema):
                           os.path.join(out_dir, "full_order_error_comparison.png"))
     plot_metrics_comparison(methods_data, label,
                             os.path.join(out_dir, "metrics_comparison.png"))
+    save_metrics_table(
+        methods_data,
+        title=f"Method Comparison — {label}",
+        png_path=os.path.join(out_dir, "metrics_table.png"),
+    )
     return methods_data
 
 

@@ -419,6 +419,13 @@ def plot_results(result, save_dir=None):
 
     schema = result['schema']
     prefix = f"04_{schema['name']}"
+
+    # ── Snapshot result for replotting ───────────────────────────────
+    try:
+        from core.plotting import save_plot_data
+        save_plot_data(result, os.path.join(save_dir, "plot_data", f"{prefix}.pkl"))
+    except Exception as _e:
+        print(f"  ⚠ snapshot failed: {_e}")
     samples = result['samples']
     losses = result['losses']
     rom_solves = result['rom_solves']
@@ -458,11 +465,15 @@ def plot_results(result, save_dir=None):
             ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
             pad = max(abs(ymax - ymin) * 0.3, 1e-6)
             ax[i].set_ylim(ymin - pad, ymax + pad)
-            if i == 0:
-                ax[i].legend(loc='upper right', fontsize=9)
         ax[-1].set_xlabel('Time')
-        fig.suptitle(f'Conditional Integral — {schema["label"]}  ({n_stable}/{n_total} stable)', fontsize=14)
+        handles, labels = ax[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc='upper center',
+                       ncol=len(handles), fontsize=10,
+                       bbox_to_anchor=(0.5, 1.00))
+        fig.suptitle(f'Bayesian OpInf — {schema["label"]}', fontsize=14)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.90)
         path = os.path.join(save_dir, f"{prefix}_rom_notebook.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -481,8 +492,8 @@ def plot_results(result, save_dir=None):
             time_domain_eval=t_pred,
             training_span=training_span,
             error_type='relative',
+            suptitle=f'Full-Order Error — {schema["label"]}',
         )
-        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
         path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
         fig_foe.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -526,10 +537,12 @@ def plot_results(result, save_dir=None):
 
         field_min = min(np.min(b) for b in true_blocks + rom_blocks)
         field_max = max(np.max(b) for b in true_blocks + rom_blocks)
-        field_levels = np.linspace(field_min, field_max, 30)
+        field_levels = np.linspace(field_min, field_max, 14)
+        field_ticks = np.linspace(field_min, field_max, 5)
         width_max = max(np.max(w) for w in width_blocks)
         width_max = max(width_max, 1e-12)
-        width_levels = np.linspace(0.0, width_max, 30)
+        width_levels = np.linspace(0.0, width_max, 14)
+        width_ticks = np.linspace(0.0, width_max, 5)
 
         for col, t_snap in enumerate(snapshot_times):
             im0 = axes[0, col].contourf(x, y, true_blocks[col], levels=field_levels,
@@ -549,13 +562,16 @@ def plot_results(result, save_dir=None):
         axes[1, 0].set_ylabel('ROM median', fontsize=12)
         axes[2, 0].set_ylabel('ROM width\n(q95 − q05)', fontsize=12)
 
-        fig.colorbar(im0, ax=axes[0, :].tolist(), shrink=0.85,
-                     format='%.2f', pad=0.02)
-        fig.colorbar(im1, ax=axes[1, :].tolist(), shrink=0.85,
-                     format='%.2f', pad=0.02)
-        fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.85,
-                     format='%.3f', pad=0.02)
-        fig.suptitle(f'2D Field Reconstruction — {schema["label"]}', fontsize=14)
+        cb0 = fig.colorbar(im0, ax=axes[0, :].tolist(), shrink=0.85,
+                     format='%.2g', pad=0.02)
+        cb0.set_ticks(field_ticks)
+        cb1 = fig.colorbar(im1, ax=axes[1, :].tolist(), shrink=0.85,
+                     format='%.2g', pad=0.02)
+        cb1.set_ticks(field_ticks)
+        cb2 = fig.colorbar(im2, ax=axes[2, :].tolist(), shrink=0.85,
+                     format='%.2g', pad=0.02)
+        cb2.set_ticks(width_ticks)
+        fig.suptitle(f'2D Field Reconstruction — Bayesian OpInf — {schema["label"]}', fontsize=14)
         path = os.path.join(save_dir, f"{prefix}_2d_contours.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -651,5 +667,18 @@ def main(schema_names=None):
 
 
 if __name__ == "__main__":
-    schema_names = sys.argv[1:] if len(sys.argv) > 1 else None
-    main(schema_names)
+    args = sys.argv[1:]
+    if args and args[0] == "--replot":
+        # Replot from a saved snapshot: --replot <path/to/plot_data/PREFIX.pkl> [save_dir]
+        from core.plotting import load_plot_data
+        pkl_path = args[1]
+        result = load_plot_data(pkl_path)
+        if len(args) > 2:
+            save_dir = args[2]
+        else:
+            # plot_data/ lives inside save_dir
+            save_dir = os.path.dirname(os.path.dirname(os.path.abspath(pkl_path)))
+        plot_results(result, save_dir=save_dir)
+    else:
+        schema_names = args if args else None
+        main(schema_names)

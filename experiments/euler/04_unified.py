@@ -132,6 +132,9 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
     T_total = float(time_eval[-1] - time_eval[0])
     if num_test_funcs is None:
         num_test_funcs = max(1, num_eval_points // window_size)
+    _ntf_env = os.environ.get("NUM_TEST_FUNCS")
+    if _ntf_env is not None:
+        num_test_funcs = int(_ntf_env)
     if bump_radius_frac is None:
         radius = window_size * dt_eval
     else:
@@ -193,10 +196,15 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         K_zz = ((1.0 - sq_diffs_ee / ell2) / ell2) * K_ee
         V = jax.scipy.linalg.cho_solve((L, True), K_zy.T)
         deriv_var = jnp.maximum(jnp.diag(K_zz) - jnp.sum(K_zy * V.T, axis=1), 0.0)
+        # GP posterior covariance over the latent state at eval times:
+        #   K_post = K_ee - K_et K_tt^{-1} K_et^T
+        W = jax.scipy.linalg.cho_solve((L, True), K_et.T)        # (T_train, T_eval)
+        K_post = K_ee - K_et @ W                                  # (T_eval, T_eval)
+        K_post = 0.5 * (K_post + K_post.T)                        # symmetrise
         mll = -0.5 * (jnp.dot(y_i, alpha)
                       + 2.0 * jnp.sum(jnp.log(jnp.diag(L)))
                       + n_train * jnp.log(2.0 * jnp.pi))
-        return X_eval, mu_z, deriv_var, mll
+        return X_eval, mu_z, deriv_var, mll, K_post
 
     _batch_gp_cond = jax.vmap(_single_gp_conditional)
 
@@ -259,9 +267,26 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
     inv_sigma_O2_default = 1.0 / (sigma_O ** 2)
     log_sigma_O2_default = 2.0 * jnp.log(sigma_O)
 
+    # ── Σ_W mode toggle ──────────────────────────────────────────────────
+    # The weak-form residual y_W = -∫ψ' X is a linear functional of the GP
+    # posterior latent state X. Its proper covariance is
+    #     Σ_W = wpsi_dot @ K_post @ wpsi_dot.T + γ² · diag(∫ψ_k²)
+    # i.e. dense across test-function indices (off-diagonals come from the
+    # GP posterior correlation between time points). Setting FULL_SIGMA_W=0
+    # recovers the old diagonal-only approximation that drops K_post.
+    FULL_SIGMA_W = bool(int(os.environ.get("FULL_SIGMA_W", "1")))
+    # WEAK_ONLY=1 drops the derivative residual entirely; only the weak-form
+    # block (with full Σ_W) constrains the operator. Useful for testing
+    # whether R^W alone is sufficient (no need for R^D as well).
+    WEAK_ONLY = bool(int(os.environ.get("WEAK_ONLY", "0")))
+    if WEAK_ONLY and not FULL_SIGMA_W:
+        # Weak-only requires Σ_W to carry all the noise structure; force on.
+        FULL_SIGMA_W = True
+
     # ── Closed-form per-mode marginal likelihood ─────────────────────────
     def _per_mode_evidence(A, y_i, prec_i, m, inv_sigma_O2, log_sigma_O2):
-        """log p(y_i | θ) when y_i = A · O_i + ε, O_i ~ N(0, σ_O² I)."""
+        """log p(y_i | θ) when y_i = A · O_i + ε, O_i ~ N(0, σ_O² I),
+        ε ~ N(0, diag(1/prec_i)).  Diagonal-noise branch."""
         Aw = A * prec_i[:, None]
         M_i = A.T @ Aw                                          # (m, m)
         Lambda_i = M_i + inv_sigma_O2 * jnp.eye(m)
@@ -280,34 +305,122 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
                         + N_i * jnp.log(2.0 * jnp.pi))
         return log_p, mu_i, L_i
 
-    # ── Build (A, y, prec) per θ — concatenates derivative + weak-form ──
-    def _build_AyP(ells, sig2s, nus, gamma2):
-        """Per-θ pure-jax: build (A, y_per_mode, prec_per_mode).
+    def _per_mode_evidence_blocked(A_D, y_D, prec_D,
+                                    A_W, y_W, Sigma_W,
+                                    m, inv_sigma_O2, log_sigma_O2):
+        """log p(y_i | θ) with block-structured noise:
+        derivative block diagonal (prec_D), weak-form block dense (Σ_W)."""
+        # Derivative block contribution
+        M_D = (A_D * prec_D[:, None]).T @ A_D
+        b_D = A_D.T @ (prec_D * y_D)
+        quad_y_D = jnp.sum(prec_D * y_D ** 2)
+        log_det_Sig_D = -jnp.sum(jnp.log(prec_D + 1e-30))
+        N_D = prec_D.shape[0]
 
-        A             :  (T_eval + K, m)   stacked design matrix
-        y_per_mode    :  (r, T_eval + K)   stacked observations per mode
-        prec_per_mode :  (r, T_eval + K)   stacked precisions per mode
+        # Weak-form block contribution via Σ_W Cholesky
+        K_w = Sigma_W.shape[0]
+        Sigma_W_j = Sigma_W + 1e-8 * jnp.eye(K_w)
+        L_W = jnp.linalg.cholesky(Sigma_W_j)
+        Sinv_A = jax.scipy.linalg.cho_solve((L_W, True), A_W)   # (K_w, m)
+        Sinv_y = jax.scipy.linalg.cho_solve((L_W, True), y_W)   # (K_w,)
+        M_W = A_W.T @ Sinv_A
+        b_W = A_W.T @ Sinv_y
+        log_det_Sig_W = 2.0 * jnp.sum(jnp.log(jnp.diag(L_W)))
+        quad_y_W = jnp.dot(y_W, Sinv_y)
+
+        # Combine
+        M_i = M_D + M_W
+        b_i = b_D + b_W
+        Lambda_i = M_i + inv_sigma_O2 * jnp.eye(m)
+        L_i = jnp.linalg.cholesky(Lambda_i)
+        mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_i)
+        log_det_Lambda = 2.0 * jnp.sum(jnp.log(jnp.diag(L_i)))
+        quad_y = quad_y_D + quad_y_W
+        quad_mu = jnp.dot(mu_i, b_i)
+        log_det_Sigma = log_det_Sig_D + log_det_Sig_W
+        N_i = N_D + K_w
+        log_p = -0.5 * ((quad_y - quad_mu)
+                        + log_det_Sigma
+                        + m * log_sigma_O2
+                        + log_det_Lambda
+                        + N_i * jnp.log(2.0 * jnp.pi))
+        return log_p, mu_i, L_i
+
+    def _per_mode_evidence_weak_only(A_W, y_W, Sigma_W, m, inv_sigma_O2, log_sigma_O2):
+        """log p(y_i | θ) using only the weak-form block (no derivative term).
+        y_W ~ N(A_W · O_i, Σ_W),   O_i ~ N(0, σ_O² I)."""
+        K_w = Sigma_W.shape[0]
+        L_W = jnp.linalg.cholesky(Sigma_W + 1e-8 * jnp.eye(K_w))
+        Sinv_A = jax.scipy.linalg.cho_solve((L_W, True), A_W)
+        Sinv_y = jax.scipy.linalg.cho_solve((L_W, True), y_W)
+        M_i = A_W.T @ Sinv_A
+        b_i = A_W.T @ Sinv_y
+        log_det_Sig = 2.0 * jnp.sum(jnp.log(jnp.diag(L_W)))
+        quad_y = jnp.dot(y_W, Sinv_y)
+        Lambda_i = M_i + inv_sigma_O2 * jnp.eye(m)
+        L_i = jnp.linalg.cholesky(Lambda_i)
+        mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_i)
+        log_det_Lambda = 2.0 * jnp.sum(jnp.log(jnp.diag(L_i)))
+        quad_mu = jnp.dot(mu_i, b_i)
+        log_p = -0.5 * ((quad_y - quad_mu)
+                        + log_det_Sig
+                        + m * log_sigma_O2
+                        + log_det_Lambda
+                        + K_w * jnp.log(2.0 * jnp.pi))
+        return log_p, mu_i, L_i
+
+    # ── Build (A, y, prec, Σ_W) per θ — derivative + weak-form blocks ────
+    def _build_AyP(ells, sig2s, nus, gamma2):
+        """Per-θ pure-jax build of design + noise structure.
+
+        Returns:
+            Xs, mu_zs         — GP posterior mean of state and derivative
+            A_D, y_D, prec_D  — derivative-form block (diagonal noise)
+            A_W, y_W          — weak-form block (rows × m, rows × per-mode)
+            Sigma_W           — per-mode dense Σ_W (num_modes, K, K)  or None
+            mlls              — per-mode GP marginal log-likelihoods
+        Also returns the legacy concatenated (A, y_per_mode, prec_per_mode)
+        in the FULL_SIGMA_W=False path for backwards compatibility.
         """
-        Xs, mu_zs, deriv_vars, mlls = _batch_gp_cond(ells, sig2s, nus, y_obs)
+        Xs, mu_zs, deriv_vars, mlls, K_posts = _batch_gp_cond(ells, sig2s, nus, y_obs)
         # f(X) at eval times — (T_eval, m)
         f_X = rom.model._assemble_data_matrix(Xs, inputs=None)
 
-        # Derivative-form block: A rows = f_X ; y = μ_z ; prec = 1/(deriv_var + γ²)
+        # Derivative-form block: rows = f_X ; y = μ_z ; prec = 1/(deriv_var + γ²)
         prec_deriv = deriv_weight / (deriv_vars + gamma2 + 1e-4)  # (r, T_eval)
 
         # Weak-form block (WSINDy-style smooth bump test functions):
         #   A_weak[k, :]   = ∫ ψ_k(t) f(X(t)) dt           — (K, m)
         #   y_weak[i, k]   = -∫ ψ'_k(t) X_i(t) dt          — (r, K)
-        #   prec_weak[k]   = 1 / (γ² ∫ ψ_k² dt)            — (K,)
         A_weak = wpsi @ f_X                                # (K, m)
         weak_obs = -(Xs @ wpsi_dot.T)                      # (r, K)
-        prec_weak_per_k = weakform_weight / (gamma2 * int_psi_sq_arr + 1e-12)
-        prec_weak = jnp.broadcast_to(prec_weak_per_k, (num_modes, K_test))
+
+        if FULL_SIGMA_W:
+            # Σ_W_i = wpsi_dot @ K_post_i @ wpsi_dot.T + γ² · diag(∫ψ_k²)
+            # Divided by weakform_weight to keep its weighting semantics
+            # (precision = weakform_weight · Σ_W⁻¹).
+            diag_slack = gamma2 * jnp.diag(int_psi_sq_arr)        # (K, K)
+            def _sigma_w_one(K_post_i):
+                return (wpsi_dot @ K_post_i @ wpsi_dot.T
+                        + diag_slack) / (weakform_weight + 1e-30)
+            Sigma_W = jax.vmap(_sigma_w_one)(K_posts)             # (r, K, K)
+            # Legacy concatenated outputs (unused in FULL path) but
+            # kept for the diagonal-fallback API contract:
+            prec_weak_per_k = weakform_weight / (gamma2 * int_psi_sq_arr + 1e-12)
+            prec_weak = jnp.broadcast_to(prec_weak_per_k, (num_modes, K_test))
+        else:
+            Sigma_W = None
+            prec_weak_per_k = weakform_weight / (gamma2 * int_psi_sq_arr + 1e-12)
+            prec_weak = jnp.broadcast_to(prec_weak_per_k, (num_modes, K_test))
 
         A = jnp.concatenate([f_X, A_weak], axis=0)                 # (T_eval+K, m)
         y_per_mode = jnp.concatenate([mu_zs, weak_obs], axis=1)    # (r, T_eval+K)
         prec_per_mode = jnp.concatenate([prec_deriv, prec_weak], axis=1)
-        return Xs, mu_zs, A, y_per_mode, prec_per_mode, mlls
+        return (Xs, mu_zs,
+                f_X, mu_zs, prec_deriv,
+                A_weak, weak_obs, Sigma_W,
+                A, y_per_mode, prec_per_mode,
+                mlls)
 
     HIERARCHICAL = bool(int(os.environ.get("HIER_SIGMA_O", "0")))
 
@@ -333,8 +446,11 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
             inv_sO2 = inv_sigma_O2_default
             log_sO2 = log_sigma_O2_default
 
-        Xs, mu_zs, A, y_per_mode, prec_per_mode, mlls = _build_AyP(
-            ells, sig2s, nus, gamma2)
+        (Xs, mu_zs,
+         A_D, y_D, prec_D,
+         A_W, y_W, Sigma_W,
+         A, y_per_mode, prec_per_mode,
+         mlls) = _build_AyP(ells, sig2s, nus, gamma2)
 
         for i in range(num_modes):
             numpyro.deterministic(f"X_{i}", Xs[i])
@@ -344,35 +460,84 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
 
         m = A.shape[1]
         total_evidence = 0.0
-        for i in range(num_modes):
-            log_p_i, _, _ = _per_mode_evidence(A, y_per_mode[i], prec_per_mode[i],
-                                                m, inv_sO2, log_sO2)
-            total_evidence = total_evidence + log_p_i
+        if WEAK_ONLY:
+            for i in range(num_modes):
+                log_p_i, _, _ = _per_mode_evidence_weak_only(
+                    A_W, y_W[i], Sigma_W[i],
+                    m, inv_sO2, log_sO2)
+                total_evidence = total_evidence + log_p_i
+        elif FULL_SIGMA_W:
+            for i in range(num_modes):
+                log_p_i, _, _ = _per_mode_evidence_blocked(
+                    A_D, y_D[i], prec_D[i],
+                    A_W, y_W[i], Sigma_W[i],
+                    m, inv_sO2, log_sO2)
+                total_evidence = total_evidence + log_p_i
+        else:
+            for i in range(num_modes):
+                log_p_i, _, _ = _per_mode_evidence(
+                    A, y_per_mode[i], prec_per_mode[i],
+                    m, inv_sO2, log_sO2)
+                total_evidence = total_evidence + log_p_i
         numpyro.factor("marg_O_evidence", total_evidence)
 
     @jax.jit
     def posterior_O_fn(ells, sig2s, nus, gamma2, sigma_O_val):
         """Closed-form O posterior given θ: returns (μ_O, C_O, Xs, mu_zs)."""
         inv_sO2 = 1.0 / (sigma_O_val ** 2 + 1e-12)
-        Xs, mu_zs, A, y_per_mode, prec_per_mode, _ = _build_AyP(
-            ells, sig2s, nus, gamma2)
+        (Xs, mu_zs,
+         A_D, y_D, prec_D,
+         A_W, y_W, Sigma_W,
+         A, y_per_mode, prec_per_mode,
+         _) = _build_AyP(ells, sig2s, nus, gamma2)
         m = A.shape[1]
 
-        def _one(y_i, prec_i):
+        def _one_diag(y_i, prec_i):
             Aw = A * prec_i[:, None]
             M_i = A.T @ Aw
             Lambda_i = M_i + inv_sO2 * jnp.eye(m)
             L_i = jnp.linalg.cholesky(Lambda_i)
             b_i = A.T @ (prec_i * y_i)
             mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_i)
-            # Σ_O_i = Λ_i⁻¹; any factor C with C Cᵀ = Σ_O works for sampling.
-            # L_i⁻ᵀ satisfies (L_i⁻ᵀ)(L_i⁻ᵀ)ᵀ = (L_i L_iᵀ)⁻¹ = Λ_i⁻¹.
+            C_i = jax.scipy.linalg.solve_triangular(L_i, jnp.eye(m), lower=True).T
+            return mu_i, C_i
+
+        def _one_blocked(y_Di, prec_Di, y_Wi, Sigma_Wi):
+            M_D = (A_D * prec_Di[:, None]).T @ A_D
+            b_D = A_D.T @ (prec_Di * y_Di)
+            K_w = Sigma_Wi.shape[0]
+            L_W = jnp.linalg.cholesky(Sigma_Wi + 1e-8 * jnp.eye(K_w))
+            Sinv_A = jax.scipy.linalg.cho_solve((L_W, True), A_W)
+            Sinv_y = jax.scipy.linalg.cho_solve((L_W, True), y_Wi)
+            M_i = M_D + A_W.T @ Sinv_A
+            b_i = b_D + A_W.T @ Sinv_y
+            Lambda_i = M_i + inv_sO2 * jnp.eye(m)
+            L_i = jnp.linalg.cholesky(Lambda_i)
+            mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_i)
+            C_i = jax.scipy.linalg.solve_triangular(L_i, jnp.eye(m), lower=True).T
+            return mu_i, C_i
+
+        def _one_weak(y_Wi, Sigma_Wi):
+            K_w = Sigma_Wi.shape[0]
+            L_W = jnp.linalg.cholesky(Sigma_Wi + 1e-8 * jnp.eye(K_w))
+            Sinv_A = jax.scipy.linalg.cho_solve((L_W, True), A_W)
+            Sinv_y = jax.scipy.linalg.cho_solve((L_W, True), y_Wi)
+            M_i = A_W.T @ Sinv_A
+            b_i = A_W.T @ Sinv_y
+            Lambda_i = M_i + inv_sO2 * jnp.eye(m)
+            L_i = jnp.linalg.cholesky(Lambda_i)
+            mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_i)
             C_i = jax.scipy.linalg.solve_triangular(L_i, jnp.eye(m), lower=True).T
             return mu_i, C_i
 
         mu_all, C_all = [], []
         for i in range(num_modes):
-            mi, Ci = _one(y_per_mode[i], prec_per_mode[i])
+            if WEAK_ONLY:
+                mi, Ci = _one_weak(y_W[i], Sigma_W[i])
+            elif FULL_SIGMA_W:
+                mi, Ci = _one_blocked(y_D[i], prec_D[i], y_W[i], Sigma_W[i])
+            else:
+                mi, Ci = _one_diag(y_per_mode[i], prec_per_mode[i])
             mu_all.append(mi)
             C_all.append(Ci)
         return jnp.stack(mu_all), jnp.stack(C_all), Xs, mu_zs

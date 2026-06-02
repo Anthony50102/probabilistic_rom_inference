@@ -426,6 +426,13 @@ def plot_results(result, save_dir=None):
 
     schema = result['schema']
     prefix = f"05_{schema['name']}"
+
+    # ── Snapshot result for replotting ───────────────────────────────
+    try:
+        from core.plotting import save_plot_data
+        save_plot_data(result, os.path.join(save_dir, "plot_data", f"{prefix}.pkl"))
+    except Exception as _e:
+        print(f"  ⚠ snapshot failed: {_e}")
     t_pred = result['t_pred']
     t_full = result['t_full']
     training_span = result['training_span']
@@ -500,8 +507,7 @@ def plot_results(result, save_dir=None):
                 if row == 0:
                     ax.set_title(f'Mode {col + 1}')
                 if col == 0:
-                    ax.set_ylabel(f'{label}\n({n_stable}/{max_samp} stable)',
-                                  fontsize=8)
+                    ax.set_ylabel(label, fontsize=8)
                 if row == n_ics_total - 1:
                     ax.set_xlabel('Time')
 
@@ -509,10 +515,11 @@ def plot_results(result, save_dir=None):
         if handles:
             fig.legend(handles, labels_leg, loc='upper center',
                        ncol=len(handles), fontsize=9,
-                       bbox_to_anchor=(0.5, 1.02))
+                       bbox_to_anchor=(0.5, 0.95))
 
-        fig.suptitle(f"Neural ODE — {schema['label']}", fontsize=14, y=1.05)
+        fig.suptitle(f"Neural ODE — {schema['label']}", fontsize=14, y=0.995)
         fig.tight_layout()
+        fig.subplots_adjust(top=0.90)
         path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
         fig.savefig(path, dpi=200, bbox_inches='tight')
         print(f"  📊 Saved: {path}")
@@ -592,8 +599,8 @@ def plot_results(result, save_dir=None):
                 time_domain_eval=t_pred,
                 training_span=training_span,
                 error_type='relative',
+                suptitle=f'Full-Order Error (IC 0) — {schema["label"]}',
             )
-            fig_foe.suptitle(f'Full-Order Error (IC 0) — {schema["label"]}', fontsize=14)
             path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
             fig_foe.savefig(path, dpi=200, bbox_inches='tight')
             print(f"  📊 Saved: {path}")
@@ -682,5 +689,18 @@ def main(schema_names=None):
 
 
 if __name__ == "__main__":
-    schema_names = sys.argv[1:] if len(sys.argv) > 1 else None
-    main(schema_names)
+    args = sys.argv[1:]
+    if args and args[0] == "--replot":
+        # Replot from a saved snapshot: --replot <path/to/plot_data/PREFIX.pkl> [save_dir]
+        from core.plotting import load_plot_data
+        pkl_path = args[1]
+        result = load_plot_data(pkl_path)
+        if len(args) > 2:
+            save_dir = args[2]
+        else:
+            # plot_data/ lives inside save_dir
+            save_dir = os.path.dirname(os.path.dirname(os.path.abspath(pkl_path)))
+        plot_results(result, save_dir=save_dir)
+    else:
+        schema_names = args if args else None
+        main(schema_names)

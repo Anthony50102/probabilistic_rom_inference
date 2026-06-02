@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", ".."))
 
 import config
 from config import Basis, input_func_factory, input_parameters, test_parameters
+from core.plotting import save_metrics_table
 from step1_generate_data import TrajectorySampler
 
 # ── Data regimes (identical to 04/05) ────────────────────────────────────────
@@ -61,20 +62,14 @@ NUM_ICS = 5
 # ── Method styling ───────────────────────────────────────────────────────────
 METHODS = [
     {
-        "name": "04_conditional_integral",
-        "label": "Conditional Integral (2-stage)",
-        "color": "tab:purple",
-        "linestyle": "--",
-    },
-    {
         "name": "04_unified",
-        "label": "Marg-O × Weak-Form",
-        "color": "tab:green",
+        "label": "Bayesian OpInf",
+        "color": "tab:purple",
         "linestyle": "-",
     },
     {
         "name": "05_neural_ode",
-        "label": "Neural ODE (baseline)",
+        "label": "Neural ODE",
         "color": "tab:orange",
         "linestyle": "-.",
     },
@@ -264,47 +259,85 @@ def plot_error_comparison(methods_with_data, projection_error, t_pred, schema,
     print(f"  📊 Saved: {save_path}")
 
 
-def plot_metrics_comparison(methods_with_data, schema, save_path):
-    """Bar chart comparing train error, pred error, and stability."""
+def plot_metrics_comparison(methods_with_data, schema, save_path,
+                            train_test_errors=None):
+    """Bar chart comparing relative L2 errors and CI coverage.
+
+    If `train_test_errors` is provided (dict[label] -> dict with
+    'train_l2'/'test_l2'/'pred_l2'), the error panel is split into Train ICs
+    (average) vs Test IC bars per method.
+    """
     labels = [md["label"] for md in methods_with_data]
     colors = [md["color"] for md in methods_with_data]
     n = len(methods_with_data)
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-    # Train error
+    # ── Panel 1: Train-region rel-L2 error (Train ICs vs Test IC) ──
     ax = axes[0]
-    vals = [md["train_error"] * 100 for md in methods_with_data]
-    bars = ax.bar(range(n), vals, color=colors, edgecolor="black", linewidth=0.5)
-    ax.set_xticks(range(n))
-    ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("Train Error (%)")
-    ax.set_title("Training Error")
-    for bar, v in zip(bars, vals):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                f"{v:.1f}%", ha="center", va="bottom", fontsize=9)
+    width = 0.38
+    x = np.arange(n)
+    if train_test_errors is not None:
+        train_vals = [train_test_errors[md["label"]]["train_l2"]
+                      for md in methods_with_data]
+        test_vals = [train_test_errors[md["label"]]["test_train_l2"]
+                     for md in methods_with_data]
+        b1 = ax.bar(x - width/2, train_vals, width, color=colors,
+                    edgecolor="black", linewidth=0.5, label="Train ICs (avg)")
+        b2 = ax.bar(x + width/2, test_vals, width, color=colors, alpha=0.45,
+                    edgecolor="black", linewidth=0.5, hatch="//",
+                    label="Test IC")
+        for b, v in list(zip(b1, train_vals)) + list(zip(b2, test_vals)):
+            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
+                    f"{v:.3f}", ha="center", va="bottom", fontsize=8)
+        ax.legend(fontsize=8, loc="upper right")
+    else:
+        vals = [md["train_error"] for md in methods_with_data]
+        bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
+        for bar, v in zip(bars, vals):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                    f"{v:.3f}", ha="center", va="bottom", fontsize=9)
+    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
+    ax.set_ylabel("Relative L2 Error")
+    ax.set_title("Training-region Error")
 
-    # Pred error
+    # ── Panel 2: Prediction-region rel-L2 error (Train ICs vs Test IC) ──
     ax = axes[1]
-    vals = [md["pred_error"] * 100 for md in methods_with_data]
-    bars = ax.bar(range(n), vals, color=colors, edgecolor="black", linewidth=0.5)
-    ax.set_xticks(range(n))
-    ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("Prediction Error (%)")
-    ax.set_title("Prediction Error")
-    for bar, v in zip(bars, vals):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                f"{v:.1f}%", ha="center", va="bottom", fontsize=9)
+    if train_test_errors is not None:
+        train_vals = [train_test_errors[md["label"]]["pred_l2"]
+                      for md in methods_with_data]
+        test_vals = [train_test_errors[md["label"]]["test_pred_l2"]
+                     for md in methods_with_data]
+        b1 = ax.bar(x - width/2, train_vals, width, color=colors,
+                    edgecolor="black", linewidth=0.5, label="Train ICs (avg)")
+        b2 = ax.bar(x + width/2, test_vals, width, color=colors, alpha=0.45,
+                    edgecolor="black", linewidth=0.5, hatch="//",
+                    label="Test IC")
+        for b, v in list(zip(b1, train_vals)) + list(zip(b2, test_vals)):
+            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
+                    f"{v:.3f}", ha="center", va="bottom", fontsize=8)
+        ax.legend(fontsize=8, loc="upper right")
+    else:
+        vals = [md["pred_error"] for md in methods_with_data]
+        bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
+        for bar, v in zip(bars, vals):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                    f"{v:.3f}", ha="center", va="bottom", fontsize=9)
+    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
+    ax.set_ylabel("Relative L2 Error")
+    ax.set_title("Prediction-region Error")
 
-    # Stability
+    # ── Panel 3: CI coverage ──
     ax = axes[2]
-    vals = [md["stability_pct"] for md in methods_with_data]
-    bars = ax.bar(range(n), vals, color=colors, edgecolor="black", linewidth=0.5)
-    ax.set_xticks(range(n))
-    ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("Stability (%)")
-    ax.set_title("Stability")
+    vals = [(md["ci_coverage"] * 100) if not np.isnan(md["ci_coverage"]) else 0.0
+            for md in methods_with_data]
+    bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
+    ax.axhline(90.0, color='k', linestyle='--', lw=1, alpha=0.6, label='Target 90%')
+    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
+    ax.set_ylabel("CI Coverage (%)")
+    ax.set_title("90% CI Coverage")
     ax.set_ylim(0, 105)
+    ax.legend(fontsize=8, loc='upper right')
     for bar, v in zip(bars, vals):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                 f"{v:.0f}%", ha="center", va="bottom", fontsize=9)
@@ -371,9 +404,58 @@ def compare_regime(schema):
         )
 
     # ── Plot 2: Metrics bar chart ──
+    # Compute per-IC train/pred relative L2 errors split by Train ICs vs Test IC
+    print("  Computing per-IC train/test relative L2 errors...")
+    tt_errors = {}
+    train_mask = t_pred <= TRAINING_SPAN[1]
+    pred_mask = t_pred > TRAINING_SPAN[1]
+    for md in methods_data:
+        n_ics = md["n_ics"]
+        train_ic_indices = list(range(n_ics - 1))  # all but last
+        test_ic_idx = n_ics - 1
+
+        def _rel_l2(rom_solves_ic, true_ic):
+            """Median-prediction relative L2 (train and pred region)."""
+            if len(rom_solves_ic) == 0:
+                return float("nan"), float("nan")
+            interp = interp1d(config.time_domain, true_ic, axis=1,
+                              kind="linear", fill_value="extrapolate")
+            true_at = interp(t_pred)
+            rom_full = np.array([basis.decompress(rs) for rs in rom_solves_ic])
+            rom_med = np.median(rom_full, axis=0)
+            tr = (np.linalg.norm(rom_med[:, train_mask] - true_at[:, train_mask])
+                  / max(np.linalg.norm(true_at[:, train_mask]), 1e-12))
+            pr = (np.linalg.norm(rom_med[:, pred_mask] - true_at[:, pred_mask])
+                  / max(np.linalg.norm(true_at[:, pred_mask]), 1e-12))
+            return float(tr), float(pr)
+
+        train_l2_vals, pred_l2_vals = [], []
+        for ic in train_ic_indices:
+            tr, pr = _rel_l2(md["all_rom_solves"][ic], all_true[ic])
+            if not np.isnan(tr):
+                train_l2_vals.append(tr); pred_l2_vals.append(pr)
+        test_tr, test_pr = (float("nan"), float("nan"))
+        if 0 <= test_ic_idx < len(md["all_rom_solves"]):
+            test_tr, test_pr = _rel_l2(
+                md["all_rom_solves"][test_ic_idx], all_true[test_ic_idx])
+        tt_errors[md["label"]] = {
+            "train_l2": float(np.mean(train_l2_vals)) if train_l2_vals else float("nan"),
+            "pred_l2":  float(np.mean(pred_l2_vals))  if pred_l2_vals  else float("nan"),
+            "test_train_l2": test_tr,
+            "test_pred_l2":  test_pr,
+        }
+
     plot_metrics_comparison(
         methods_data, schema,
         save_path=os.path.join(out_dir, "metrics_comparison.png"),
+        train_test_errors=tt_errors,
+    )
+
+    # ── ML-style metrics table ──
+    save_metrics_table(
+        methods_data,
+        title=f"Method Comparison — {schema['label']}",
+        png_path=os.path.join(out_dir, "metrics_table.png"),
     )
 
     # ── Plot 3: Test IC error comparison ──
