@@ -1,10 +1,12 @@
+__pycache__/
+*.py[cod]
 *.log
-*_pycache_*
-__pycache__
-*.pyc
-*figures*
-*.log
+
+# Generated experiment outputs.
+experiments/**/figures*/
+experiments/**/results*/
+experiments/**/data/*.npz
+*.npz
+*.npy
 *.png
-*results*
-*.github*
-*.npz*
+*.pkl

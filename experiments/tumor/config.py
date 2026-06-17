@@ -17,7 +17,7 @@ smoothness assumption.
 
 Usage:
     1. First run: python generate_fom_data.py
-    2. Then run: python 04_conditional_integral.py
+    2. Then run: python 04_unified.py
 """
 
 __all__ = [

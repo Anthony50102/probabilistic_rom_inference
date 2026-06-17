@@ -5,7 +5,7 @@ Loads pre-computed predictions from 04 (Bayesian OpInf) and 05 (Neural ODE)
 and generates side-by-side comparison plots suitable for publication.
 
 Prerequisites:
-    python 04_conditional_integral.py
+    python 04_unified.py
     python 05_neural_ode.py
 
 Usage:
@@ -33,7 +33,7 @@ NUM_MODES = 4
 NUM_EVAL_POINTS = 200
 
 METHODS = [
-    {"name": "04_conditional_integral", "script": "04_conditional_integral.py",
+    {"name": "04_unified", "script": "04_unified.py",
      "label": "Bayesian OpInf", "color": "tab:purple", "short": "04"},
     {"name": "05_neural_ode", "script": "05_neural_ode.py",
      "label": "Neural ODE", "color": "tab:orange", "short": "05"},
@@ -394,7 +394,7 @@ def main():
 
     if len(methods_data) < 2:
         print("\nNeed predictions from both methods to generate comparisons.")
-        print("Run: python 04_conditional_integral.py && python 05_neural_ode.py")
+        print("Run: python 04_unified.py && python 05_neural_ode.py")
         sys.exit(1)
 
     # ── Load shared FOM data & basis ─────────────────────────────────────

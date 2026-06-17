@@ -6,7 +6,7 @@ Black-box baseline for comparison with Bayesian OpInf (04):
   - Training: trajectory matching via MSE against noisy reduced observations
   - UQ: ensemble of 20 independently trained networks
 
-Uses the EXACT same data pipeline as 04_conditional_integral.py:
+Uses the EXACT same data pipeline as 04_unified.py:
   1. FOM solve → subsample in training span → add noise → POD compression
   2. Evaluate on t_pred = linspace(0, 0.15, 400), compare with cubic-interpolated truth
 

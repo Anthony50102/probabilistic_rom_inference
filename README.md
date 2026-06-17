@@ -1,126 +1,160 @@
 # Probabilistic Reduced Order Model Inference
 
-Implementation and comparison of Bayesian reduced-order modeling methods for operator inference.
+Implementation and comparison code for Bayesian operator inference and Neural
+ODE reduced-order models (ROMs) learned from noisy PDE snapshot data.
 
-## Overview
+The active experiment pipeline compares:
 
-This repository accompanies a scientific paper comparing two Bayesian approaches for learning reduced-order models (ROMs) from noisy data:
+1. **Bayesian OpInf** (`04_unified.py`): Gaussian-process smoothing with
+   analytically marginalised ROM operators and derivative/weak-form constraints.
+2. **Neural ODE ensemble** (`05_neural_ode.py`): black-box reduced dynamics
+   baseline with ensemble uncertainty bands.
+3. **Comparison plots** (`06_compare_methods.py`): method-level metrics and
+   full-order error comparisons from saved `.npz` outputs.
 
-1. **GP-Bayes OpInf** (Baseline): Gaussian Process-based Bayesian operator inference
-2. **Full Bayesian OpInf** (Our Method): Fully Bayesian approach using Stochastic Variational Inference (SVI)
+## Active PDE experiments
 
-Both methods are tested on three PDE systems:
-- **FitzHugh-Nagumo** equations (reaction-diffusion)
-- **Compressible Euler** equations (fluid dynamics)
-- **Cubic Heat** equation (nonlinear diffusion)
+| Experiment | Active system | ROM operators | Notes |
+|---|---|---|---|
+| `euler` | Compressible Euler | `cAH` | Single trajectory, autonomous quadratic ROM. |
+| `heat` | Cubic heat equation | `cAHBN` | Multi-IC, input-dependent ROM with lifted/shifted basis. |
+| `burgers_2d` | 2D diffusion-reaction / Burgers-style system | `cAH` | Single trajectory plus optional parametric extension scripts. |
+| `tumor` | TumorTwin tumor-growth data | `cA` | Cached FOM data, adaptive POD by GP SNR threshold. |
 
-## Repository Structure
+## Repository structure
 
+```text
+core/
+  bayesian_opinf.py    # GP fitting, derivative covariance, Bayesian OpInf utilities
+  bgp_jax.py           # JAX/NumPyro GP kernels and derivative kernels
+  diagnostics.py       # posterior diagnostics and trace plotting helpers
+  pde_models.py        # full-order PDE model implementations
+  plotting.py          # shared plotting and metrics helpers
+  utils.py             # data generation and utility functions
+
+experiments/
+  euler/
+    04_unified.py
+    05_neural_ode.py
+    06_compare_methods.py
+    config.py
+
+  heat/
+    04_unified.py
+    05_neural_ode.py
+    06_compare_methods.py
+    config.py
+    heat_rom.py
+    step1_generate_data.py
+
+  burgers_2d/
+    04_unified.py
+    05_neural_ode.py
+    06_compare_methods.py
+    07_parametric_ics.py
+    08_parametric_neural_ode.py
+    config.py
+    config_parametric.py
+
+  tumor/
+    04_unified.py
+    05_neural_ode.py
+    05_neural_ode_chemo.py
+    06_compare_methods.py
+    config.py
+    generate_fom_data.py
+    generate_fom_data_chemo.py
+    generate_fom_data_multi.py
+    generate_paper.py
+
+plot_from_npz.py       # standalone plot regeneration from saved 04_unified.npz files
 ```
-probabilistic_rom_inference/
-├── core/                           # Shared library code
-│   ├── bayes.py                    # BayesianODE, BayesianROM classes
-│   ├── bgp_jax.py                  # Bayesian GP with JAX/NumPyro (Full Bayesian)
-│   ├── gpkernels.py                # GP kernel implementations (GP-Bayes)
-│   ├── pde_models.py               # PDE full-order model implementations
-│   ├── scaler.py                   # Data normalization utilities
-│   └── wlstsq.py                   # Weighted least squares solver
-│
-├── experiments/                    # Main experiment notebooks
-│   ├── fitz_nagumo/
-│   │   ├── config.py               # FitzHugh-Nagumo configuration
-│   │   ├── 01_gpbayes_opinf.ipynb  # GP-Bayes OpInf method
-│   │   ├── 02_full_bayesian.ipynb  # Full Bayesian method
-│   │   ├── figures/                # Generated figures
-│   │   └── results/                # Saved results (MCMC samples, etc.)
-│   │
-│   ├── euler/
-│   │   ├── config.py               # Euler equations configuration
-│   │   ├── 01_gpbayes_opinf.ipynb
-│   │   ├── 02_full_bayesian.ipynb
-│   │   ├── figures/
-│   │   └── results/
-│   │
-│   └── heat/
-│       ├── config.py               # Heat equation configuration
-│       ├── 01_gpbayes_opinf.ipynb
-│       ├── 02_full_bayesian.ipynb
-│       ├── figures/
-│       └── results/
-│
-├── archive/                        # Deprecated notebooks (kept for reference)
-└── helpers/                        # Legacy helper code
+
+## Bayesian OpInf method
+
+The active `04_unified.py` method fits GP posteriors to reduced coordinates and
+uses the GP derivative posterior to constrain the ROM operator. The operator is
+analytically marginalised, so inference explores only GP hyperparameters and
+recovers a closed-form conditional Gaussian posterior for each row of the
+operator matrix.
+
+For each ROM mode, the derivative block uses the full GP derivative covariance
+
+```text
+Σ_D = Σ_z + γ² I,
 ```
 
-## Methods
+and the weak-form block propagates the same derivative covariance through the
+test functions:
 
-### GP-Bayes OpInf (Baseline)
-- Uses Gaussian Process regression to smooth noisy state data
-- Derives time derivatives from GP posterior
-- Performs weighted least squares for operator inference
-- Uncertainty quantification via GP posterior
+```text
+Σ_W = Ψ_w Σ_z Ψ_wᵀ + γ² diag(∫ ψ_k(t)^2 dt).
+```
 
-### Full Bayesian OpInf (Our Method)
-- Fully Bayesian treatment using Stochastic Variational Inference (SVI)
-- Joint posterior over GP hyperparameters and ROM operators
-- Implemented in JAX/NumPyro for efficient inference
-- More principled uncertainty quantification
+This keeps both pointwise derivative and weak-form constraints grounded in the
+same GP derivative uncertainty, with additive slack for model-form error.
 
-## Data Scaling
+## Neural ODE baseline
 
-When `USE_SCALED_DATA=True` in a notebook, each POD mode is standardized to zero mean and unit variance before GP fitting via `DataScaler` (`core/scaler.py`). This improves GP hyperparameter learning and numerical conditioning, especially when POD modes have very different magnitudes.
+The `05_neural_ode.py` scripts train ensembles of reduced-state neural ODEs on
+the same data regimes as the Bayesian OpInf method where implemented. The
+comparison scripts treat Neural ODE outputs as method-level `.npz` files in the
+same `results/comparison/<schema>/` layout.
 
-### How scaling flows through the Bayesian model
+## Running experiments
 
-1. **GP fitting**: GPs are trained on scaled data $\tilde{q}_i = (\hat{q}_i - \mu_i) / \sigma_i$, so lengthscales, variances, and noise are all in scaled space.
-2. **Latent states**: `Xs_means` (GP predictions) live in scaled space.
-3. **Data matrix assembly**: States are unscaled back to original space ($\hat{q} = \sigma\tilde{q} + \mu$) before assembling the operator data matrix $d(\hat{q})$.
-4. **Operator dynamics**: $O \cdot d(\hat{q})$ is computed in original space, then divided by $\sigma_i$ to get the scaled-space derivative $d\tilde{q}_i/dt$.
-5. **ODE constraint**: The scaled operator dynamics are compared against GP derivative estimates (also in scaled space) via a multivariate normal likelihood.
+Use the `prob_rom` conda environment.
 
-The operator $O$ is always learned and used for predictions in **original (unscaled) space**.
+Run one Bayesian OpInf regime:
 
-### Implicit mode-dependent constraint scaling
+```bash
+cd experiments/euler
+conda run -n prob_rom python 04_unified.py dense_low_noise
+```
 
-The ODE constraint slack `gamma2` is applied uniformly in scaled space:
+Run the Neural ODE baseline for the same regime:
 
-$$\frac{d\tilde{q}_i}{dt} \sim \mathcal{N}\!\left(\frac{[O \cdot d(\hat{q})]_i}{\sigma_i},\; \text{cov}_z^{(\text{scaled})}_i + \gamma_2 I\right)$$
+```bash
+conda run -n prob_rom python 05_neural_ode.py dense_low_noise
+```
 
-This means the effective constraint tolerance in original space is mode-dependent: $\gamma_{2,i}^{(\text{original})} = \sigma_i^2 \cdot \gamma_2$. Modes with larger amplitude get proportionally more slack, which acts as a natural regularization — all modes contribute comparably to the likelihood regardless of their raw scale.
+Generate method-comparison plots:
+
+```bash
+conda run -n prob_rom python 06_compare_methods.py dense_low_noise
+```
+
+Regenerate standalone Bayesian OpInf plots from a saved result file:
+
+```bash
+cd ../..
+conda run -n prob_rom python plot_from_npz.py \
+  experiments/euler/results/comparison/dense_low_noise/04_unified.npz \
+  experiments/euler/figures
+```
+
+## Generated outputs
+
+Generated outputs are intentionally ignored by git:
+
+- `experiments/**/figures*/`
+- `experiments/**/results*/`
+- `experiments/**/data/*.npz`
+- `*.npz`, `*.npy`, `*.png`, `*.pkl`
+
+The `figures_rerun_paper_v4/` directories are preserved historical paper rerun
+artifacts. Current `04_unified.py` reruns write to `results/comparison/` and can
+be replotted with `plot_from_npz.py`.
 
 ## Requirements
 
-```
-numpy
-scipy
-matplotlib
-jax
-jaxlib
-numpyro
-opinf
-scikit-learn
-```
-
-## Usage
-
-Each experiment follows the same structure:
-
-1. **Configuration** (`config.py`): Defines the PDE, domain, and ROM structure
-2. **Notebook 01**: Runs GP-Bayes OpInf (baseline)
-3. **Notebook 02**: Runs Full Bayesian OpInf (our method)
-
-To run an experiment:
-```bash
-cd experiments/fitz_nagumo
-jupyter notebook 01_gpbayes_opinf.ipynb
-```
+The code relies on NumPy/SciPy, Matplotlib, JAX, NumPyro, Diffrax/Equinox/Optax
+for Neural ODEs, and `opinf` for ROM model scaffolding. See
+`requirements.txt` and the `prob_rom` environment for the working package set.
 
 ## Citation
 
-If you use this code, please cite:
-```
-[Citation to be added upon publication]
-```
+Citation information will be added upon publication.
 
 ## License
 

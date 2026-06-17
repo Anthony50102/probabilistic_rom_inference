@@ -1,7 +1,7 @@
 """
 06_compare_methods.py — Aggregator for heat experiment method comparison.
 
-Loads predictions from all 3 methods (02_two_stage_svi, 04_conditional_integral,
+Loads predictions from all 3 methods (02_two_stage_svi, 04_unified,
 05_neural_ode) and creates overlaid comparison plots for each data regime.
 
 Usage:

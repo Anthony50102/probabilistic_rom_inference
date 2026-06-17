@@ -7,6 +7,11 @@ analytically; each IC contributes derivative-form rows + WSINDy-style
 weak-form rows that are linear in O.  Stacking across ICs gives one big linear
 system per ROM mode, solved in closed form via a single m×m Cholesky.
 
+Both blocks use the full GP derivative posterior covariance:
+
+    derivative rows:  Σ_D,i = Σ_z,i + γ² I
+    weak-form rows:   Σ_W,i = Ψ_w Σ_z,i Ψ_wᵀ + γ² diag(∫ψ_k² dt)
+
 Usage
 -----
     python 04_unified.py
@@ -37,7 +42,7 @@ from step1_generate_data import TrajectorySampler
 from core.bayesian_opinf import fit_gp_hyperparameters_mle, _find_operator_samples
 from core.diagnostics import plot_trace
 from core.plotting import plot_full_order_error
-from heat_plotter import _generate_rom_solves
+from heat_rom import generate_rom_solves
 import opinf
 
 numpyro.set_platform('cpu')
@@ -218,11 +223,13 @@ def build_model(
         K_ee = _rbf_sq(ell, sig2, d['sq_diffs_ee'])
         K_zz = ((1.0 - d['sq_diffs_ee'] / ell2) / ell2) * K_ee
         V = jax.scipy.linalg.cho_solve((L, True), K_zy.T)
-        deriv_var = jnp.maximum(jnp.diag(K_zz) - jnp.sum(K_zy * V.T, axis=1), 0.0)
+        # Full GP derivative posterior covariance: Σ_z = K_zz - K_zy K_yy^{-1} K_zy^T
+        K_post_Z = K_zz - K_zy @ V
+        K_post_Z = 0.5 * (K_post_Z + K_post_Z.T)
         mll = -0.5 * (jnp.dot(y_i, alpha) +
                       2.0 * jnp.sum(jnp.log(jnp.diag(L))) +
                       d['n_train'] * jnp.log(2.0 * jnp.pi))
-        return X_eval, mu_z, deriv_var, mll
+        return X_eval, mu_z, K_post_Z, mll
 
     inv_sigma_O2_default = 1.0 / (sigma_O ** 2)
     log_sigma_O2_default = 2.0 * jnp.log(sigma_O)
@@ -240,80 +247,128 @@ def build_model(
         inv_sigma_O2_diag = 1.0 / (_v ** 2)
         log_sigma_O2_sum = 2.0 * jnp.sum(jnp.log(_v))
 
-    def _per_mode_evidence(A, y_i, prec_i, m, inv_sigma_O2, log_sigma_O2,
-                           O_prior_i):
-        Aw = A * prec_i[:, None]
-        M_i = A.T @ Aw
-        M_i = 0.5 * (M_i + M_i.T)
-        if inv_sigma_O2_diag is None:
-            ridge = (inv_sigma_O2 + LAMBDA_JITTER * jnp.maximum(
-                jnp.trace(M_i) / m, 1.0))
-            Lambda_i = M_i + ridge * jnp.eye(m)
-            log_det_prior = m * log_sigma_O2
-        else:
-            jitter = LAMBDA_JITTER * jnp.maximum(jnp.trace(M_i) / m, 1.0)
-            Lambda_i = M_i + jnp.diag(inv_sigma_O2_diag) + jitter * jnp.eye(m)
-            log_det_prior = log_sigma_O2_sum
-        L_i = jnp.linalg.cholesky(Lambda_i)
-        y_resid = y_i - A @ O_prior_i
-        b_i = A.T @ (prec_i * y_resid)
-        mu_centered = jax.scipy.linalg.cho_solve((L_i, True), b_i)
-        mu_i = mu_centered + O_prior_i
-        log_det_Lambda = 2.0 * jnp.sum(jnp.log(jnp.diag(L_i)))
-        quad_y = jnp.sum(prec_i * y_resid ** 2)
-        quad_mu = jnp.dot(mu_centered, b_i)
-        log_det_Sigma = -jnp.sum(jnp.log(prec_i + 1e-30))
-        N_i = prec_i.shape[0]
-        log_p = -0.5 * ((quad_y - quad_mu) + log_det_Sigma +
-                        log_det_prior + log_det_Lambda +
-                        N_i * jnp.log(2.0 * jnp.pi))
-        return log_p, mu_i, L_i
+    def _dense_block_contrib(A_blk, y_blk, Sigma_blk):
+        """Compute (M, b, quad_y, log_det_Sig, N) for one dense-covariance block."""
+        N_blk = Sigma_blk.shape[0]
+        L = jnp.linalg.cholesky(Sigma_blk + 1e-8 * jnp.eye(N_blk))
+        Sinv_A = jax.scipy.linalg.cho_solve((L, True), A_blk)
+        Sinv_y = jax.scipy.linalg.cho_solve((L, True), y_blk)
+        M = A_blk.T @ Sinv_A
+        b = A_blk.T @ Sinv_y
+        log_det_Sig = 2.0 * jnp.sum(jnp.log(jnp.diag(L)))
+        quad_y = jnp.dot(y_blk, Sinv_y)
+        return M, b, quad_y, log_det_Sig, N_blk
 
     def _build_AyP_ic(ic, ells, sig2s, nus, gamma2):
-        """Return (Xs, A_ic, y_per_mode_ic, prec_per_mode_ic, mll_total) for one IC."""
+        """Return per-IC blocks with full GP derivative posterior covariance.
+
+        Both blocks use Σ_z (full GP derivative posterior covariance):
+          - Derivative: Σ_D = (Σ_z + γ²I) / deriv_weight
+          - Weak-form:  Σ_W = (Ψ Σ_z Ψ^T + γ² diag(∫ψ²)) / weakform_weight
+        """
         d = all_ic_data[ic]
-        Xs_list, muz_list, dv_list, mll_list = [], [], [], []
+        Xs_list, muz_list, Kz_list, mll_list = [], [], [], []
         for j in range(num_modes):
-            Xj, muj, dvj, mllj = _single_gp_conditional(
+            Xj, muj, Kzj, mllj = _single_gp_conditional(
                 ells[j], sig2s[j], nus[j], d['y_obs'][j], d)
             Xs_list.append(Xj)
             muz_list.append(muj)
-            dv_list.append(dvj)
+            Kz_list.append(Kzj)
             mll_list.append(mllj)
         Xs = jnp.stack(Xs_list)
         mu_zs = jnp.stack(muz_list)
-        deriv_vars = jnp.stack(dv_list)
+        K_posts_Z = jnp.stack(Kz_list)
         mll_total = jnp.sum(jnp.stack(mll_list))
 
         f_X = rom.model._assemble_data_matrix(Xs, inputs=d['inputs_eval'])
-        prec_deriv = deriv_weight / (deriv_vars + gamma2 + 1e-4)
-        A_weak = d['wpsi'] @ f_X
-        weak_obs = -(Xs @ d['wpsi_dot'].T)
-        prec_weak_per_k = weakform_weight / (gamma2 * d['int_psi_sq_arr'] + 1e-12)
-        prec_weak = jnp.broadcast_to(prec_weak_per_k, (num_modes, d['K_test']))
+        n_eval = f_X.shape[0]
+        I_eval = jnp.eye(n_eval)
 
-        A_ic = jnp.concatenate([f_X, A_weak], axis=0)
-        y_ic = jnp.concatenate([mu_zs, weak_obs], axis=1)
-        prec_ic = jnp.concatenate([prec_deriv, prec_weak], axis=1)
-        return Xs, A_ic, y_ic, prec_ic, mll_total
+        # Derivative block: full Σ_D = (Σ_z + γ²I) / deriv_weight
+        Sigma_D = (K_posts_Z + gamma2 * I_eval[None, :, :]) / (deriv_weight + 1e-30)
+
+        # Weak-form block: data w_i = ∫ψ_k μ_z dt (derivative form)
+        A_weak = d['wpsi'] @ f_X                                  # (K, m)
+        weak_obs = mu_zs @ d['wpsi'].T                            # (r, K)
+        diag_slack = gamma2 * jnp.diag(d['int_psi_sq_arr'])
+        def _sigma_w_one(K_post_Z_i):
+            return (d['wpsi'] @ K_post_Z_i @ d['wpsi'].T
+                    + diag_slack) / (weakform_weight + 1e-30)
+        Sigma_W = jax.vmap(_sigma_w_one)(K_posts_Z)               # (r, K, K)
+
+        return Xs, f_X, mu_zs, Sigma_D, A_weak, weak_obs, Sigma_W, mll_total
 
     def _build_AyP_all(theta):
-        """theta: dict of arrays (num_ics, num_modes) per hyper."""
-        Xs_all, A_all, y_all, prec_all = [], [], [], []
+        """theta: dict of arrays (num_ics, num_modes) per hyper.
+
+        Returns per-IC blocks for dense covariance computation.
+        """
+        all_blocks = []
         mll_total = 0.0
         for ic in range(num_ics):
-            Xs, A_ic, y_ic, prec_ic, mll_ic = _build_AyP_ic(
+            blocks = _build_AyP_ic(
                 ic, theta['ells'][ic], theta['sig2s'][ic], theta['nus'][ic],
                 theta['gamma2'])
-            Xs_all.append(Xs)
-            A_all.append(A_ic)
-            y_all.append(y_ic)
-            prec_all.append(prec_ic)
-            mll_total = mll_total + mll_ic
-        A = jnp.concatenate(A_all, axis=0)
-        y_per_mode = jnp.concatenate(y_all, axis=1)
-        prec_per_mode = jnp.concatenate(prec_all, axis=1)
-        return Xs_all, A, y_per_mode, prec_per_mode, mll_total
+            all_blocks.append(blocks)
+            mll_total = mll_total + blocks[7]  # mll_total
+        return all_blocks, mll_total
+
+    def _per_mode_evidence_multi_ic(all_blocks, mode_i, m,
+                                     inv_sigma_O2, log_sigma_O2, O_prior_i):
+        """log p(y_i | θ) summing dense-block contributions across ICs.
+
+        Each IC contributes derivative (Σ_D) and weak-form (Σ_W) blocks.
+        O_prior_i: operator prior mean for this mode.
+        """
+        M_total = jnp.zeros((m, m))
+        b_total = jnp.zeros(m)
+        quad_y_total = 0.0
+        log_det_Sig_total = 0.0
+        N_total = 0
+
+        for blocks in all_blocks:
+            # blocks = (Xs, A_D, mu_zs, Sigma_D, A_W, weak_obs, Sigma_W, mll)
+            A_D = blocks[1]         # (T_eval, m)
+            y_D = blocks[2][mode_i] # mu_zs[i]
+            Sigma_D_i = blocks[3][mode_i]
+            A_W = blocks[4]         # (K, m)
+            y_W = blocks[5][mode_i] # weak_obs[i]
+            Sigma_W_i = blocks[6][mode_i]
+
+            # Derivative block
+            y_D_resid = y_D - A_D @ O_prior_i
+            M_D, b_D, qy_D, lds_D, N_D = _dense_block_contrib(
+                A_D, y_D_resid, Sigma_D_i)
+            # Weak-form block
+            y_W_resid = y_W - A_W @ O_prior_i
+            M_W, b_W, qy_W, lds_W, N_W = _dense_block_contrib(
+                A_W, y_W_resid, Sigma_W_i)
+
+            M_total = M_total + M_D + M_W
+            b_total = b_total + b_D + b_W
+            quad_y_total = quad_y_total + qy_D + qy_W
+            log_det_Sig_total = log_det_Sig_total + lds_D + lds_W
+            N_total = N_total + N_D + N_W
+
+        M_total = 0.5 * (M_total + M_total.T)
+        if inv_sigma_O2_diag is None:
+            ridge = (inv_sigma_O2 + LAMBDA_JITTER * jnp.maximum(
+                jnp.trace(M_total) / m, 1.0))
+            Lambda_i = M_total + ridge * jnp.eye(m)
+            log_det_prior = m * log_sigma_O2
+        else:
+            jitter = LAMBDA_JITTER * jnp.maximum(jnp.trace(M_total) / m, 1.0)
+            Lambda_i = M_total + jnp.diag(inv_sigma_O2_diag) + jitter * jnp.eye(m)
+            log_det_prior = log_sigma_O2_sum
+        L_i = jnp.linalg.cholesky(Lambda_i)
+        mu_centered = jax.scipy.linalg.cho_solve((L_i, True), b_total)
+        mu_i = mu_centered + O_prior_i
+        log_det_Lambda = 2.0 * jnp.sum(jnp.log(jnp.diag(L_i)))
+        quad_mu = jnp.dot(mu_centered, b_total)
+        log_p = -0.5 * ((quad_y_total - quad_mu) + log_det_Sig_total +
+                        log_det_prior + log_det_Lambda +
+                        N_total * jnp.log(2.0 * jnp.pi))
+        return log_p, mu_i, L_i
 
     def model(gamma2=0.5):
         # Sample per-IC, per-mode GP hypers.
@@ -352,20 +407,20 @@ def build_model(
             gamma2=gamma2,
         )
 
-        Xs_all, A, y_per_mode, prec_per_mode, mll_total = _build_AyP_all(theta)
+        all_blocks, mll_total = _build_AyP_all(theta)
 
         for ic in range(num_ics):
             for j in range(num_modes):
-                numpyro.deterministic(f"X_{ic}_{j}", Xs_all[ic][j])
+                numpyro.deterministic(f"X_{ic}_{j}", all_blocks[ic][0][j])
 
         if mll_weight > 0:
             numpyro.factor("gp_mll", mll_weight * mll_total)
 
-        m = A.shape[1]
+        m = all_blocks[0][1].shape[1]  # A_D.shape[1]
         total_evidence = 0.0
         for i in range(num_modes):
-            log_p_i, _, _ = _per_mode_evidence(
-                A, y_per_mode[i], prec_per_mode[i], m,
+            log_p_i, _, _ = _per_mode_evidence_multi_ic(
+                all_blocks, i, m,
                 inv_sigma_O2_default, log_sigma_O2_default,
                 O_prior_jnp[i])
             total_evidence = total_evidence + log_p_i
@@ -382,35 +437,42 @@ def build_model(
         inv_sO2 = 1.0 / (sigma_O_val ** 2 + 1e-12)
         theta = dict(ells=ells_stacked, sig2s=sig2s_stacked,
                      nus=nus_stacked, gamma2=gamma2)
-        _, A, y_per_mode, prec_per_mode, _ = _build_AyP_all(theta)
-        m = A.shape[1]
-
-        def _one(y_i, prec_i, O_prior_i):
-            Aw = A * prec_i[:, None]
-            M_i = A.T @ Aw
-            M_i = 0.5 * (M_i + M_i.T)
-            if inv_sigma_O2_diag is None:
-                ridge = (inv_sO2 + LAMBDA_JITTER *
-                         jnp.maximum(jnp.trace(M_i) / m, 1.0))
-                Lambda_i = M_i + ridge * jnp.eye(m)
-            else:
-                jitter = LAMBDA_JITTER * jnp.maximum(jnp.trace(M_i) / m, 1.0)
-                Lambda_i = (M_i + jnp.diag(inv_sigma_O2_diag) +
-                            jitter * jnp.eye(m))
-            L_i = jnp.linalg.cholesky(Lambda_i)
-            y_resid = y_i - A @ O_prior_i
-            b_i = A.T @ (prec_i * y_resid)
-            mu_centered = jax.scipy.linalg.cho_solve((L_i, True), b_i)
-            mu_i = mu_centered + O_prior_i
-            C_i = jax.scipy.linalg.solve_triangular(
-                L_i, jnp.eye(m), lower=True).T
-            return mu_i, C_i
+        all_blocks, _ = _build_AyP_all(theta)
+        m = all_blocks[0][1].shape[1]  # A_D.shape[1]
 
         mu_all, C_all = [], []
         for i in range(num_modes):
-            mi, Ci = _one(y_per_mode[i], prec_per_mode[i], O_prior_jnp[i])
-            mu_all.append(mi)
-            C_all.append(Ci)
+            # Accumulate (M, b) across ICs
+            M_total = jnp.zeros((m, m))
+            b_total = jnp.zeros(m)
+            for blocks in all_blocks:
+                A_D = blocks[1]
+                y_D_resid = blocks[2][i] - A_D @ O_prior_jnp[i]
+                Sigma_D_i = blocks[3][i]
+                A_W = blocks[4]
+                y_W_resid = blocks[5][i] - A_W @ O_prior_jnp[i]
+                Sigma_W_i = blocks[6][i]
+                M_D, b_D, _, _, _ = _dense_block_contrib(A_D, y_D_resid, Sigma_D_i)
+                M_W, b_W, _, _, _ = _dense_block_contrib(A_W, y_W_resid, Sigma_W_i)
+                M_total = M_total + M_D + M_W
+                b_total = b_total + b_D + b_W
+
+            M_total = 0.5 * (M_total + M_total.T)
+            if inv_sigma_O2_diag is None:
+                ridge = (inv_sO2 + LAMBDA_JITTER *
+                         jnp.maximum(jnp.trace(M_total) / m, 1.0))
+                Lambda_i = M_total + ridge * jnp.eye(m)
+            else:
+                jitter = LAMBDA_JITTER * jnp.maximum(jnp.trace(M_total) / m, 1.0)
+                Lambda_i = (M_total + jnp.diag(inv_sigma_O2_diag) +
+                            jitter * jnp.eye(m))
+            L_i = jnp.linalg.cholesky(Lambda_i)
+            mu_centered = jax.scipy.linalg.cho_solve((L_i, True), b_total)
+            mu_i = mu_centered + O_prior_jnp[i]
+            C_i = jax.scipy.linalg.solve_triangular(
+                L_i, jnp.eye(m), lower=True).T
+            mu_all.append(mu_i)
+            C_all.append(C_i)
         return jnp.stack(mu_all), jnp.stack(C_all)
 
     return model, posterior_O_fn
@@ -674,7 +736,7 @@ def run_experiment(schema, p=None):
     print(f"  ‖O‖: median={np.median(op_norms):.1f}  "
           f"min={op_norms.min():.1f}  max={op_norms.max():.1f}")
 
-    # Build samples dict for heat_plotter / _find_operator_samples
+    # Build samples dict for _find_operator_samples
     samples = dict(post)
     samples['O'] = jnp.array(O_samples)
 
@@ -710,7 +772,7 @@ def run_experiment(schema, p=None):
         q0 = eval_snaps_comp[ic_idx][:, 0]
         _ic_input_func = input_func_factory(params_ic)
         ic_input_func = lambda t, f=_ic_input_func: np.asarray(f(t))
-        ic_solves = _generate_rom_solves(
+        ic_solves = generate_rom_solves(
             operator_samples=O_samples, rom=rom, q0=q0,
             time_eval=t_pred, input_func=ic_input_func,
             max_samples=max_samp,
@@ -764,11 +826,12 @@ def run_experiment(schema, p=None):
             ci_coverage = float(np.mean(all_in_ci))
             print(f"    CI coverage: {ci_coverage:.2%} (target: 90%)")
 
-    # ── Persist (schema matches heat 04_conditional_integral) ────────────
+    # ── Persist (schema matches heat 04_unified) ────────────
     out_dir = os.path.join(SCRIPT_DIR, 'results', 'comparison', schema['name'])
     os.makedirs(out_dir, exist_ok=True)
     save_dict = {
         't_pred': t_pred,
+        't_full': np.asarray(config.time_domain),
         'train_error': train_error, 'pred_error': pred_error,
         'stability_pct': stability_pct,
         'ci_coverage': ci_coverage, 'ci_width': ci_width,
@@ -776,13 +839,24 @@ def run_experiment(schema, p=None):
         'n_ics': len(all_rom_solves),
         'op_norm_median': float(np.median(op_norms)),
         'losses': losses,
+        'training_span': np.array(TRAINING_SPAN),
+        'num_modes': nmodes,
+        'eval_labels': np.array(eval_labels, dtype=object),
+        'O_samples': O_samples,
+        'basis_entries': np.asarray(basis.entries),
+        'basis_shift': np.asarray(basis.shift_),
     }
+    eval_true_states = list(all_true_states) + [test_true_list[0]]
     for ic_idx, solves in enumerate(all_rom_solves):
         if len(solves) > 0:
             save_dict[f'rom_solves_{ic_idx}'] = np.array(solves)
         else:
             save_dict[f'rom_solves_{ic_idx}'] = np.empty(
                 (0, p['NUM_MODES'], len(t_pred)))
+        save_dict[f'snaps_comp_{ic_idx}'] = eval_snaps_comp[ic_idx]
+        save_dict[f'true_comp_{ic_idx}'] = eval_true_comp[ic_idx]
+        save_dict[f'true_states_{ic_idx}'] = eval_true_states[ic_idx]
+        save_dict[f't_samp_{ic_idx}'] = eval_t_samp[ic_idx]
     np.savez(os.path.join(out_dir, f'04_unified{os.environ.get("OUTPUT_SUFFIX","")}.npz'), **save_dict)
 
     return {

@@ -1,108 +1,113 @@
 # 04 Unified — Marginalised-O × Weak-Form Bayesian OpInf
 
-A consolidation of three feature branches into a single 04-method family:
+`04_unified.py` is the active Bayesian OpInf method used across the PDE
+experiments. It combines Gaussian-process smoothing, weak-form constraints, and
+closed-form operator marginalisation.
 
-- `tests` (main working branch) — base infrastructure, tumor variants, plotting
-- `richer-guide` — analytical marginalisation of O (closed-form posterior)
-- `weak-form-revision` — WSINDy-style smooth bump test functions
+## Current method
 
-All three composed cleanly because **both data terms are linear in O**, so 04g's
-marginal-O conjugacy applies to the concatenated derivative + weak-form system.
+For each ROM mode `i`, the GP posterior gives a derivative posterior
 
-## Method
-
-For each ROM mode $i$:
-
-$$
-\begin{bmatrix} f(X) \\ \int\psi_k\,f(X)\,dt \end{bmatrix}\,O_i \;\approx\; \begin{bmatrix} \mu_z \\ -\int\psi_k'\,X\,dt \end{bmatrix} \quad\text{with}\quad O_i \sim \mathcal{N}(0,\sigma_O^2 I)
-$$
-
-Stacking gives one design matrix $A$ per mode with per-row precisions from
-GP-derivative variance (top block) and from $\gamma^2\int\psi_k^2$ (bottom
-block). The closed-form per-mode evidence
-
-$$
-\log p(y_i\mid\theta) = -\tfrac12\big(y_i^\top P_i y_i - \mu_i^\top b_i + m\log\sigma_O^2 + \log|\Lambda_i| + \log|\Sigma_i| + N\log 2\pi\big)
-$$
-
-is what SVI optimises; $\theta$ is only the $3r$-dim GP hyperparameter vector.
-Posterior $O$ is drawn from its closed-form conditional $\mathcal{N}(\mu_i, \Lambda_i^{-1})$
-per $\theta$-sample.
-
-For multi-IC experiments (heat), rows from each IC stack vertically — $O$ is
-shared, so this is just a bigger linear system; one Cholesky per mode.
-
-## Per-experiment results
-
-| Experiment    | Operators | Regime              | Stab | Train | Pred  | CI    | Time |
-|---------------|-----------|---------------------|------|-------|-------|-------|------|
-| Euler         | cAH       | dense low-noise     | 100% |  0.9% | 17.6% | 99.4% |  99s |
-| Euler         | cAH       | sparse low-noise    | 100% |  5.1% | 20.1% | 92.2% |  26s |
-| Euler         | cAH       | dense high-noise    | 100% |  8.6% | 32.3% | 85.7% |  94s |
-| Burgers-2D    | cAH       | dense medium-noise  |  49% |  1.6% |  4.6% | 93.4% |  18s |
-| Heat (5 ICs)  | cAHBN     | sparse medium-noise |  66% |  1.8% | 17.7% | 98.0% |  72s |
-| Tumor         | cA        | dense low-noise     | 100% |  2.3% |  5.7% | 96.4% |  34s |
-| Tumor         | cA        | dense medium-noise  | 100% |  3.2% |  3.9% | 60.8% |  25s |
-| Tumor         | cA        | dense high-noise    | 100% |  6.5% | 17.2% | 59.2% |  14s |
-
-(All on richer-guide branch / thesis_claude_richer_guide worktree.)
-
-## Per-experiment adaptations
-
-All experiments share the same `build_model`/`run_experiment` skeleton; the
-template lives at `experiments/burgers_2d/04_unified.py`. Per-experiment
-differences:
-
-- **Euler** (`experiments/euler/04_unified.py`): broad GP priors (no MLE
-  anchoring) work because state variances are O(1).
-- **Burgers-2D**: σ²~10³ requires **MLE-anchored LogNormal priors**
-  (`gp_prior_scale=0.1`), **trace-based ridge** on $\Lambda_i$
-  (`ridge = inv_σO² + 1e-6·max(tr(M)/m, 1)`), and **stronger jitter**
-  `max(1e-5, σ²·1e-3)` for numerically stable Cholesky.
-- **Heat** (multi-IC): operator shared across ICs; per-IC kernel matrices and
-  $\psi_k$ design rows precomputed, then vertically concatenated. Inputs passed
-  per IC into `_assemble_data_matrix`. **Bug fix**: `input_func` must return
-  `np.ndarray` (not jnp) for opinf 0.6's ROM predict; wrapped at eval time.
-- **Tumor**: autonomous `cA` operators, **adaptive POD** (probe with
-  `NUM_MODES + 4` modes, keep only those with SNR $\sigma^2/\nu>10$ to discard
-  noise-dominated modes), `t_pred` constructed from `config.PREDICTION_DAYS`.
-- **FitzHugh-Nagumo**: skipped — exploratory run showed the marg-O posterior is
-  too wide for FN's stiff state×input coupling (26% stab, 66% train). The
-  2-stage `04_conditional_integral.py` remains the recommended path for FN.
-
-## File map
-
-```
-experiments/euler/04_unified.py            # reference: broad priors
-experiments/burgers_2d/04_unified.py       # reference: MLE-anchored + ridge
-experiments/heat/04_unified.py             # multi-IC variant
-experiments/tumor/04_unified.py            # adaptive-POD autonomous variant
-experiments/euler/compare_04_variants.py   # head-to-head against 04/04b/04g
+```text
+Z_i | data, θ_i ~ N(μ_{z,i}, Σ_{z,i}).
 ```
 
-## Commit history (richer-guide)
+The operator row `O_i` is constrained by two linear-in-`O_i` blocks.
 
-```
-4e05f41 Propagate 04_unified.py to heat experiment (multi-IC)
-215fe14 Propagate 04_unified.py to tumor experiment
-cbbab82 Propagate 04_unified to burgers_2d
-74a31bf Add 04_unified.py for euler + compare script
-684f91e Merge weak-form-revision → richer-guide
-5be6a98 Merge tests → richer-guide
+### Derivative block
+
+```text
+μ_{z,i} ≈ f(X) O_i^T,
+Σ_D,i = Σ_{z,i} + γ² I.
 ```
 
-## Known limitations / future work
+### Weak-form block
 
-1. **Burgers stability (49%)** — for sparse data the marginal-O tails are
-   wider than the 2-stage posterior. Either tighter `σ_O` or a hierarchical
-   `σ_O ~ HalfCauchy` prior (already plumbed via `HIER_SIGMA_O=1` env var)
-   could help.
-2. **Heat CI over-coverage (98% vs 90%)** — posterior slightly broad; same
-   `σ_O` tuning lever applies.
-3. **Tumor CI under-coverage (59-60% at higher noise)** — opposite issue:
-   posterior too narrow once SNR-truncation discards modes the GP MLL would
-   otherwise penalise. Hierarchical noise prior or downweighting MLL might
-   widen.
-4. **FN deferred** — input×state coupling needs revisiting. Either a stronger
-   informative O prior centred on least-squares, or stay on
-   `04_conditional_integral.py`.
+Let `Ψ_w[k, j] = w_j ψ_k(t_j)` be the quadrature-weighted test-function matrix.
+The weak-form data use the derivative representation
+
+```text
+w_i = Ψ_w μ_{z,i},
+Ψ(X)[k, :] = ∫ ψ_k(t) d(X(t), u(t))^T dt.
+```
+
+The weak-form covariance propagates the same GP derivative uncertainty:
+
+```text
+Σ_W,i = Ψ_w Σ_{z,i} Ψ_w^T + γ² diag(∫ ψ_k(t)^2 dt).
+```
+
+Thus both likelihood blocks are "GP derivative covariance + slack" in their
+respective spaces. The resulting per-mode Gaussian linear model is
+
+```text
+y_i = A(X) O_i^T + η_i,
+η_i ~ N(0, blockdiag(Σ_D,i, Σ_W,i)).
+```
+
+With `O_i ~ N(0, σ_O² I)`, the conditional posterior of `O_i` and the marginal
+likelihood are available in closed form. SVI therefore only explores the GP
+hyperparameters (and optional hyperparameters such as hierarchical `σ_O`).
+
+## Active experiments
+
+| Experiment | Script | Operators | Distinguishing features |
+|---|---|---|---|
+| Euler | `experiments/euler/04_unified.py` | `cAH` | Single-trajectory autonomous quadratic ROM; broad GP priors. |
+| Burgers 2D | `experiments/burgers_2d/04_unified.py` | `cAH` | Single-trajectory diffusion-reaction case; MLE-anchored GP priors and trace-based ridge. |
+| Heat | `experiments/heat/04_unified.py` | `cAHBN` | Multi-IC shared operator; input-dependent ROM; lifted/shifted basis; deterministic OpInf prior center with stability shift. |
+| Tumor | `experiments/tumor/04_unified.py` | `cA` | TumorTwin cached FOM data; autonomous growth; adaptive POD via GP SNR threshold. |
+
+## Verified 04 results
+
+These metrics are from the current saved `results/comparison/<schema>/04_unified.npz`
+files after rerunning the full-covariance derivative/weak-form implementation.
+
+| Experiment | Regime | Stability | Train error | Prediction error | CI coverage | Runtime |
+|---|---|---:|---:|---:|---:|---:|
+| Euler | dense low noise | 100.0% | 1.20% | 10.13% | 99.9% | 303s |
+| Euler | sparse low noise | 96.0% | 73.32% | 70.48% | 52.0% | 61s |
+| Euler | dense high noise | 100.0% | 40.28% | 72.26% | 53.0% | 323s |
+| Burgers 2D | dense medium noise | 39.5% | 0.90% | 2.93% | 95.9% | 31s |
+| Heat | sparse low noise | 100.0% | 3.83% | 6.01% | 68.2% | 134s |
+| Heat | sparse medium noise | 100.0% | 3.90% | 5.99% | 63.8% | 129s |
+| Heat | sparse high noise | 100.0% | 4.32% | 6.34% | 63.0% | 129s |
+| Tumor | dense low noise | 100.0% | 2.85% | 7.35% | 93.8% | 42s |
+| Tumor | dense medium noise | 100.0% | 3.42% | 4.60% | 65.0% | 33s |
+| Tumor | dense high noise | 100.0% | 6.89% | 15.81% | 51.9% | 28s |
+
+## Plot regeneration
+
+Each `04_unified.py` run writes a `.npz` file under
+`experiments/<pde>/results/comparison/<schema>/04_unified.npz`. Regenerate the
+per-method 04 plots with:
+
+```bash
+conda run -n prob_rom python plot_from_npz.py \
+  experiments/euler/results/comparison/dense_low_noise/04_unified.npz \
+  experiments/euler/figures
+```
+
+The plotter writes schema-prefixed files such as:
+
+```text
+04_dense_low_noise_rom_trajectories.png
+04_dense_low_noise_loss.png
+04_dense_low_noise_operator_traces.png
+04_dense_low_noise_full_order_error.png
+```
+
+Single-IC experiments also get `04_<schema>_rom_notebook.png`. Heat is multi-IC
+and uses the IC-by-mode trajectory grid instead.
+
+## Notes and limitations
+
+- **Euler sparse/high-noise regimes** currently have high prediction error and
+  under-coverage despite stable solves.
+- **Burgers 2D** has low median error but low stable-solve fraction, indicating
+  heavy-tailed operator samples.
+- **Heat** is stable across all tested regimes but under-covers relative to the
+  nominal 90% interval.
+- **Tumor** performs well at low noise but under-covers at higher noise after
+  adaptive SNR-based mode truncation.
+- **FitzHugh-Nagumo** is not part of the active experiment set.

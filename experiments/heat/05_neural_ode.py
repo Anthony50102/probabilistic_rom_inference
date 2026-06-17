@@ -1,7 +1,7 @@
 """
 05 — Neural ODE Ensemble Baseline — Heat Equation
 
-Fair comparison against Bayesian OpInf (04_conditional_integral.py):
+Fair comparison against Bayesian OpInf (04_unified.py):
 same data generation, basis, evaluation, and plotting conventions.
 
 A neural ODE learns dq̂/dt = f_θ(q̂, u(t)) where q̂ ∈ R^5 is the
