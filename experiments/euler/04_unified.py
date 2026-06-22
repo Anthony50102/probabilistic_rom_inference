@@ -67,8 +67,6 @@ SCHEMAS = [
 MODEL_PARAMS = dict(
     NUM_MODES=6,
     GAMMA2=10.0,
-    DERIV_WEIGHT=1.0,
-    WEAKFORM_WEIGHT=1.0,
     MLL_WEIGHT=1.0,
     SIGMA_O=30.0,          # O ~ N(0, SIGMA_O² I)
     WINDOW_SIZE=20,
@@ -93,7 +91,7 @@ FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
 # =============================================================================
 def build_model(rom, num_modes, time_sampled, snapshots_comp,
                 num_eval_points, window_size,
-                deriv_weight, weakform_weight, mll_weight,
+                mll_weight,
                 sigma_O, bump_p, num_test_funcs, bump_radius_frac):
     """Build marginalised-O + weak-form Bayesian model.
 
@@ -190,10 +188,15 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         #   Σ_z = K_zz - K_zy K_yy^{-1} K_zy^T
         K_post_Z = K_zz - K_zy @ V                                # (T_eval, T_eval)
         K_post_Z = 0.5 * (K_post_Z + K_post_Z.T)                  # symmetrise
+        # GP STATE posterior covariance (for integration-by-parts weak form):
+        #   Σ_X = K_ee - K_et K_yy^{-1} K_et^T
+        W = jax.scipy.linalg.cho_solve((L, True), K_et.T)
+        K_post_X = K_ee - K_et @ W                                # (T_eval, T_eval)
+        K_post_X = 0.5 * (K_post_X + K_post_X.T)                  # symmetrise
         mll = -0.5 * (jnp.dot(y_i, alpha)
                       + 2.0 * jnp.sum(jnp.log(jnp.diag(L)))
                       + n_train * jnp.log(2.0 * jnp.pi))
-        return X_eval, mu_z, K_post_Z, mll
+        return X_eval, mu_z, K_post_Z, K_post_X, mll
 
     _batch_gp_cond = jax.vmap(_single_gp_conditional)
 
@@ -261,7 +264,45 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
     # is sufficient (no need for R^D as well).
     WEAK_ONLY = bool(int(os.environ.get("WEAK_ONLY", "0")))
 
+    # WEAKFORM_MODE selects the weak-form representation:
+    #   "deriv" (default): w_i = ∫ψ_k μ_z dt          (uses noisy GP derivative)
+    #                      Σ_W = Ψ Σ_z Ψ^T + slack
+    #   "ibp": WSINDy integration-by-parts; w_i = -∫ψ'_k X_i dt (smooth GP state
+    #          only, derivative moved onto the test function)
+    #                      Σ_W = Ψ' Σ_X Ψ'^T + slack
+    # The "ibp" form avoids differentiating the noisy data and is the
+    # noise-robust constraint the weak form is meant to provide.
+    WEAKFORM_MODE = os.environ.get("WEAKFORM_MODE", "deriv").lower()
+
+    # DERIV_COV selects the derivative-block noise model:
+    #   "diag" (default): Σ_D = diag(deriv_var + γ²) — independent per-time-point
+    #       precision 1/(deriv_var_ij + γ²). This is the original (pre full-cov)
+    #       form and is markedly more accurate + better-calibrated here.
+    #   "full": Σ_D = Σ_z + γ²I — full dense GP derivative posterior covariance.
+    #       Off-diagonal GP correlations de-regularise the operator fit, causing
+    #       phase drift + under-coverage (regression introduced in f5dad02).
+    DERIV_COV = os.environ.get("DERIV_COV", "diag").lower()
+    deriv_is_diag = (DERIV_COV != "full")
+
     # ── Closed-form per-mode marginal likelihood ─────────────────────────
+
+    def _diag_block_contrib(A_blk, y_blk, prec_vec):
+        """(M, b, quad_y, log_det_Sig, N) for a diagonal-covariance block,
+        given the precision vector prec_vec = 1/diag(Σ)."""
+        Aw = A_blk * prec_vec[:, None]
+        M = A_blk.T @ Aw
+        b = A_blk.T @ (prec_vec * y_blk)
+        quad_y = jnp.sum(prec_vec * y_blk ** 2)
+        log_det_Sig = -jnp.sum(jnp.log(prec_vec + 1e-30))
+        N_blk = prec_vec.shape[0]
+        return M, b, quad_y, log_det_Sig, N_blk
+
+    def _deriv_block_contrib(A_D, y_D, deriv_blk):
+        """Derivative-block (M,b,quad_y,log_det,N): diagonal (precision vector)
+        or dense (covariance matrix) depending on DERIV_COV."""
+        if deriv_is_diag:
+            return _diag_block_contrib(A_D, y_D, deriv_blk)
+        return _dense_block_contrib(A_D, y_D, deriv_blk)
 
     def _dense_block_contrib(A_blk, y_blk, Sigma_blk):
         """Compute (M, b, quad_y, log_det_Sig, N) for one dense-covariance block."""
@@ -278,9 +319,9 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
     def _per_mode_evidence_dense(A_D, y_D, Sigma_D,
                                   A_W, y_W, Sigma_W,
                                   m, inv_sigma_O2, log_sigma_O2):
-        """log p(y_i | θ) with two dense covariance blocks:
-        derivative Σ_D = Σ_z + γ²I, weak-form Σ_W = Ψ Σ_z Ψ^T + slack."""
-        M_D, b_D, qy_D, lds_D, N_D = _dense_block_contrib(A_D, y_D, Sigma_D)
+        """log p(y_i | θ) with derivative block (diag or dense Σ_D) and dense
+        weak-form Σ_W = Ψ Σ_z Ψ^T + slack."""
+        M_D, b_D, qy_D, lds_D, N_D = _deriv_block_contrib(A_D, y_D, Sigma_D)
         M_W, b_W, qy_W, lds_W, N_W = _dense_block_contrib(A_W, y_W, Sigma_W)
 
         M_i = M_D + M_W
@@ -318,31 +359,54 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
 
     # ── Build design matrices + noise covariance per θ ───────────────────
     def _build_AyP(ells, sig2s, nus, gamma2):
-        """Per-θ build of design matrices + dense noise covariance.
+        """Per-θ build of design matrices + noise covariance.
 
-        Both blocks use the full GP derivative posterior covariance Σ_z:
-          - Derivative: Σ_D = Σ_z + γ²I          (full covariance)
-          - Weak-form:  Σ_W = Ψ Σ_z Ψ^T + slack  (GP deriv cov through ψ)
+        Derivative block (DERIV_COV):
+          - "diag" (default): Σ_D = diag(deriv_var + γ²) — returned as a
+            per-mode precision vector (r, n_eval).
+          - "full": Σ_D = Σ_z + γ²I — per-mode dense covariance (r, n, n).
+        Weak-form block depends on WEAKFORM_MODE:
+          - "deriv": data ∫ψ μ_z dt,  Σ_W = Ψ Σ_z Ψ^T + slack
+          - "ibp":   data -∫ψ' X dt,  Σ_W = Ψ' Σ_X Ψ'^T + slack (state-based,
+                     noise-robust WSINDy form)
         """
-        Xs, mu_zs, K_posts_Z, mlls = _batch_gp_cond(ells, sig2s, nus, y_obs)
+        Xs, mu_zs, K_posts_Z, K_posts_X, mlls = _batch_gp_cond(
+            ells, sig2s, nus, y_obs)
         f_X = rom.model._assemble_data_matrix(Xs, inputs=None)
 
         n_eval = f_X.shape[0]
         I_eval = jnp.eye(n_eval)
 
-        # Derivative block: full Σ_D = (Σ_z + γ²I) / deriv_weight per mode
-        Sigma_D = (K_posts_Z + gamma2 * I_eval[None, :, :]) / (deriv_weight + 1e-30)
+        # Derivative block
+        if deriv_is_diag:
+            # Σ_D diagonal → return precision 1/(deriv_var + γ²) per mode.
+            deriv_var = jnp.maximum(jax.vmap(jnp.diagonal)(K_posts_Z), 0.0)
+            Sigma_D = 1.0 / (deriv_var + gamma2 + 1e-4)          # (r, n_eval)
+        else:
+            Sigma_D = K_posts_Z + gamma2 * I_eval[None, :, :]    # (r, n, n)
 
-        # Weak-form block: data w_i = ∫ψ_k μ_z dt (derivative form)
-        # Covariance: Σ_W = (Ψ Σ_z Ψ^T + γ² diag(∫ψ²)) / weakform_weight
+        # Weak-form block design matrix is the same in both modes:
+        #   A_weak[k, :] = ∫ψ_k(t) f(X(t)) dt
         A_weak = wpsi @ f_X                                       # (K, m)
-        weak_obs = mu_zs @ wpsi.T                                 # (r, K)
-
         diag_slack = gamma2 * jnp.diag(int_psi_sq_arr)            # (K, K)
-        def _sigma_w_one(K_post_Z_i):
-            return (wpsi @ K_post_Z_i @ wpsi.T
-                    + diag_slack) / (weakform_weight + 1e-30)
-        Sigma_W = jax.vmap(_sigma_w_one)(K_posts_Z)               # (r, K, K)
+
+        if WEAKFORM_MODE == "ibp":
+            # WSINDy integration-by-parts: data uses only the smooth GP state X,
+            # derivative moved onto the analytic test-function derivative ψ'.
+            #   w_i = -∫ψ'_k(t) X_i(t) dt
+            #   Σ_W = Ψ' Σ_X Ψ'^T + γ² diag(∫ψ²)
+            weak_obs = -(Xs @ wpsi_dot.T)                        # (r, K)
+            def _sigma_w_one(K_post_X_i):
+                return wpsi_dot @ K_post_X_i @ wpsi_dot.T + diag_slack
+            Sigma_W = jax.vmap(_sigma_w_one)(K_posts_X)          # (r, K, K)
+        else:
+            # Derivative form: data integrates the noisy GP derivative μ_z.
+            #   w_i = ∫ψ_k(t) μ_z_i(t) dt
+            #   Σ_W = Ψ Σ_z Ψ^T + γ² diag(∫ψ²)
+            weak_obs = mu_zs @ wpsi.T                            # (r, K)
+            def _sigma_w_one(K_post_Z_i):
+                return wpsi @ K_post_Z_i @ wpsi.T + diag_slack
+            Sigma_W = jax.vmap(_sigma_w_one)(K_posts_Z)          # (r, K, K)
 
         return (Xs, mu_zs, f_X, mu_zs, Sigma_D,
                 A_weak, weak_obs, Sigma_W, mlls)
@@ -410,7 +474,7 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         m = A_D.shape[1]
 
         def _one_dense(y_Di, Sigma_Di, y_Wi, Sigma_Wi):
-            M_D, b_D, _, _, _ = _dense_block_contrib(A_D, y_Di, Sigma_Di)
+            M_D, b_D, _, _, _ = _deriv_block_contrib(A_D, y_Di, Sigma_Di)
             M_W, b_W, _, _, _ = _dense_block_contrib(A_W, y_Wi, Sigma_Wi)
             Lambda_i = M_D + M_W + inv_sO2 * jnp.eye(m)
             L_i = jnp.linalg.cholesky(Lambda_i)
@@ -452,8 +516,10 @@ def run_experiment(schema, p=None):
         p = MODEL_PARAMS
     noise = schema['NOISE_LEVEL']
     nsamp = schema['NUM_SAMPLES']
-    neval = schema['NUM_EVAL_POINTS']
-    nmodes = p['NUM_MODES']
+    neval = int(os.environ.get("NUM_EVAL_POINTS", schema['NUM_EVAL_POINTS']))
+    nmodes = int(os.environ.get("NUM_MODES", p['NUM_MODES']))
+    gamma2_val = float(os.environ.get("GAMMA2", p['GAMMA2']))
+    sigma_O_val = float(os.environ.get("SIGMA_O", p['SIGMA_O']))
 
     print(f"\n{'=' * 78}")
     print(f"  {schema['label']}  ({nsamp} samples, {noise:.0%} noise)"
@@ -482,9 +548,7 @@ def run_experiment(schema, p=None):
         rom=rom, num_modes=nmodes,
         time_sampled=t_samp, snapshots_comp=snaps_comp,
         num_eval_points=neval, window_size=p['WINDOW_SIZE'],
-        deriv_weight=p['DERIV_WEIGHT'],
-        weakform_weight=p['WEAKFORM_WEIGHT'],
-        mll_weight=p['MLL_WEIGHT'], sigma_O=p['SIGMA_O'],
+        mll_weight=p['MLL_WEIGHT'], sigma_O=sigma_O_val,
         bump_p=p['BUMP_P'], num_test_funcs=p['NUM_TEST_FUNCS'],
         bump_radius_frac=p['BUMP_RADIUS_FRAC'])
 
@@ -492,7 +556,9 @@ def run_experiment(schema, p=None):
     INIT_MODE = os.environ.get("INIT_MODE", "median")
     INFER = os.environ.get("INFER", "svi").lower()
     print(f"  PRIOR_MODE={os.environ.get('PRIOR_MODE','informative')}  "
-          f"INIT_MODE={INIT_MODE}  INFER={INFER}")
+          f"INIT_MODE={INIT_MODE}  INFER={INFER}  γ²={gamma2_val:g}  σ_O={sigma_O_val:g}  "
+          f"weakform={os.environ.get('WEAKFORM_MODE','deriv')}  "
+          f"deriv_cov={os.environ.get('DERIV_COV','diag')}")
 
     if INIT_MODE == "physical":
         init_values = {}
@@ -504,7 +570,7 @@ def run_experiment(schema, p=None):
     else:
         init_loc_fn = init_to_median
 
-    model_kwargs = dict(gamma2=p['GAMMA2'])
+    model_kwargs = dict(gamma2=gamma2_val)
     rng_key, ik = random.split(rng_key)
     t0 = time.time()
 
@@ -578,12 +644,12 @@ def run_experiment(schema, p=None):
 
     ells_s, sig2s_s, nus_s = _stack_theta(post)
     sO_s = post.get('sigma_O', None)
-    sO_default_jnp = jnp.asarray(p['SIGMA_O'])
+    sO_default_jnp = jnp.asarray(sigma_O_val)
 
     @jax.jit
     def _draw_O(ells, sig2s, nus, key, sO_val):
         mu_O, C_O, _, _ = posterior_O_fn(ells, sig2s, nus,
-                                          p['GAMMA2'], sO_val)
+                                          gamma2_val, sO_val)
         eps = jax.random.normal(key, shape=mu_O.shape)
         O = mu_O + jnp.einsum('ijk,ik->ij', C_O, eps)
         return O, mu_O
