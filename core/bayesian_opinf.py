@@ -1080,6 +1080,7 @@ def generate_rom_predictions(
     input_func: Optional[Callable] = None,
     data_scaler = None,
     ivp_method: Optional[str] = None,
+    state0_samples: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Generate ROM predictions from posterior samples.
@@ -1088,6 +1089,11 @@ def generate_rom_predictions(
       - MCMC: keys are original site names ("O", "X0", ...)
       - SVI + guide.sample_posterior(): same as MCMC
       - SVI raw params: keys like "auto_O_auto_loc"
+
+    If ``state0_samples`` is provided (shape ``(n_total, num_modes)``, aligned
+    with the operator samples), each trajectory is integrated from its own
+    initial condition instead of the shared ``snapshots_compressed[:, 0]``.
+    This propagates initial-condition uncertainty into the predictive band.
     
     Returns
     -------
@@ -1148,10 +1154,12 @@ def generate_rom_predictions(
             predict_kwargs = {}
             if ivp_method is not None:
                 predict_kwargs['method'] = ivp_method
+            state0_i = (snapshots_compressed[:, 0] if state0_samples is None
+                        else np.asarray(state0_samples[i]))
             if input_func is not None:
-                rom.model.predict(state0=snapshots_compressed[:, 0], t=time_eval, input_func=input_func, **predict_kwargs)
+                rom.model.predict(state0=state0_i, t=time_eval, input_func=input_func, **predict_kwargs)
             else:
-                rom.model.predict(state0=snapshots_compressed[:, 0], t=time_eval, **predict_kwargs)
+                rom.model.predict(state0=state0_i, t=time_eval, **predict_kwargs)
             
             result = rom.model.predict_result_
             # Support both scipy (.y) and JAX/diffrax (.ys) result formats

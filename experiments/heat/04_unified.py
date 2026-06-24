@@ -492,6 +492,10 @@ def build_model(
 def run_experiment(schema, p=None):
     if p is None:
         p = MODEL_PARAMS
+    # Allow quick env overrides of the operator-prior scale and ODE slack.
+    p = dict(p)
+    p['SIGMA_O'] = float(os.environ.get("SIGMA_O", p['SIGMA_O']))
+    p['GAMMA2'] = float(os.environ.get("GAMMA2", p['GAMMA2']))
     noise = schema['NOISE_LEVEL']
     nsamp = schema['NUM_SAMPLES']
     neval = schema['NUM_EVAL_POINTS']
@@ -775,15 +779,55 @@ def run_experiment(schema, p=None):
     train_mask = t_pred <= TRAINING_SPAN[1]
     pred_mask = t_pred > TRAINING_SPAN[1]
 
+    # Optional initial-condition uncertainty (see euler/04_unified.py). Per eval
+    # IC, draw each trajectory's start from the GP state posterior at t0.
+    IC_UNCERTAINTY = bool(int(os.environ.get("IC_UNCERTAINTY", "1")))
+    IC_SCALE = float(os.environ.get("IC_SCALE", "1.0"))
+
+    def _ic_std(t_tr, ell_v, sig2_v, nu_v):
+        t_tr = np.asarray(t_tr); n_tr = len(t_tr)
+        sq_tt = (t_tr[:, None] - t_tr[None, :]) ** 2
+        sq_0t = (t_tr[0] - t_tr) ** 2
+        out = np.zeros(len(ell_v))
+        for j in range(len(ell_v)):
+            ell2 = float(ell_v[j]) ** 2
+            K_tt = (sig2_v[j] * np.exp(-sq_tt / (2 * ell2))
+                    + (nu_v[j] + max(1e-5, sig2_v[j] * 1e-4)) * np.eye(n_tr))
+            k0 = sig2_v[j] * np.exp(-sq_0t / (2 * ell2))
+            var = sig2_v[j] - k0 @ np.linalg.solve(K_tt, k0)
+            out[j] = np.sqrt(max(float(var), 0.0))
+        return out
+
+    # Per-mode GP hypers averaged over posterior samples (per training IC).
+    ells_m = np.asarray(ells_s).mean(0)   # (nics, nmodes)
+    sig2s_m = np.asarray(sig2s_s).mean(0)
+    nus_m = np.asarray(nus_s).mean(0)
+    rng_ic = np.random.default_rng(p['SEED'])
+
     print(f"\n  Results ({runtime:.0f}s):")
     for ic_idx, (params_ic, true_c) in enumerate(zip(eval_params, eval_true_comp)):
         q0 = eval_snaps_comp[ic_idx][:, 0]
         _ic_input_func = input_func_factory(params_ic)
         ic_input_func = lambda t, f=_ic_input_func: np.asarray(f(t))
+        q0_samples = None
+        if IC_UNCERTAINTY:
+            # Use this IC's fitted hypers; fall back to the train-IC mean for the
+            # held-out test IC (which has no fitted GP).
+            hp = ic_idx if ic_idx < ells_m.shape[0] else None
+            if hp is None:
+                ev, s2v, nuv = ells_m.mean(0), sig2s_m.mean(0), nus_m.mean(0)
+            else:
+                ev, s2v, nuv = ells_m[hp], sig2s_m[hp], nus_m[hp]
+            sig_ic = _ic_std(eval_t_samp[ic_idx], ev, s2v, nuv)
+            eps_ic = rng_ic.standard_normal((len(O_samples), len(q0)))
+            q0_samples = q0[None, :] + IC_SCALE * sig_ic[None, :] * eps_ic
+            if ic_idx == 0:
+                print(f"  IC uncertainty ON: σ_ic[IC0]="
+                      f"{np.array2string(sig_ic, precision=4)}  scale={IC_SCALE}")
         ic_solves = generate_rom_solves(
             operator_samples=O_samples, rom=rom, q0=q0,
             time_eval=t_pred, input_func=ic_input_func,
-            max_samples=max_samp,
+            max_samples=max_samp, q0_samples=q0_samples,
         )
         all_rom_solves.append(ic_solves)
         all_n_stable.append(len(ic_solves))
@@ -812,27 +856,59 @@ def run_experiment(schema, p=None):
     pred_error = float(np.mean(pr_fin)) if pr_fin else float('inf')
     stability_pct = train_ic_stable / max(train_ic_total, 1) * 100
 
-    print(f"\n    Overall: {train_ic_stable}/{train_ic_total} ({stability_pct:.0f}%)")
-    print(f"    Avg train: {train_error:.4%}  |  Avg pred: {pred_error:.4%}")
-    print(f"    Test IC:   {all_n_stable[-1]}/{max_samp} stable, "
-          f"train={all_train_errors[-1]:.4%}, pred={all_pred_errors[-1]:.4%}")
+    print(f"\n    Stability — train ICs: {train_ic_stable}/{train_ic_total} "
+          f"({stability_pct:.0f}%)   test IC: {all_n_stable[-1]}/{max_samp}")
+
+    # ── CI coverage + width, computed PER eval-IC, then split into
+    #    train-IC (averaged over the nics training ICs) and test-IC (held-out).
+    #    Coverage is further split into the in-window (fit) and extrapolation
+    #    horizons so the metric is unambiguous.
+    def _ci_for_ic(ic_idx):
+        if all_n_stable[ic_idx] == 0:
+            return None
+        ti = interp1d(config.time_domain, eval_true_comp[ic_idx],
+                      kind='cubic', fill_value='extrapolate')
+        ta = ti(t_pred)
+        q05 = np.percentile(all_rom_solves[ic_idx], 5, axis=0)
+        q95 = np.percentile(all_rom_solves[ic_idx], 95, axis=0)
+        inside = (ta >= q05) & (ta <= q95)
+        return dict(
+            width=float(np.mean(q95 - q05)),
+            cov=float(np.mean(inside)),
+            cov_fit=float(np.mean(inside[:, train_mask])),
+            cov_ext=float(np.mean(inside[:, pred_mask])),
+        )
 
     ci_width = ci_coverage = float('nan')
+    ci_cov_fit = ci_cov_ext = float('nan')
+    test_ci_coverage = test_ci_cov_fit = test_ci_cov_ext = test_ci_width = float('nan')
     if train_ic_stable > 0:
-        all_in_ci, all_widths = [], []
-        for ic_idx in range(nics):
-            if all_n_stable[ic_idx] > 0:
-                ti = interp1d(config.time_domain, eval_true_comp[ic_idx],
-                              kind='cubic', fill_value='extrapolate')
-                ta = ti(t_pred)
-                q05 = np.percentile(all_rom_solves[ic_idx], 5, axis=0)
-                q95 = np.percentile(all_rom_solves[ic_idx], 95, axis=0)
-                all_widths.append(np.mean(q95 - q05))
-                all_in_ci.append(np.mean((ta >= q05) & (ta <= q95)))
-        if all_widths:
-            ci_width = float(np.mean(all_widths))
-            ci_coverage = float(np.mean(all_in_ci))
-            print(f"    CI coverage: {ci_coverage:.2%} (target: 90%)")
+        train_ci = [_ci_for_ic(i) for i in range(nics)]
+        train_ci = [c for c in train_ci if c is not None]
+        if train_ci:
+            ci_width = float(np.mean([c['width'] for c in train_ci]))
+            ci_coverage = float(np.mean([c['cov'] for c in train_ci]))
+            ci_cov_fit = float(np.mean([c['cov_fit'] for c in train_ci]))
+            ci_cov_ext = float(np.mean([c['cov_ext'] for c in train_ci]))
+    test_ci = _ci_for_ic(nics)
+    if test_ci is not None:
+        test_ci_width = test_ci['width']
+        test_ci_coverage = test_ci['cov']
+        test_ci_cov_fit = test_ci['cov_fit']
+        test_ci_cov_ext = test_ci['cov_ext']
+
+    # ── Clear, disambiguated report ──────────────────────────────────────
+    #   "fit"    = in-window (t ≤ train end), "ext" = temporal extrapolation.
+    #   train-IC = averaged over training ICs; test-IC = held-out new IC.
+    print(f"\n    ── Train ICs (n={nics}) ──")
+    print(f"      fit err: {train_error:.4%}   extrap err: {pred_error:.4%}")
+    print(f"      coverage: overall {ci_coverage:.2%}  "
+          f"(fit {ci_cov_fit:.2%} / extrap {ci_cov_ext:.2%})   target 90%")
+    print(f"    ── Test IC (held-out) ──")
+    print(f"      fit err: {all_train_errors[-1]:.4%}   "
+          f"extrap err: {all_pred_errors[-1]:.4%}")
+    print(f"      coverage: overall {test_ci_coverage:.2%}  "
+          f"(fit {test_ci_cov_fit:.2%} / extrap {test_ci_cov_ext:.2%})   target 90%")
 
     # ── Persist (schema matches heat 04_unified) ────────────
     out_dir = os.path.join(SCRIPT_DIR, 'results', 'comparison', schema['name'])
@@ -843,6 +919,11 @@ def run_experiment(schema, p=None):
         'train_error': train_error, 'pred_error': pred_error,
         'stability_pct': stability_pct,
         'ci_coverage': ci_coverage, 'ci_width': ci_width,
+        'ci_cov_fit': ci_cov_fit, 'ci_cov_ext': ci_cov_ext,
+        'test_ci_coverage': test_ci_coverage, 'test_ci_width': test_ci_width,
+        'test_ci_cov_fit': test_ci_cov_fit, 'test_ci_cov_ext': test_ci_cov_ext,
+        'test_train_error': all_train_errors[-1],
+        'test_pred_error': all_pred_errors[-1],
         'runtime': runtime,
         'n_ics': len(all_rom_solves),
         'op_norm_median': float(np.median(op_norms)),
@@ -876,6 +957,9 @@ def run_experiment(schema, p=None):
         'test_pred_error': all_pred_errors[-1],
         'test_n_stable': all_n_stable[-1],
         'ci_coverage': ci_coverage, 'ci_width': ci_width,
+        'ci_cov_fit': ci_cov_fit, 'ci_cov_ext': ci_cov_ext,
+        'test_ci_coverage': test_ci_coverage, 'test_ci_width': test_ci_width,
+        'test_ci_cov_fit': test_ci_cov_fit, 'test_ci_cov_ext': test_ci_cov_ext,
         'runtime': runtime, 'losses': losses,
         'samples': samples,
         'all_rom_solves': all_rom_solves,
@@ -920,19 +1004,24 @@ def main(schema_names=None):
         r = run_experiment(schema)
         results.append(r)
 
-    print(f"\n\n{'=' * 90}")
+    print(f"\n\n{'=' * 104}")
     print(f"SUMMARY — Marg-O × Weak-Form (Heat, multi-IC)")
-    print(f"{'=' * 90}")
-    print(f"{'Regime':<28s} {'Samp':>4s} {'Noise':>5s} {'Stab':>5s} "
-          f"{'Train':>8s} {'Pred':>8s} {'TestPr':>8s} {'CI_cov':>7s} {'Time':>6s}")
-    print(f"{'-'*28} {'-'*4} {'-'*5} {'-'*5} {'-'*8} {'-'*8} {'-'*8} {'-'*7} {'-'*6}")
+    print(f"  'tr'=train ICs, 'te'=held-out test IC; "
+          f"err split fit(in-window)/ext(extrapolation); CI vs 90% target")
+    print(f"{'=' * 104}")
+    print(f"{'Regime':<26s} {'Nois':>4s} {'Stab':>5s} "
+          f"{'trFit':>7s} {'trExt':>7s} {'trCI':>6s} "
+          f"{'teFit':>7s} {'teExt':>7s} {'teCI':>6s} {'Time':>6s}")
+    print(f"{'-'*26} {'-'*4} {'-'*5} {'-'*7} {'-'*7} {'-'*6} "
+          f"{'-'*7} {'-'*7} {'-'*6} {'-'*6}")
     for r in results:
         s = r['schema']
-        print(f"{s['label']:<28s} {s['NUM_SAMPLES']:>4d} "
-              f"{s['NOISE_LEVEL']:>4.0%} {r['stability_pct']:>4.0f}% "
-              f"{r['train_error']:>7.2%} {r['pred_error']:>7.2%} "
-              f"{r['test_pred_error']:>7.2%} "
-              f"{r['ci_coverage']:>6.1%} {r['runtime']:>5.0f}s")
+        print(f"{s['label']:<26s} {s['NOISE_LEVEL']:>3.0%} "
+              f"{r['stability_pct']:>4.0f}% "
+              f"{r['train_error']:>6.2%} {r['pred_error']:>6.2%} "
+              f"{r['ci_coverage']:>5.0%} "
+              f"{r['test_train_error']:>6.2%} {r['test_pred_error']:>6.2%} "
+              f"{r['test_ci_coverage']:>5.0%} {r['runtime']:>5.0f}s")
 
 
 if __name__ == "__main__":

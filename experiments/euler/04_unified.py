@@ -684,6 +684,36 @@ def run_experiment(schema, p=None):
           f"min={op_norms.min():.1f}  max={op_norms.max():.1f}")
 
     # ── ROM predictions on the requested span ────────────────────────────
+    # Optional initial-condition uncertainty: draw each trajectory's start from
+    # the GP state posterior at t0 instead of the single fixed data point. This
+    # propagates IC uncertainty (which grows with the forecast horizon) into the
+    # predictive band without touching the operator (stability-safe).
+    IC_UNCERTAINTY = bool(int(os.environ.get("IC_UNCERTAINTY", "1")))
+    IC_SCALE = float(os.environ.get("IC_SCALE", "1.0"))
+    state0_samples = None
+    if IC_UNCERTAINTY:
+        t_tr = np.asarray(t_samp)
+        n_tr = len(t_tr)
+        ell_m = np.asarray(ells_s).mean(0)
+        sig2_m = np.asarray(sig2s_s).mean(0)
+        nu_m = np.asarray(nus_s).mean(0)
+        sq_tt = (t_tr[:, None] - t_tr[None, :]) ** 2
+        sq_0t = (t_tr[0] - t_tr) ** 2
+        sig_ic = np.zeros(nmodes)
+        for i in range(nmodes):
+            ell2 = ell_m[i] ** 2
+            K_tt = (sig2_m[i] * np.exp(-sq_tt / (2 * ell2))
+                    + (nu_m[i] + max(1e-5, sig2_m[i] * 1e-4)) * np.eye(n_tr))
+            k0 = sig2_m[i] * np.exp(-sq_0t / (2 * ell2))
+            var = sig2_m[i] - k0 @ np.linalg.solve(K_tt, k0)
+            sig_ic[i] = np.sqrt(max(float(var), 0.0))
+        rng_ic = np.random.default_rng(p['SEED'])
+        eps_ic = rng_ic.standard_normal((npost, nmodes))
+        state0_samples = (snaps_comp[:, 0][None, :]
+                          + IC_SCALE * sig_ic[None, :] * eps_ic)
+        print(f"  IC uncertainty ON: σ_ic={np.array2string(sig_ic, precision=4)}"
+              f"  scale={IC_SCALE}")
+
     samples_for_rom = {'O': jnp.array(O_samples)}
     for i in range(nmodes):
         # dummy X_i entries kept for downstream compatibility (unused)
@@ -691,7 +721,8 @@ def run_experiment(schema, p=None):
     t_pred = np.linspace(PREDICTION_SPAN[0], PREDICTION_SPAN[1], 400)
     Os, Xs, rom_solves = generate_rom_predictions(
         samples=samples_for_rom, rom=rom, snapshots_compressed=snaps_comp,
-        time_eval=t_pred, num_modes=nmodes, num_pulls=min(200, npost))
+        time_eval=t_pred, num_modes=nmodes, num_pulls=min(200, npost),
+        state0_samples=state0_samples)
 
     n_stable = len(rom_solves)
     n_total = len(Os)
