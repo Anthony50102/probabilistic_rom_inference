@@ -292,8 +292,12 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         n_eval = f_X.shape[0]
         I_eval = jnp.eye(n_eval)
 
-        # Derivative block: full Σ_D = (Σ_z + γ²I) / deriv_weight per mode
-        Sigma_D = (K_posts_Z + gamma2 * I_eval[None, :, :]) / (deriv_weight + 1e-30)
+        # Derivative block: diagonal Σ_D = (diag(Σ_z) + γ²I) / deriv_weight per mode.
+        # Only the marginal derivative variances are used; the off-diagonal GP
+        # correlations are dropped — they invert into a high-pass whitening filter
+        # that overfits noise (see euler/04_unified.py for the analysis).
+        Sigma_D = (jax.vmap(lambda K: jnp.diag(jnp.diag(K)))(K_posts_Z)
+                   + gamma2 * I_eval[None, :, :]) / (deriv_weight + 1e-30)
 
         # Weak-form block: data w_i = ∫ψ_k μ_z dt (derivative form)
         A_weak = wpsi @ f_X                                       # (K, m)
@@ -304,6 +308,10 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
             return (wpsi @ K_post_Z_i @ wpsi.T
                     + diag_slack) / (weakform_weight + 1e-30)
         Sigma_W = jax.vmap(_sigma_w_one)(K_posts_Z)               # (r, K, K)
+        # Diagonalize the weak-form covariance too, for consistency with the
+        # derivative block (off-diagonals are negligible here — the weak block is
+        # small and the derivative block dominates the fit).
+        Sigma_W = jax.vmap(lambda S: jnp.diag(jnp.diag(S)))(Sigma_W)
 
         return (Xs, mu_zs, f_X, mu_zs, Sigma_D,
                 A_weak, weak_obs, Sigma_W, mlls)

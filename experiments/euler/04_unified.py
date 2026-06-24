@@ -284,6 +284,15 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
     DERIV_COV = os.environ.get("DERIV_COV", "diag").lower()
     deriv_is_diag = (DERIV_COV != "full")
 
+    # WEAKFORM_COV selects the weak-form-block noise model:
+    #   "full" (default): Σ_W = Ψ Σ_z Ψ^T + slack — full K×K covariance. The
+    #       test-function projection makes this small + well-conditioned, so the
+    #       off-diagonals are benign (no whitening pathology).
+    #   "diag": keep only diag(Σ_W) — for consistency with the diagonal
+    #       derivative block / to test whether the weak-form off-diagonals matter.
+    WEAKFORM_COV = os.environ.get("WEAKFORM_COV", "diag").lower()
+    weakform_is_diag = (WEAKFORM_COV == "diag")
+
     # ── Closed-form per-mode marginal likelihood ─────────────────────────
 
     def _diag_block_contrib(A_blk, y_blk, prec_vec):
@@ -407,6 +416,10 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
             def _sigma_w_one(K_post_Z_i):
                 return wpsi @ K_post_Z_i @ wpsi.T + diag_slack
             Sigma_W = jax.vmap(_sigma_w_one)(K_posts_Z)          # (r, K, K)
+
+        if weakform_is_diag:
+            # Keep only the marginal variances of the weak-form covariance.
+            Sigma_W = jax.vmap(lambda S: jnp.diag(jnp.diag(S)))(Sigma_W)
 
         return (Xs, mu_zs, f_X, mu_zs, Sigma_D,
                 A_weak, weak_obs, Sigma_W, mlls)
@@ -558,7 +571,8 @@ def run_experiment(schema, p=None):
     print(f"  PRIOR_MODE={os.environ.get('PRIOR_MODE','informative')}  "
           f"INIT_MODE={INIT_MODE}  INFER={INFER}  γ²={gamma2_val:g}  σ_O={sigma_O_val:g}  "
           f"weakform={os.environ.get('WEAKFORM_MODE','deriv')}  "
-          f"deriv_cov={os.environ.get('DERIV_COV','diag')}")
+          f"deriv_cov={os.environ.get('DERIV_COV','diag')}  "
+          f"weakform_cov={os.environ.get('WEAKFORM_COV','diag')}")
 
     if INIT_MODE == "physical":
         init_values = {}
