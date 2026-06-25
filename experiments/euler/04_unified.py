@@ -43,8 +43,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
 from config import Basis
 from core import (
-    generate_trajectory, JaxCompatibleModel, compute_gp_derivatives,
-    generate_rom_predictions, rbf_eval,
+    generate_trajectory, JaxCompatibleModel,
+    generate_rom_predictions,
 )
 from core.diagnostics import plot_trace
 from core.plotting import plot_full_order_error
@@ -256,23 +256,48 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         sig2_loc, sig2_scale = broad_log_sig2_locs, 1.0
         nu_loc, nu_scale = broad_log_nu_locs, 1.0
 
-    inv_sigma_O2_default = 1.0 / (sigma_O ** 2)
-    log_sigma_O2_default = 2.0 * jnp.log(sigma_O)
+    # Operator-block structure (cAH): const | linear(r) | quadratic(r(r+1)/2).
+    n_const, n_lin = 1, num_modes
+    n_quad = (1 + num_modes + num_modes * (num_modes + 1) // 2) - n_const - n_lin
+    m_total = n_const + n_lin + n_quad
+    # Per-column block id: 0=const, 1=linear, 2=quadratic.
+    block_id = np.concatenate([np.zeros(n_const, int), np.ones(n_lin, int),
+                               2 * np.ones(n_quad, int)])
+    block_id_jnp = jnp.asarray(block_id)
 
-    # WEAK_ONLY=1 drops the derivative residual entirely; only the weak-form
-    # block constrains the operator. Useful for testing whether R^W alone
-    # is sufficient (no need for R^D as well).
-    WEAK_ONLY = bool(int(os.environ.get("WEAK_ONLY", "0")))
+    # ── Operator-prior modes ─────────────────────────────────────────────
+    #   "fixed"      : O ~ N(0, σ_O² I)  (uniform global scale).
+    #   "block_hier" : hierarchical/ARD per-block prior (default). Each block
+    #                  (const, linear, quad) gets a LEARNED scale τ_b with a broad
+    #                  hyperprior; O is still marginalised analytically given τ.
+    #                  The marginal likelihood (Bayesian Occam) shrinks the
+    #                  under-determined quadratic block automatically — no
+    #                  hand-tuning, no empirical-Bayes anchor.
+    OP_PRIOR_MODE = os.environ.get("OP_PRIOR_MODE", "block_hier").lower()
+    # Hyperprior on per-block log-scale: log τ_b ~ Normal(log τ0, s).  Broad and
+    # block-agnostic so the data — not the modeller — sets the relative scales.
+    HIER_TAU0 = float(os.environ.get("HIER_TAU0", str(sigma_O)))
+    HIER_TAU_SCALE = float(os.environ.get("HIER_TAU_SCALE", "3.0"))
+
+    # Fixed-mode per-column prior precision: uniform 1/σ_O².
+    inv_prec_vec = jnp.full(m_total, 1.0 / (sigma_O ** 2))
+
+    def _prior_prec_from_tau(tau_block):
+        """Per-column prior precision + log|Σ_O| from 3 per-block scales τ_block."""
+        tau_col = tau_block[block_id_jnp]             # (m,)
+        prior_prec = 1.0 / (tau_col ** 2 + 1e-12)
+        log_prior_cov = 2.0 * jnp.sum(jnp.log(tau_col + 1e-12))
+        return prior_prec, log_prior_cov
 
     # WEAKFORM_MODE selects the weak-form representation:
-    #   "deriv" (default): w_i = ∫ψ_k μ_z dt          (uses noisy GP derivative)
-    #                      Σ_W = Ψ Σ_z Ψ^T + slack
-    #   "ibp": WSINDy integration-by-parts; w_i = -∫ψ'_k X_i dt (smooth GP state
-    #          only, derivative moved onto the test function)
+    #   "ibp" (default): WSINDy integration-by-parts; w_i = -∫ψ'_k X_i dt (smooth
+    #          GP state only, derivative moved onto the test function)
     #                      Σ_W = Ψ' Σ_X Ψ'^T + slack
+    #   "deriv": w_i = ∫ψ_k μ_z dt          (uses noisy GP derivative)
+    #                      Σ_W = Ψ Σ_z Ψ^T + slack
     # The "ibp" form avoids differentiating the noisy data and is the
     # noise-robust constraint the weak form is meant to provide.
-    WEAKFORM_MODE = os.environ.get("WEAKFORM_MODE", "deriv").lower()
+    WEAKFORM_MODE = os.environ.get("WEAKFORM_MODE", "ibp").lower()
 
     # DERIV_COV selects the derivative-block noise model:
     #   "diag" (default): Σ_D = diag(deriv_var + γ²) — independent per-time-point
@@ -327,15 +352,17 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
 
     def _per_mode_evidence_dense(A_D, y_D, Sigma_D,
                                   A_W, y_W, Sigma_W,
-                                  m, inv_sigma_O2, log_sigma_O2):
-        """log p(y_i | θ) with derivative block (diag or dense Σ_D) and dense
-        weak-form Σ_W = Ψ Σ_z Ψ^T + slack."""
+                                  prior_prec, log_prior_cov):
+        """log p(y_i | θ) with derivative block (diag or dense Σ_D), dense
+        weak-form Σ_W, and a per-column operator prior precision `prior_prec`
+        (length m). `log_prior_cov` = log|Σ_O| = -Σ_j log(prior_prec_j)."""
+        m = prior_prec.shape[0]
         M_D, b_D, qy_D, lds_D, N_D = _deriv_block_contrib(A_D, y_D, Sigma_D)
         M_W, b_W, qy_W, lds_W, N_W = _dense_block_contrib(A_W, y_W, Sigma_W)
 
         M_i = M_D + M_W
         b_i = b_D + b_W
-        Lambda_i = M_i + inv_sigma_O2 * jnp.eye(m)
+        Lambda_i = M_i + jnp.diag(prior_prec)
         L_i = jnp.linalg.cholesky(Lambda_i)
         mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_i)
         log_det_Lambda = 2.0 * jnp.sum(jnp.log(jnp.diag(L_i)))
@@ -345,25 +372,9 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         N_i = N_D + N_W
         log_p = -0.5 * ((quad_y - quad_mu)
                         + log_det_Sigma
-                        + m * log_sigma_O2
+                        + log_prior_cov
                         + log_det_Lambda
                         + N_i * jnp.log(2.0 * jnp.pi))
-        return log_p, mu_i, L_i
-
-    def _per_mode_evidence_weak_only(A_W, y_W, Sigma_W, m, inv_sigma_O2, log_sigma_O2):
-        """log p(y_i | θ) using only the weak-form block (no derivative term).
-        y_W ~ N(A_W · O_i, Σ_W),   O_i ~ N(0, σ_O² I)."""
-        M_W, b_W, qy_W, lds_W, N_W = _dense_block_contrib(A_W, y_W, Sigma_W)
-        Lambda_i = M_W + inv_sigma_O2 * jnp.eye(m)
-        L_i = jnp.linalg.cholesky(Lambda_i)
-        mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_W)
-        log_det_Lambda = 2.0 * jnp.sum(jnp.log(jnp.diag(L_i)))
-        quad_mu = jnp.dot(mu_i, b_W)
-        log_p = -0.5 * ((qy_W - quad_mu)
-                        + lds_W
-                        + m * log_sigma_O2
-                        + log_det_Lambda
-                        + N_W * jnp.log(2.0 * jnp.pi))
         return log_p, mu_i, L_i
 
     # ── Build design matrices + noise covariance per θ ───────────────────
@@ -424,8 +435,6 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         return (Xs, mu_zs, f_X, mu_zs, Sigma_D,
                 A_weak, weak_obs, Sigma_W, mlls)
 
-    HIERARCHICAL = bool(int(os.environ.get("HIER_SIGMA_O", "0")))
-
     def model(gamma2=10.0):
         ells = jnp.stack([
             numpyro.sample(f"lengthscale_{i}",
@@ -440,13 +449,16 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
                            dist.LogNormal(nu_loc[i], nu_scale))
             for i in range(num_modes)])
 
-        if HIERARCHICAL:
-            sO = numpyro.sample("sigma_O", dist.HalfCauchy(sigma_O))
-            inv_sO2 = 1.0 / (sO ** 2 + 1e-12)
-            log_sO2 = 2.0 * jnp.log(sO + 1e-12)
+        if OP_PRIOR_MODE == "block_hier":
+            # Hierarchical/ARD per-block operator-prior scales (learned).
+            log_tau = numpyro.sample(
+                "log_tau_block",
+                dist.Normal(jnp.log(HIER_TAU0) * jnp.ones(3), HIER_TAU_SCALE))
+            tau_block = jnp.exp(log_tau)
+            prior_prec, log_prior_cov = _prior_prec_from_tau(tau_block)
         else:
-            inv_sO2 = inv_sigma_O2_default
-            log_sO2 = log_sigma_O2_default
+            prior_prec = inv_prec_vec
+            log_prior_cov = -jnp.sum(jnp.log(inv_prec_vec))
 
         (Xs, mu_zs,
          A_D, y_D, Sigma_D,
@@ -459,27 +471,26 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         if mll_weight > 0:
             numpyro.factor("gp_mll", mll_weight * jnp.sum(mlls))
 
-        m = A_D.shape[1]
         total_evidence = 0.0
-        if WEAK_ONLY:
-            for i in range(num_modes):
-                log_p_i, _, _ = _per_mode_evidence_weak_only(
-                    A_W, y_W[i], Sigma_W[i],
-                    m, inv_sO2, log_sO2)
-                total_evidence = total_evidence + log_p_i
-        else:
-            for i in range(num_modes):
-                log_p_i, _, _ = _per_mode_evidence_dense(
-                    A_D, y_D[i], Sigma_D[i],
-                    A_W, y_W[i], Sigma_W[i],
-                    m, inv_sO2, log_sO2)
-                total_evidence = total_evidence + log_p_i
+        for i in range(num_modes):
+            log_p_i, _, _ = _per_mode_evidence_dense(
+                A_D, y_D[i], Sigma_D[i],
+                A_W, y_W[i], Sigma_W[i],
+                prior_prec, log_prior_cov)
+            total_evidence = total_evidence + log_p_i
         numpyro.factor("marg_O_evidence", total_evidence)
 
     @jax.jit
-    def posterior_O_fn(ells, sig2s, nus, gamma2, sigma_O_val):
-        """Closed-form O posterior given θ: returns (μ_O, C_O, Xs, mu_zs)."""
+    def posterior_O_fn(ells, sig2s, nus, gamma2, sigma_O_val, tau_block=None):
+        """Closed-form O posterior given θ (and optional per-block scales τ):
+        returns (μ_O, C_O, Xs, mu_zs)."""
         inv_sO2 = 1.0 / (sigma_O_val ** 2 + 1e-12)
+        # Per-column operator-prior precision: from learned τ_block if given,
+        # else the uniform fixed prior scaled to sigma_O_val.
+        if tau_block is None:
+            prior_prec_vec = inv_sO2 * jnp.ones(m_total)
+        else:
+            prior_prec_vec, _ = _prior_prec_from_tau(tau_block)
         (Xs, mu_zs,
          A_D, y_D, Sigma_D,
          A_W, y_W, Sigma_W,
@@ -489,26 +500,15 @@ def build_model(rom, num_modes, time_sampled, snapshots_comp,
         def _one_dense(y_Di, Sigma_Di, y_Wi, Sigma_Wi):
             M_D, b_D, _, _, _ = _deriv_block_contrib(A_D, y_Di, Sigma_Di)
             M_W, b_W, _, _, _ = _dense_block_contrib(A_W, y_Wi, Sigma_Wi)
-            Lambda_i = M_D + M_W + inv_sO2 * jnp.eye(m)
+            Lambda_i = M_D + M_W + jnp.diag(prior_prec_vec)
             L_i = jnp.linalg.cholesky(Lambda_i)
             mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_D + b_W)
             C_i = jax.scipy.linalg.solve_triangular(L_i, jnp.eye(m), lower=True).T
             return mu_i, C_i
 
-        def _one_weak(y_Wi, Sigma_Wi):
-            M_W, b_W, _, _, _ = _dense_block_contrib(A_W, y_Wi, Sigma_Wi)
-            Lambda_i = M_W + inv_sO2 * jnp.eye(m)
-            L_i = jnp.linalg.cholesky(Lambda_i)
-            mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_W)
-            C_i = jax.scipy.linalg.solve_triangular(L_i, jnp.eye(m), lower=True).T
-            return mu_i, C_i
-
         mu_all, C_all = [], []
         for i in range(num_modes):
-            if WEAK_ONLY:
-                mi, Ci = _one_weak(y_W[i], Sigma_W[i])
-            else:
-                mi, Ci = _one_dense(y_D[i], Sigma_D[i], y_W[i], Sigma_W[i])
+            mi, Ci = _one_dense(y_D[i], Sigma_D[i], y_W[i], Sigma_W[i])
             mu_all.append(mi)
             C_all.append(Ci)
         return jnp.stack(mu_all), jnp.stack(C_all), Xs, mu_zs
@@ -570,9 +570,10 @@ def run_experiment(schema, p=None):
     INFER = os.environ.get("INFER", "svi").lower()
     print(f"  PRIOR_MODE={os.environ.get('PRIOR_MODE','informative')}  "
           f"INIT_MODE={INIT_MODE}  INFER={INFER}  γ²={gamma2_val:g}  σ_O={sigma_O_val:g}  "
-          f"weakform={os.environ.get('WEAKFORM_MODE','deriv')}  "
+          f"weakform={os.environ.get('WEAKFORM_MODE','ibp')}  "
           f"deriv_cov={os.environ.get('DERIV_COV','diag')}  "
-          f"weakform_cov={os.environ.get('WEAKFORM_COV','diag')}")
+          f"weakform_cov={os.environ.get('WEAKFORM_COV','diag')}  "
+          f"op_prior={os.environ.get('OP_PRIOR_MODE','block_hier')}")
 
     if INIT_MODE == "physical":
         init_values = {}
@@ -659,11 +660,18 @@ def run_experiment(schema, p=None):
     ells_s, sig2s_s, nus_s = _stack_theta(post)
     sO_s = post.get('sigma_O', None)
     sO_default_jnp = jnp.asarray(sigma_O_val)
+    # Per-block operator scales τ (block_hier mode); None otherwise.
+    tau_block_s = None
+    if 'log_tau_block' in post:
+        tau_block_s = jnp.exp(jnp.asarray(post['log_tau_block']))  # (npost, 3)
+        _tb_mean = np.exp(np.asarray(post['log_tau_block']).mean(0))
+        print(f"  learned τ_block (const,linear,quad): "
+              f"{np.array2string(_tb_mean, precision=3)}")
 
     @jax.jit
-    def _draw_O(ells, sig2s, nus, key, sO_val):
+    def _draw_O(ells, sig2s, nus, key, sO_val, tau_block):
         mu_O, C_O, _, _ = posterior_O_fn(ells, sig2s, nus,
-                                          gamma2_val, sO_val)
+                                          gamma2_val, sO_val, tau_block)
         eps = jax.random.normal(key, shape=mu_O.shape)
         O = mu_O + jnp.einsum('ijk,ik->ij', C_O, eps)
         return O, mu_O
@@ -673,7 +681,8 @@ def run_experiment(schema, p=None):
     O_samples_list, O_mean_list = [], []
     for s in range(npost):
         sO_val = sO_default_jnp if sO_s is None else sO_s[s]
-        O, mu_O = _draw_O(ells_s[s], sig2s_s[s], nus_s[s], keys[s], sO_val)
+        tb = None if tau_block_s is None else tau_block_s[s]
+        O, mu_O = _draw_O(ells_s[s], sig2s_s[s], nus_s[s], keys[s], sO_val, tb)
         O_samples_list.append(np.array(O))
         O_mean_list.append(np.array(mu_O))
     O_samples = np.stack(O_samples_list)
