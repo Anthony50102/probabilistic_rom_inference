@@ -1,7 +1,7 @@
 """
 05 — Neural ODE Ensemble Baseline (Tumor Growth + Chemotherapy) — Single Trajectory
 
-Black-box baseline for comparison with Bayesian OpInf chemo (04_*_chemo).
+Black-box baseline for comparison with Bayesian OpInf chemo (04_unified_chemo.py).
 The MLP takes the reduced state q AND the chemo input α(t) as inputs:
 
     dq/dt = f_θ(q, α(t))     (concat scalar α as MLP input → in-dim = r+1)
