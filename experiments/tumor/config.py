@@ -748,6 +748,9 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
             atol=1e-9,
             saveat=saveat,
         )
+        # Store the raw diffrax solution so callers reading `predict_result_`
+        # (e.g. core.generate_rom_predictions, which reads `.ys`) work.
+        self.predict_result_ = sol
         return sol.ys.T
 
 
@@ -844,6 +847,10 @@ class ChemoReducedOrderModel(_JaxCompatibleModel):
         )
         if not sol.success:
             raise RuntimeError(f"ChemoReducedOrderModel.predict failed: {sol.message}")
+        # Store the raw solver result so callers that read `predict_result_`
+        # (e.g. core.generate_rom_predictions) work — matches the opinf
+        # ContinuousModel.predict convention. The scipy OdeResult exposes `.y`.
+        self.predict_result_ = sol
         return sol.y
 
 
