@@ -14,6 +14,7 @@ from .config import WeakFormConfig
 from .experiment import ExperimentSpec, PreparedRun, EvalTarget
 from .model import build_model
 from .pipeline import run_experiment
+from .viz import plot_standard
 
 __all__ = [
     "WeakFormConfig",
@@ -22,4 +23,5 @@ __all__ = [
     "EvalTarget",
     "build_model",
     "run_experiment",
+    "plot_standard",
 ]

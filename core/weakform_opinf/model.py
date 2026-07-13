@@ -80,7 +80,7 @@ def build_model(rom, trajectories, cfg):
         time_eval = np.linspace(float(t_samp[0]), float(t_samp[-1]), num_eval)
         time_evals.append(time_eval)
 
-        make = _gp.make_gp_conditional(t_samp)
+        make = _gp.make_gp_conditional(t_samp, jitter_rel=cfg.gp_jitter_rel)
         _single, _batch = make(time_eval)
         tf = _wf.build_test_functions(time_eval, cfg)
         locs = _gp.spectrum_anchored_prior_locs(

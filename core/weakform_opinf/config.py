@@ -36,6 +36,10 @@ class WeakFormConfig:
     """LogNormal scale for the per-mode variance prior."""
     nu_prior_scale: float = 1.0
     """LogNormal scale for the per-mode noise prior."""
+    gp_jitter_rel: float = 1e-4
+    """Relative GP kernel nugget: diag jitter = max(1e-5, σ²·gp_jitter_rel).
+    A numerical stabiliser; larger values add mild extra smoothing. Euler/
+    burgers use 1e-4; the tumor cases use 1e-3 (their established value)."""
 
     # ── Weak-form test functions ─────────────────────────────────────────
     window_size: int = 20

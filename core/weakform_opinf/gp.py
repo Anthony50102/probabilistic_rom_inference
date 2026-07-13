@@ -24,10 +24,13 @@ import jax.numpy as jnp
 _Z99 = 2.3263  # standard-normal 99% quantile
 
 
-def make_gp_conditional(time_sampled):
+def make_gp_conditional(time_sampled, jitter_rel=1e-4):
     """Return a ``_single_gp_conditional(ell, sig2, nu, y_i)`` closure and its
     vmapped batch version, with kernel distance matrices baked in for the
     given training/eval grids.
+
+    ``jitter_rel`` sets the relative kernel nugget
+    ``max(1e-5, σ²·jitter_rel)`` added to the training-kernel diagonal.
 
     The eval grid is a dense uniform grid spanning the training window; it is
     returned so callers can share it with the weak-form construction.
@@ -48,7 +51,7 @@ def make_gp_conditional(time_sampled):
 
         def _single_gp_conditional(ell, sig2, nu, y_i):
             ell2 = ell ** 2
-            jitter = jnp.maximum(1e-5, sig2 * 1e-4)
+            jitter = jnp.maximum(1e-5, sig2 * jitter_rel)
             K_tt = _rbf_sq(ell, sig2, sq_diff_tt) + (nu + jitter) * I_train
             L = jnp.linalg.cholesky(K_tt)
             alpha = jax.scipy.linalg.cho_solve((L, True), y_i)
