@@ -73,18 +73,24 @@ def error_comparison(methods, projection_error, t_pred, training_span,
     axes[0].set(ylabel="Relative Error", title=f"ROM Prediction Error — {title}")
     axes[0].set_yscale("log"); axes[0].legend(loc="upper left", fontsize=9)
 
-    axes[1].plot(t_pred, projection_error, "k--", lw=2, label="Projection (basis limit)")
-    axes[1].set(ylabel="Relative Error", title="Projection Error (Basis Limit)")
-    axes[1].set_yscale("log"); axes[1].legend(loc="upper left", fontsize=9)
+    if projection_error is not None:
+        axes[1].plot(t_pred, projection_error, "k--", lw=2,
+                     label="Projection (basis limit)")
+        axes[1].set(ylabel="Relative Error", title="Projection Error (Basis Limit)")
+        axes[1].set_yscale("log"); axes[1].legend(loc="upper left", fontsize=9)
 
-    for m in methods:
-        med = np.median(_attr(m, "rom_errors"), axis=0)
-        excess = np.maximum(med - projection_error, 1e-16)
-        axes[2].plot(t_pred, excess, color=_attr(m, "color"), lw=2,
-                     label=_attr(m, "label"))
-    axes[2].set(xlabel="Time", ylabel="Relative Error",
-                title="Excess ROM Error (Above Basis Limit)")
-    axes[2].set_yscale("log"); axes[2].legend(loc="upper left", fontsize=9)
+        for m in methods:
+            med = np.median(_attr(m, "rom_errors"), axis=0)
+            excess = np.maximum(med - projection_error, 1e-16)
+            axes[2].plot(t_pred, excess, color=_attr(m, "color"), lw=2,
+                         label=_attr(m, "label"))
+        axes[2].set(xlabel="Time", ylabel="Relative Error",
+                    title="Excess ROM Error (Above Basis Limit)")
+        axes[2].set_yscale("log"); axes[2].legend(loc="upper left", fontsize=9)
+    else:
+        # No projection error supplied → hide the lower two panels.
+        axes[1].axis("off"); axes[2].axis("off")
+        axes[0].set_xlabel("Time")
 
     fig.tight_layout()
     return save_figure(fig, save_path, dpi=150)

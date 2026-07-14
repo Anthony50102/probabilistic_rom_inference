@@ -24,6 +24,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", ".."))
 
 import config
+from core.plotting import comparison
 from config import Basis, input_func_factory, input_parameters, test_parameters
 from core.plotting import save_metrics_table
 from step1_generate_data import TrajectorySampler
@@ -198,160 +199,14 @@ def compute_projection_error(basis, true_states_full_ic, t_pred):
 # ── Plots ────────────────────────────────────────────────────────────────────
 def plot_error_comparison(methods_with_data, projection_error, t_pred, schema,
                           ic_label, save_path):
-    """3-panel vertical plot: ROM error, projection error, excess error."""
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-
-    # Panel 1 — ROM full-order error
-    ax_rom = axes[0]
-    ax_rom.axvspan(TRAINING_SPAN[0], TRAINING_SPAN[1], color="gray", alpha=0.10)
-    for md in methods_with_data:
-        if "rom_errors" not in md or len(md["rom_errors"]) == 0:
-            continue
-        median = np.median(md["rom_errors"], axis=0)
-        q05 = np.percentile(md["rom_errors"], 5, axis=0)
-        q95 = np.percentile(md["rom_errors"], 95, axis=0)
-        ax_rom.plot(
-            t_pred, median,
-            color=md["color"], linestyle=md["linestyle"], lw=2,
-            label=f"{md['label']} (median)",
-        )
-        ax_rom.fill_between(t_pred, q05, q95, color=md["color"], alpha=0.10)
-    ax_rom.set_ylabel("Relative Error")
-    ax_rom.set_title(f"ROM Full-Order Error — Method Comparison ({ic_label})")
-    ax_rom.legend(loc="upper left", fontsize=9)
-    ax_rom.set_yscale("log")
-
-    # Panel 2 — Projection error (shared basis limit)
-    ax_proj = axes[1]
-    ax_proj.axvspan(TRAINING_SPAN[0], TRAINING_SPAN[1], color="gray", alpha=0.10)
-    ax_proj.plot(
-        t_pred, projection_error, "k--", lw=2,
-        label="Projection error (basis limit)",
-    )
-    ax_proj.set_ylabel("Relative Error")
-    ax_proj.set_title("Projection Error (Basis Limit)")
-    ax_proj.legend(loc="upper left", fontsize=9)
-    ax_proj.set_yscale("log")
-
-    # Panel 3 — Excess error above basis limit
-    ax_diff = axes[2]
-    ax_diff.axvspan(TRAINING_SPAN[0], TRAINING_SPAN[1], color="gray", alpha=0.10)
-    for md in methods_with_data:
-        if "rom_errors" not in md or len(md["rom_errors"]) == 0:
-            continue
-        median = np.median(md["rom_errors"], axis=0)
-        excess = np.maximum(median - projection_error, 1e-16)
-        ax_diff.plot(
-            t_pred, excess,
-            color=md["color"], linestyle=md["linestyle"], lw=2,
-            label=md["label"],
-        )
-    ax_diff.set_xlabel("Time")
-    ax_diff.set_ylabel("Relative Error")
-    ax_diff.set_title("Excess ROM Error (Above Basis Limit)")
-    ax_diff.legend(loc="upper left", fontsize=9)
-    ax_diff.set_yscale("log")
-
-    fig.suptitle(f"{schema['label']}", fontsize=14, fontweight="bold", y=0.98)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  📊 Saved: {save_path}")
-
+    comparison.error_comparison(methods_with_data, projection_error, t_pred, TRAINING_SPAN, schema['label'], save_path)
+    print(f"  Saved: {save_path}")
 
 def plot_metrics_comparison(methods_with_data, schema, save_path,
                             train_test_errors=None):
-    """Bar chart comparing relative L2 errors and CI coverage.
+    comparison.metrics_bars(methods_with_data, schema['label'], save_path)
+    print(f"  Saved: {save_path}")
 
-    If `train_test_errors` is provided (dict[label] -> dict with
-    'train_l2'/'test_l2'/'pred_l2'), the error panel is split into Train ICs
-    (average) vs Test IC bars per method.
-    """
-    labels = [md["label"] for md in methods_with_data]
-    colors = [md["color"] for md in methods_with_data]
-    n = len(methods_with_data)
-
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
-    # ── Panel 1: Train-region rel-L2 error (Train ICs vs Test IC) ──
-    ax = axes[0]
-    width = 0.38
-    x = np.arange(n)
-    if train_test_errors is not None:
-        train_vals = [train_test_errors[md["label"]]["train_l2"]
-                      for md in methods_with_data]
-        test_vals = [train_test_errors[md["label"]]["test_train_l2"]
-                     for md in methods_with_data]
-        b1 = ax.bar(x - width/2, train_vals, width, color=colors,
-                    edgecolor="black", linewidth=0.5, label="Train ICs (avg)")
-        b2 = ax.bar(x + width/2, test_vals, width, color=colors, alpha=0.45,
-                    edgecolor="black", linewidth=0.5, hatch="//",
-                    label="Test IC")
-        for b, v in list(zip(b1, train_vals)) + list(zip(b2, test_vals)):
-            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
-                    f"{v:.3f}", ha="center", va="bottom", fontsize=8)
-        ax.legend(fontsize=8, loc="upper right")
-    else:
-        vals = [md["train_error"] for md in methods_with_data]
-        bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
-        for bar, v in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                    f"{v:.3f}", ha="center", va="bottom", fontsize=9)
-    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("Relative L2 Error")
-    ax.set_title("Training-region Error")
-
-    # ── Panel 2: Prediction-region rel-L2 error (Train ICs vs Test IC) ──
-    ax = axes[1]
-    if train_test_errors is not None:
-        train_vals = [train_test_errors[md["label"]]["pred_l2"]
-                      for md in methods_with_data]
-        test_vals = [train_test_errors[md["label"]]["test_pred_l2"]
-                     for md in methods_with_data]
-        b1 = ax.bar(x - width/2, train_vals, width, color=colors,
-                    edgecolor="black", linewidth=0.5, label="Train ICs (avg)")
-        b2 = ax.bar(x + width/2, test_vals, width, color=colors, alpha=0.45,
-                    edgecolor="black", linewidth=0.5, hatch="//",
-                    label="Test IC")
-        for b, v in list(zip(b1, train_vals)) + list(zip(b2, test_vals)):
-            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
-                    f"{v:.3f}", ha="center", va="bottom", fontsize=8)
-        ax.legend(fontsize=8, loc="upper right")
-    else:
-        vals = [md["pred_error"] for md in methods_with_data]
-        bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
-        for bar, v in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                    f"{v:.3f}", ha="center", va="bottom", fontsize=9)
-    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("Relative L2 Error")
-    ax.set_title("Prediction-region Error")
-
-    # ── Panel 3: CI coverage ──
-    ax = axes[2]
-    vals = [(md["ci_coverage"] * 100) if not np.isnan(md["ci_coverage"]) else 0.0
-            for md in methods_with_data]
-    bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
-    ax.axhline(90.0, color='k', linestyle='--', lw=1, alpha=0.6, label='Target 90%')
-    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("CI Coverage (%)")
-    ax.set_title("90% CI Coverage")
-    ax.set_ylim(0, 105)
-    ax.legend(fontsize=8, loc='upper right')
-    for bar, v in zip(bars, vals):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                f"{v:.0f}%", ha="center", va="bottom", fontsize=9)
-
-    fig.suptitle(
-        f"Method Comparison — {schema['label']}", fontsize=14, fontweight="bold"
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  📊 Saved: {save_path}")
-
-
-# ── Per-regime comparison ────────────────────────────────────────────────────
 def compare_regime(schema):
     """Load all methods, regenerate shared data, and create comparison plots."""
     schema_name = schema["name"]
