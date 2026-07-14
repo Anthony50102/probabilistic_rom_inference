@@ -66,7 +66,66 @@ class RunResult:
     def primary(self) -> TargetResult:
         return self.targets[0]
 
-    def aggregate(self) -> dict:
+    @staticmethod
+    def from_flat(result, method_name):
+        rs = np.asarray(result["rom_solves"]) if len(result["rom_solves"]) \
+            else np.empty((0, result["num_modes"], len(result["t_pred"])))
+        snaps = result.get("snaps_comp")
+        tgt = TargetResult(
+            label="", t_pred=np.asarray(result["t_pred"]), rom_solves=rs,
+            true_comp=result["true_comp"], true_states=result["true_states"],
+            t_full=result["t_full"],
+            state0_comp=(snaps[:, 0] if snaps is not None else None),
+            train_error=float(result.get("train_error", np.nan)),
+            pred_error=float(result.get("pred_error", np.nan)),
+            stability_pct=float(result.get("stability_pct", np.nan)),
+            ci_coverage=float(result.get("ci_coverage", np.nan)),
+            ci_width=float(result.get("ci_width", np.nan)))
+        return RunResult(
+            method_name=method_name, schema=result["schema"],
+            basis=result["basis"], training_span=result["training_span"],
+            num_modes=result["num_modes"], targets=[tgt],
+            losses=np.asarray(result.get("losses", [0.0])),
+            t_samp=result.get("t_samp"), snapshots_comp=snaps,
+            O_samples=result.get("O_samples"),
+            runtime=float(result.get("runtime", np.nan)))
+
+    @staticmethod
+    def from_multi(result, method_name):
+        """Build a multi-target RunResult from a multi-IC 05 result dict.
+
+        Expects ``all_rom_solves``/``all_true_comp``/``all_snaps_comp`` lists
+        (one entry per evaluated IC) plus shared t_full/t_pred/basis. Truth
+        states are read from ``all_true_states`` or ``all_true_states_full``.
+        """
+        all_rs = result["all_rom_solves"]
+        all_tc = result["all_true_comp"]
+        all_ts = result.get("all_true_states",
+                            result.get("all_true_states_full"))
+        all_sn = result.get("all_snaps_comp")
+        labels = result.get("eval_labels", [""] * len(all_rs))
+        t_pred = np.asarray(result["t_pred"])
+        num_modes = result["num_modes"]
+        targets = []
+        for k in range(len(all_rs)):
+            rs = np.asarray(all_rs[k]) if len(all_rs[k]) \
+                else np.empty((0, num_modes, len(t_pred)))
+            sn = all_sn[k] if all_sn is not None else None
+            targets.append(TargetResult(
+                label=labels[k] if k < len(labels) else "",
+                t_pred=t_pred, rom_solves=rs, true_comp=all_tc[k],
+                true_states=all_ts[k], t_full=result["t_full"],
+                state0_comp=(sn[:, 0] if sn is not None else None)))
+        sn0 = all_sn[0] if all_sn is not None else None
+        ts0 = result.get("all_t_samp", [None])[0]
+        return RunResult(
+            method_name=method_name, schema=result["schema"],
+            basis=result["basis"], training_span=result["training_span"],
+            num_modes=num_modes, targets=targets,
+            losses=np.asarray(result.get("losses",
+                              result.get("all_member_losses", [0.0]))),
+            t_samp=ts0, snapshots_comp=sn0,
+            runtime=float(result.get("runtime", np.nan)))
         """Mean metrics over targets that produced finite errors."""
         fin = [t for t in self.targets if np.isfinite(t.train_error)]
         m = lambda k: float(np.mean([getattr(t, k) for t in fin])) if fin else float("nan")

@@ -337,118 +337,13 @@ def run_experiment(schema):
 # Plotting (single trajectory; mirrors 04 chemo layout)
 # =============================================================================
 def plot_results(result, save_dir=None):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
+    """Standard diagnostic figures via the centralized plotting package."""
+    from core.plotting import RunResult, figures
     if save_dir is None:
         save_dir = FIGURE_DIR
-    os.makedirs(save_dir, exist_ok=True)
-
-    schema = result['schema']
-    prefix = f"05_chemo_{schema['name']}"
-    rom_solves = result['rom_solves']
-    snaps_comp = result['snaps_comp']
-    true_comp = result['true_comp']
-    t_full = result['t_full']
-    t_pred = result['t_pred']
-    t_samp = result['t_samp']
-    training_span = result['training_span']
-    num_modes = result['num_modes']
-    losses = result['losses']
-
-    # ── 1. ROM trajectories ──────────────────────────────────────────
-    if len(rom_solves) > 0:
-        rom_med = np.median(rom_solves, axis=0)
-        rom_q05 = np.percentile(rom_solves, 5, axis=0)
-        rom_q95 = np.percentile(rom_solves, 95, axis=0)
-        ti = interp1d(t_full, true_comp, kind='cubic', fill_value='extrapolate')
-        true_at_pred = ti(t_pred)
-
-        n_stable = result['n_stable']
-        n_total = result['n_total']
-
-        fig, ax = plt.subplots(num_modes, 1, figsize=(10, 2.5 * num_modes), sharex=True)
-        if num_modes == 1:
-            ax = [ax]
-        for i in range(num_modes):
-            ax[i].axvspan(training_span[0], training_span[1],
-                          color='gray', alpha=0.10, zorder=0)
-            ax[i].plot(t_pred, true_at_pred[i], color='tab:gray', lw=2,
-                       label='True solution')
-            ax[i].plot(t_samp, snaps_comp[i], 'k.', ms=3, alpha=0.3,
-                       label='Raw obs', zorder=4)
-            ax[i].plot(t_pred, rom_med[i], color='tab:orange', linestyle='--',
-                       alpha=0.9, lw=2, label='Neural ODE median')
-            ax[i].fill_between(t_pred, rom_q05[i], rom_q95[i],
-                               color='tab:orange', alpha=0.15,
-                               label='Neural ODE 5-95%')
-            ax[i].axvline(training_span[1], color='k', ls=':', lw=0.8, alpha=0.5)
-            ax[i].set_ylabel(f'Mode {i + 1}')
-            yvals = true_at_pred[i]
-            ymin, ymax = np.nanmin(yvals), np.nanmax(yvals)
-            pad = max(abs(ymax - ymin) * 0.3, 1e-6)
-            ax[i].set_ylim(ymin - pad, ymax + pad)
-        ax[-1].set_xlabel('Time (days)')
-        handles, labels = ax[0].get_legend_handles_labels()
-        fig.legend(handles, labels, loc='upper center',
-                   bbox_to_anchor=(0.5, 0.96), ncol=len(handles),
-                   fontsize=9, frameon=True)
-        fig.suptitle(f"Neural ODE (Chemo) — {schema['label']}  "
-                     f"({n_stable}/{n_total} stable)", fontsize=14, y=1.0)
-        fig.tight_layout(rect=[0, 0, 1, 0.93])
-        path = os.path.join(save_dir, f"{prefix}_rom_trajectories.png")
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        print(f"  📊 Saved: {path}")
-        plt.close(fig)
-
-    # ── 2. Loss convergence ──────────────────────────────────────────
-    mean_loss = np.mean(losses, axis=0)
-    fig_loss, ax_loss = plt.subplots(1, 2, figsize=(12, 4))
-    ax_loss[0].plot(mean_loss, lw=0.8, color='tab:orange')
-    ax_loss[0].set_xlabel('Training Step')
-    ax_loss[0].set_ylabel('MSE Loss')
-    ax_loss[0].set_title('Loss Convergence (ensemble mean)')
-    ax_loss[0].grid(True, alpha=0.3)
-    half = len(mean_loss) // 2
-    ax_loss[1].plot(range(half, len(mean_loss)), mean_loss[half:],
-                    lw=0.8, color='tab:orange')
-    ax_loss[1].set_xlabel('Training Step')
-    ax_loss[1].set_ylabel('MSE Loss')
-    ax_loss[1].set_title('Loss (last 50%)')
-    ax_loss[1].grid(True, alpha=0.3)
-    fig_loss.tight_layout()
-    path = os.path.join(save_dir, f"{prefix}_loss.png")
-    fig_loss.savefig(path, dpi=200, bbox_inches='tight')
-    print(f"  📊 Saved: {path}")
-    plt.close(fig_loss)
-
-    # ── 3. Full-order error ──────────────────────────────────────────
-    basis = result['basis']
-    true_states = result['true_states']
-    if len(rom_solves) > 0 and basis is not None and true_states is not None:
-        cap = min(20, rom_solves.shape[0])
-        idx = np.linspace(0, rom_solves.shape[0] - 1, cap, dtype=int)
-        fig_foe, _ = plot_full_order_error(
-            rom_solves=rom_solves[idx], basis=basis,
-            true_states=true_states,
-            time_domain_full=t_full, time_domain_eval=t_pred,
-            training_span=training_span, error_type='relative',
-        )
-        fig_foe.suptitle(f'Full-Order Error — {schema["label"]}', fontsize=14)
-        path = os.path.join(save_dir, f"{prefix}_full_order_error.png")
-        fig_foe.savefig(path, dpi=200, bbox_inches='tight')
-        print(f"  📊 Saved: {path}")
-        plt.close(fig_foe)
-
-    # ── 4. Spatial comparison (axial slices) ─────────────────────────
-    plot_spatial_comparison(result, save_dir)
-
-    # ── 5. Tumor volume over time ────────────────────────────────────
-    plot_tumor_volume(result, save_dir)
-
-    # ── 6. Uncertainty Panel (FOM / Neural ODE median / 5-95% width) ─
-    plot_uncertainty_panel(result, save_dir)
+    run = RunResult.from_flat(result, "05_neural_ode_chemo")
+    figures.standard(run, save_dir, f"05_{result['schema']['name']}",
+                     layout="windows")
 
 
 def plot_uncertainty_panel(result, save_dir, timepoints_to_show=None):
