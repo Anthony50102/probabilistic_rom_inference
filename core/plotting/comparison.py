@@ -17,6 +17,13 @@ from .style import save_figure
 from ._legacy import save_metrics_table  # noqa: F401  (re-exported)
 
 
+def _attr(m, name, default=None):
+    """Access a field on either a MethodData object or a plain dict."""
+    if isinstance(m, dict):
+        return m.get(name, default)
+    return getattr(m, name, default)
+
+
 def compute_full_order_errors(rom_solves, t_pred, basis, t_full, true_states):
     """Return (per-sample rom_errors (S,T), projection_error (T,)) on ``t_pred``."""
     true_interp = interp1d(t_full, true_states, axis=1, kind="linear",
@@ -46,17 +53,23 @@ def fill_errors(methods, basis, t_full, true_states):
 
 def error_comparison(methods, projection_error, t_pred, training_span,
                      title, save_path):
-    """3-panel: ROM error, projection error, excess error (all methods overlaid)."""
+    """3-panel: ROM error, projection error, excess error (all methods overlaid).
+
+    ``methods`` items may be MethodData objects or dicts with keys
+    ``rom_errors``/``color``/``label``.
+    """
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
     for ax in axes:
         ax.axvspan(training_span[0], training_span[1], color="gray", alpha=0.10)
 
     for m in methods:
-        med = np.median(m.rom_errors, axis=0)
-        p5 = np.percentile(m.rom_errors, 5, axis=0)
-        p95 = np.percentile(m.rom_errors, 95, axis=0)
-        axes[0].plot(t_pred, med, color=m.color, lw=2, label=f"{m.label} (median)")
-        axes[0].fill_between(t_pred, p5, p95, color=m.color, alpha=0.10)
+        errs = _attr(m, "rom_errors")
+        med = np.median(errs, axis=0)
+        p5 = np.percentile(errs, 5, axis=0)
+        p95 = np.percentile(errs, 95, axis=0)
+        c, lab = _attr(m, "color"), _attr(m, "label")
+        axes[0].plot(t_pred, med, color=c, lw=2, label=f"{lab} (median)")
+        axes[0].fill_between(t_pred, p5, p95, color=c, alpha=0.10)
     axes[0].set(ylabel="Relative Error", title=f"ROM Prediction Error — {title}")
     axes[0].set_yscale("log"); axes[0].legend(loc="upper left", fontsize=9)
 
@@ -65,9 +78,10 @@ def error_comparison(methods, projection_error, t_pred, training_span,
     axes[1].set_yscale("log"); axes[1].legend(loc="upper left", fontsize=9)
 
     for m in methods:
-        med = np.median(m.rom_errors, axis=0)
+        med = np.median(_attr(m, "rom_errors"), axis=0)
         excess = np.maximum(med - projection_error, 1e-16)
-        axes[2].plot(t_pred, excess, color=m.color, lw=2, label=m.label)
+        axes[2].plot(t_pred, excess, color=_attr(m, "color"), lw=2,
+                     label=_attr(m, "label"))
     axes[2].set(xlabel="Time", ylabel="Relative Error",
                 title="Excess ROM Error (Above Basis Limit)")
     axes[2].set_yscale("log"); axes[2].legend(loc="upper left", fontsize=9)
@@ -79,8 +93,8 @@ def error_comparison(methods, projection_error, t_pred, training_span,
 def metrics_bars(methods, title, save_path):
     """Bar chart: train error, prediction error, CI coverage."""
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
-    labels = [m.label for m in methods]
-    colors = [m.color for m in methods]
+    labels = [_attr(m, "label") for m in methods]
+    colors = [_attr(m, "color") for m in methods]
     x = np.arange(len(labels))
 
     def _bars(ax, vals, fmt, ylabel, title_):
@@ -91,11 +105,12 @@ def metrics_bars(methods, title, save_path):
         ax.set_xticks(x); ax.set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
         ax.set(ylabel=ylabel, title=title_)
 
-    _bars(axes[0], [m.train_error for m in methods], lambda v: f"{v:.3f}",
-          "Relative L2 Error", "Training-region Error")
-    _bars(axes[1], [m.pred_error for m in methods], lambda v: f"{v:.3f}",
-          "Relative L2 Error", "Prediction-region Error")
-    covs = [(m.ci_coverage * 100) if not np.isnan(m.ci_coverage) else 0.0
+    _bars(axes[0], [_attr(m, "train_error") for m in methods],
+          lambda v: f"{v:.3f}", "Relative L2 Error", "Training-region Error")
+    _bars(axes[1], [_attr(m, "pred_error") for m in methods],
+          lambda v: f"{v:.3f}", "Relative L2 Error", "Prediction-region Error")
+    covs = [(_attr(m, "ci_coverage") * 100)
+            if not np.isnan(_attr(m, "ci_coverage", np.nan)) else 0.0
             for m in methods]
     _bars(axes[2], covs, lambda v: f"{v:.0f}%", "CI Coverage (%)", "90% CI Coverage")
     axes[2].axhline(90.0, color="k", ls="--", lw=1, alpha=0.6, label="Target 90%")
