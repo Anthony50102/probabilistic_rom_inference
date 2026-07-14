@@ -26,6 +26,7 @@ from scipy.interpolate import interp1d
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
+from core.plotting import physical
 from config import Basis, TumorTwinFOM, load_fom_data, TRAINING_SPAN
 
 SCHEMA = "dense_low_noise"
@@ -147,131 +148,12 @@ def plot_rom_trajectories_comparison(shared, methods_data, save_dir):
 
 
 def plot_spatial_comparison(shared, methods_data, save_dir):
-    """Side-by-side spatial tumor density slices for both methods."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fom = shared['fom']
-    basis = shared['basis']
-    true_states = shared['true_states']
-    t_full = shared['t_full']
-
-    timepoints = [5, 15, 30, 45, 60, 90]
-    n_times = len(timepoints)
-    n_methods = len(methods_data)
-
-    # Layout: row 0 = FOM truth, then 2 rows per method (prediction + error)
-    n_rows = 1 + 2 * n_methods
-    fig, axes = plt.subplots(n_rows, n_times, figsize=(3.5 * n_times, 3.0 * n_rows))
-
-    for col, t_target in enumerate(timepoints):
-        idx_full = np.argmin(np.abs(t_full - t_target))
-        fom_state = true_states[:, idx_full]
-        fom_slices = fom.get_center_slices(fom_state)
-
-        # Row 0: FOM truth
-        im_fom = axes[0, col].imshow(fom_slices['axial'].T, origin='lower',
-                                      cmap='hot_r', vmin=0, vmax=1, aspect='equal')
-        axes[0, col].set_title(f'Day {t_full[idx_full]:.0f}', fontsize=11)
-        axes[0, col].set_xticks([])
-        axes[0, col].set_yticks([])
-
-        for m_idx, (method, mdata) in enumerate(methods_data):
-            rom_arr = mdata['rom_solves']
-            t_pred = mdata['t_pred']
-            rom_med = np.median(rom_arr, axis=0)
-
-            idx_pred = np.argmin(np.abs(t_pred - t_target))
-            rom_full = basis.decompress(rom_med[:, idx_pred])
-            rom_slices = fom.get_center_slices(rom_full)
-            err_slices = fom.get_center_slices(np.abs(fom_state - rom_full))
-
-            row_pred = 1 + 2 * m_idx
-            row_err = 2 + 2 * m_idx
-
-            im_pred = axes[row_pred, col].imshow(
-                rom_slices['axial'].T, origin='lower',
-                cmap='hot_r', vmin=0, vmax=1, aspect='equal')
-            im_err = axes[row_err, col].imshow(
-                err_slices['axial'].T, origin='lower',
-                cmap='Reds', vmin=0, aspect='equal')
-
-            for r in [row_pred, row_err]:
-                axes[r, col].set_xticks([])
-                axes[r, col].set_yticks([])
-
-    # Row labels
-    axes[0, 0].set_ylabel('FOM Truth', fontsize=11, fontweight='bold')
-    for m_idx, (method, _) in enumerate(methods_data):
-        axes[1 + 2 * m_idx, 0].set_ylabel(method['label'], fontsize=11, fontweight='bold')
-        axes[2 + 2 * m_idx, 0].set_ylabel('|Error|', fontsize=10)
-
-    fig.colorbar(im_fom, ax=axes[0, :].tolist(), shrink=0.8, label='Cellularity')
-    for m_idx in range(n_methods):
-        fig.colorbar(im_pred, ax=axes[1 + 2 * m_idx, :].tolist(), shrink=0.8, label='Cellularity')
-        fig.colorbar(im_err, ax=axes[2 + 2 * m_idx, :].tolist(), shrink=0.8, label='|Error|')
-
-    fig.suptitle('Tumor Growth: FOM vs ROM Methods (axial slice)', fontsize=14, y=1.01)
-    fig.tight_layout(rect=[0, 0, 0.92, 0.98])
-    path = os.path.join(save_dir, "comparison_spatial.png")
-    fig.savefig(path, dpi=200, bbox_inches='tight')
-    print(f"  📊 Saved: {path}")
-    plt.close(fig)
-
+    _methods = [dict(rom_solves=md['rom_solves'], t_pred=md['t_pred'], label=meth['label'], color=meth['color']) for meth, md in methods_data]
+    physical.spatial_comparison(_methods, shared['fom'], shared['basis'], shared['true_states'], shared['t_full'], os.path.join(save_dir, 'comparison_spatial.png'))
 
 def plot_tumor_volume_comparison(shared, methods_data, save_dir):
-    """Combined tumor volume over time for all methods."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fom = shared['fom']
-    basis = shared['basis']
-    true_states = shared['true_states']
-    t_full = shared['t_full']
-
-    voxel_vol = float(np.prod(fom.spacing))
-    fom_vol = np.array([true_states[:, i].sum() * voxel_vol
-                        for i in range(true_states.shape[1])])
-
-    # Efficient volume projection
-    V = basis.entries
-    ones = np.ones(V.shape[0])
-    vol_proj = V.T @ ones
-    shift_vol = ones @ basis.shift_
-
-    fig, ax = plt.subplots(figsize=(9, 5.5))
-    ax.plot(t_full, fom_vol, 'k-', lw=2.5, label='FOM Truth', zorder=10)
-
-    for method, mdata in methods_data:
-        rom_arr = mdata['rom_solves']
-        t_pred = mdata['t_pred']
-        color = method['color']
-
-        rom_vols = np.array([vol_proj @ rom_arr[s] + shift_vol
-                             for s in range(rom_arr.shape[0])]) * voxel_vol
-
-        med = np.median(rom_vols, axis=0)
-        lo = np.percentile(rom_vols, 5, axis=0)
-        hi = np.percentile(rom_vols, 95, axis=0)
-
-        ax.plot(t_pred, med, color=color, lw=2, label=f'{method["label"]} Median')
-        ax.fill_between(t_pred, lo, hi, color=color, alpha=0.15,
-                        label=f'{method["label"]} 90% CI')
-
-    ax.axvline(TRAINING_SPAN[1], color='gray', ls='--', alpha=0.5, label='Train/Predict')
-    ax.set_xlabel('Time (days)', fontsize=12)
-    ax.set_ylabel('Total Tumor Burden (mm³)', fontsize=12)
-    ax.set_title('Tumor Volume Over Time', fontsize=14)
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.2)
-    fig.tight_layout()
-    path = os.path.join(save_dir, "comparison_tumor_volume.png")
-    fig.savefig(path, dpi=200, bbox_inches='tight')
-    print(f"  📊 Saved: {path}")
-    plt.close(fig)
-
+    _methods = [dict(rom_solves=md['rom_solves'], t_pred=md['t_pred'], label=meth['label'], color=meth['color']) for meth, md in methods_data]
+    physical.tumor_volume(_methods, shared['fom'], shared['basis'], shared['true_states'], shared['t_full'], TRAINING_SPAN, os.path.join(save_dir, 'comparison_tumor_volume.png'))
 
 def plot_metrics_table(methods_data, save_dir):
     """Bar chart comparing key metrics across methods."""

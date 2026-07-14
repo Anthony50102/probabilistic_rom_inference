@@ -18,6 +18,13 @@ import matplotlib.pyplot as plt
 from .style import save_figure
 
 
+def _attr(m, name, default=None):
+    """Access a field on either a MethodData object or a plain dict."""
+    if isinstance(m, dict):
+        return m.get(name, default)
+    return getattr(m, name, default)
+
+
 def tumor_volume(methods, fom, basis, true_states, t_full, training_span,
                  save_path):
     """Total tumor burden over time: FOM truth vs each method's median + 90% CI."""
@@ -30,15 +37,18 @@ def tumor_volume(methods, fom, basis, true_states, t_full, training_span,
     fig, ax = plt.subplots(figsize=(9, 5.5))
     ax.plot(t_full, fom_vol, "k-", lw=2.5, label="FOM Truth", zorder=10)
     for m in methods:
-        rom = m.rom_solves
+        rom = _attr(m, "rom_solves")
+        t_pred = _attr(m, "t_pred")
+        color = _attr(m, "color")
+        label = _attr(m, "label")
         vols = np.array([vol_proj @ rom[s] + shift_vol
                          for s in range(rom.shape[0])]) * voxel_vol
         med = np.median(vols, axis=0)
         lo = np.percentile(vols, 5, axis=0)
         hi = np.percentile(vols, 95, axis=0)
-        ax.plot(m.t_pred, med, color=m.color, lw=2, label=f"{m.label} median")
-        ax.fill_between(m.t_pred, lo, hi, color=m.color, alpha=0.15,
-                        label=f"{m.label} 90% CI")
+        ax.plot(t_pred, med, color=color, lw=2, label=f"{label} median")
+        ax.fill_between(t_pred, lo, hi, color=color, alpha=0.15,
+                        label=f"{label} 90% CI")
     ax.axvline(training_span[1], color="gray", ls="--", alpha=0.5,
                label="Train/Predict")
     ax.set(xlabel="Time (days)", ylabel="Total Tumor Burden (mm³)",
@@ -66,8 +76,8 @@ def spatial_comparison(methods, fom, basis, true_states, t_full, save_path,
         axes[0][col].set_title(f"Day {t_full[idx]:.0f}", fontsize=11)
         axes[0][col].set_xticks([]); axes[0][col].set_yticks([])
         for mi, m in enumerate(methods):
-            med = np.median(m.rom_solves, axis=0)
-            ip = int(np.argmin(np.abs(m.t_pred - t_target)))
+            med = np.median(_attr(m, "rom_solves"), axis=0)
+            ip = int(np.argmin(np.abs(_attr(m, "t_pred") - t_target)))
             rom_full = basis.decompress(med[:, ip])
             rp, re = 1 + 2 * mi, 2 + 2 * mi
             im_pred = axes[rp][col].imshow(
@@ -80,7 +90,8 @@ def spatial_comparison(methods, fom, basis, true_states, t_full, save_path,
                 axes[r][col].set_xticks([]); axes[r][col].set_yticks([])
     axes[0][0].set_ylabel("FOM Truth", fontsize=11, fontweight="bold")
     for mi, m in enumerate(methods):
-        axes[1 + 2 * mi][0].set_ylabel(m.label, fontsize=11, fontweight="bold")
+        axes[1 + 2 * mi][0].set_ylabel(_attr(m, "label"), fontsize=11,
+                                       fontweight="bold")
         axes[2 + 2 * mi][0].set_ylabel("|Error|", fontsize=10)
     fig.suptitle("FOM vs ROM (axial slice)", fontsize=14, y=1.01)
     fig.tight_layout(rect=[0, 0, 0.92, 0.98])
