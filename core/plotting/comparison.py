@@ -53,12 +53,17 @@ def fill_errors(methods, basis, t_full, true_states):
 
 def error_comparison(methods, projection_error, t_pred, training_span,
                      title, save_path):
-    """3-panel: ROM error, projection error, excess error (all methods overlaid).
+    """ROM error comparison (all methods overlaid). When ``projection_error``
+    is provided, also shows projection-error and excess-error panels.
 
     ``methods`` items may be MethodData objects or dicts with keys
     ``rom_errors``/``color``/``label``.
     """
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+    has_proj = projection_error is not None
+    nrows = 3 if has_proj else 1
+    fig, axes = plt.subplots(nrows, 1, figsize=(12, 10 if has_proj else 4),
+                             sharex=True, squeeze=False)
+    axes = axes[:, 0]
     for ax in axes:
         ax.axvspan(training_span[0], training_span[1], color="gray", alpha=0.10)
 
@@ -74,7 +79,7 @@ def error_comparison(methods, projection_error, t_pred, training_span,
     axes[0].set(ylabel="Relative Error", title=f"ROM Prediction Error — {title}")
     axes[0].set_yscale("log"); axes[0].legend(loc="upper left", fontsize=9)
 
-    if projection_error is not None:
+    if has_proj:
         axes[1].plot(t_pred, projection_error, "k--", lw=2,
                      label="Projection (basis limit)")
         axes[1].set(ylabel="Relative Error", title="Projection Error (Basis Limit)")
@@ -90,8 +95,6 @@ def error_comparison(methods, projection_error, t_pred, training_span,
                     title="Excess ROM Error (Above Basis Limit)")
         axes[2].set_yscale("log"); axes[2].legend(loc="upper left", fontsize=9)
     else:
-        # No projection error supplied → hide the lower two panels.
-        axes[1].axis("off"); axes[2].axis("off")
         axes[0].set_xlabel("Time")
 
     fig.tight_layout()
