@@ -232,11 +232,20 @@ def _print_results(agg, runtime):
 def _save_npz(result, spec, schema, script_dir):
     out_dir = os.path.join(script_dir, "results", "comparison", schema["name"])
     os.makedirs(out_dir, exist_ok=True)
-    tgt0 = result["per_target"][0]
+    per_target = result["per_target"]
+    tgt0 = per_target[0]
     rom_arr = (np.array(tgt0["rom_solves"]) if tgt0["n_stable"] > 0
                else np.empty((0, result["num_modes"], len(tgt0["t_pred"]))))
     suffix = os.environ.get("OUTPUT_SUFFIX", "")
     fname = f"{spec.name}{suffix}.npz"
+    # Multi-IC keys (n_ics + rom_solves_i) so multi-trajectory comparison
+    # loaders (heat 06) can read each evaluated IC; flat rom_solves (primary)
+    # is kept for single-IC loaders.
+    multi = {"n_ics": len(per_target)}
+    for i, pt in enumerate(per_target):
+        multi[f"rom_solves_{i}"] = (np.array(pt["rom_solves"]) if pt["n_stable"] > 0
+                                    else np.empty((0, result["num_modes"],
+                                                   len(pt["t_pred"]))))
     np.savez(
         os.path.join(out_dir, fname),
         rom_solves=rom_arr, t_pred=tgt0["t_pred"],
@@ -248,4 +257,5 @@ def _save_npz(result, spec, schema, script_dir):
         training_span=np.array(result["training_span"]),
         O_samples=result["O_samples"],
         basis_entries=np.asarray(result["basis"].entries),
+        **multi,
     )

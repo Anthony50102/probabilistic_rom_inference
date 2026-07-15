@@ -153,6 +153,14 @@ class RunResult:
         rom_arr = (np.asarray(tgt.rom_solves) if tgt.n_stable > 0
                    else np.empty((0, self.num_modes, len(tgt.t_pred))))
         path = os.path.join(out_dir, f"{self.method_name}{suffix}.npz")
+        # Multi-IC keys (n_ics + rom_solves_i) so multi-trajectory comparison
+        # loaders (e.g. heat 06) can read every evaluated IC; the flat
+        # rom_solves (primary target) is kept for single-IC loaders.
+        multi = {"n_ics": len(self.targets)}
+        for i, t in enumerate(self.targets):
+            multi[f"rom_solves_{i}"] = (np.asarray(t.rom_solves) if t.n_stable > 0
+                                        else np.empty((0, self.num_modes,
+                                                       len(t.t_pred))))
         np.savez(
             path,
             rom_solves=rom_arr, t_pred=tgt.t_pred,
@@ -164,6 +172,7 @@ class RunResult:
             losses=np.asarray(self.losses),
             basis_entries=np.asarray(self.basis.entries),
             true_states=np.asarray(tgt.true_states),
+            **multi,
             **{f"extra_{k}": v for k, v in self.extra.items()
                if np.ndim(v) <= 2},
         )

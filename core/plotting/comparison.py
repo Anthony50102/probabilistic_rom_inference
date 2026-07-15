@@ -64,12 +64,13 @@ def error_comparison(methods, projection_error, t_pred, training_span,
 
     for m in methods:
         errs = _attr(m, "rom_errors")
+        mt = _attr(m, "t_pred", t_pred)
         med = np.median(errs, axis=0)
         p5 = np.percentile(errs, 5, axis=0)
         p95 = np.percentile(errs, 95, axis=0)
         c, lab = _attr(m, "color"), _attr(m, "label")
-        axes[0].plot(t_pred, med, color=c, lw=2, label=f"{lab} (median)")
-        axes[0].fill_between(t_pred, p5, p95, color=c, alpha=0.10)
+        axes[0].plot(mt, med, color=c, lw=2, label=f"{lab} (median)")
+        axes[0].fill_between(mt, p5, p95, color=c, alpha=0.10)
     axes[0].set(ylabel="Relative Error", title=f"ROM Prediction Error — {title}")
     axes[0].set_yscale("log"); axes[0].legend(loc="upper left", fontsize=9)
 
@@ -80,9 +81,10 @@ def error_comparison(methods, projection_error, t_pred, training_span,
         axes[1].set_yscale("log"); axes[1].legend(loc="upper left", fontsize=9)
 
         for m in methods:
+            mt = _attr(m, "t_pred", t_pred)
             med = np.median(_attr(m, "rom_errors"), axis=0)
             excess = np.maximum(med - projection_error, 1e-16)
-            axes[2].plot(t_pred, excess, color=_attr(m, "color"), lw=2,
+            axes[2].plot(mt, excess, color=_attr(m, "color"), lw=2,
                          label=_attr(m, "label"))
         axes[2].set(xlabel="Time", ylabel="Relative Error",
                     title="Excess ROM Error (Above Basis Limit)")
