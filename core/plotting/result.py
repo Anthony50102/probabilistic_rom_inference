@@ -111,10 +111,16 @@ class RunResult:
             rs = np.asarray(all_rs[k]) if len(all_rs[k]) \
                 else np.empty((0, num_modes, len(t_pred)))
             sn = all_sn[k] if all_sn is not None else None
+            # true_states may be shorter than the eval list (e.g. a held-out
+            # test IC without cached full-order states); guard the index. Only
+            # the primary target's full-order error is plotted, so a missing
+            # entry on later targets is harmless.
+            ts_k = (all_ts[k] if (all_ts is not None and k < len(all_ts))
+                    else None)
             targets.append(TargetResult(
                 label=labels[k] if k < len(labels) else "",
                 t_pred=t_pred, rom_solves=rs, true_comp=all_tc[k],
-                true_states=all_ts[k], t_full=result["t_full"],
+                true_states=ts_k, t_full=result["t_full"],
                 state0_comp=(sn[:, 0] if sn is not None else None)))
         sn0 = all_sn[0] if all_sn is not None else None
         ts0 = result.get("all_t_samp", [None])[0]

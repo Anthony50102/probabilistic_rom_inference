@@ -713,14 +713,14 @@ def main(schema_names=None):
                                schema['name'])
         os.makedirs(out_dir, exist_ok=True)
         np.savez_compressed(
-            os.path.join(out_dir, '05_neural_ode.npz'),
+            os.path.join(out_dir, '05_neural_ode_chemo.npz'),
             t_pred=r['t_pred'], t_full=r['t_full'],
             rom_solves=r['rom_solves'], true_comp=r['true_comp'],
             train_error=r['train_error'], pred_error=r['pred_error'],
             ci_coverage=r['ci_coverage'], ci_width=r['ci_width'],
             stability_pct=r['stability_pct'], runtime=r['runtime'],
         )
-        print(f"  💾 Saved predictions: {out_dir}/05_neural_ode.npz")
+        print(f"  💾 Saved predictions: {out_dir}/05_neural_ode_chemo.npz")
 
         if DOSE_VARIATION:
             try:
