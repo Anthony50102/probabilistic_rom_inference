@@ -20,6 +20,7 @@ from scipy.interpolate import interp1d
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
+from core.plotting import comparison
 from config import Basis
 from core.plotting import save_metrics_table
 
@@ -112,130 +113,16 @@ def generate_shared_data(schema):
 
 
 def compute_errors(rom_solves, t_pred, basis, t_full, true_states):
-    """Compute full-order ROM errors and projection error on the pred grid."""
-    interp_truth = interp1d(t_full, true_states, axis=1, kind="linear",
-                            fill_value="extrapolate")
-    true_interp = interp_truth(t_pred)
-
-    # Projection error (basis limit)
-    true_comp = basis.compress(true_interp)
-    true_proj = basis.decompress(true_comp)
-    norm_truth = np.linalg.norm(true_interp, axis=0)
-    norm_truth = np.maximum(norm_truth, 1e-10)
-    projection_error = np.linalg.norm(true_interp - true_proj, axis=0) / norm_truth
-
-    # Per-sample ROM errors
-    n_stable = rom_solves.shape[0]
-    rom_errors = []
-    for i in range(n_stable):
-        rom_full = basis.decompress(rom_solves[i])
-        error = np.linalg.norm(true_interp - rom_full, axis=0) / norm_truth
-        rom_errors.append(error)
-    rom_errors = np.array(rom_errors)
-
-    return rom_errors, projection_error
-
-
-# ── Plotting ─────────────────────────────────────────────────────────
+    return comparison.compute_full_order_errors(rom_solves, t_pred, basis, t_full, true_states)
 
 def plot_error_comparison(methods_data, projection_error, t_pred, training_span,
                           title_suffix, save_path):
-    """3-panel plot: ROM error, projection error, excess error."""
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True,
-                             gridspec_kw={"height_ratios": [1, 1, 1]})
-
-    # Panel 1: ROM prediction error — all methods overlaid
-    ax_rom = axes[0]
-    ax_rom.axvspan(training_span[0], training_span[1], color="gray", alpha=0.10)
-    for m in methods_data:
-        rom_errors = m["rom_errors"]
-        median = np.median(rom_errors, axis=0)
-        p5 = np.percentile(rom_errors, 5, axis=0)
-        p95 = np.percentile(rom_errors, 95, axis=0)
-        ax_rom.plot(t_pred, median, color=m["color"],
-                    linestyle=m["linestyle"], lw=2,
-                    label=f"{m['label']} (median)")
-        ax_rom.fill_between(t_pred, p5, p95, color=m["color"], alpha=0.10)
-    ax_rom.set_ylabel("Relative Error")
-    ax_rom.set_title(f"ROM Prediction Error — {title_suffix}")
-    ax_rom.legend(loc="upper left", fontsize=9)
-    ax_rom.set_yscale("log")
-
-    # Panel 2: Projection error (same for all methods)
-    ax_proj = axes[1]
-    ax_proj.axvspan(training_span[0], training_span[1], color="gray", alpha=0.10)
-    ax_proj.plot(t_pred, projection_error, "k--", lw=2,
-                 label="Projection error (basis limit)")
-    ax_proj.set_ylabel("Relative Error")
-    ax_proj.set_title("Projection Error (Basis Limit)")
-    ax_proj.legend(loc="upper left", fontsize=9)
-    ax_proj.set_yscale("log")
-
-    # Panel 3: Excess error (ROM − projection)
-    ax_diff = axes[2]
-    ax_diff.axvspan(training_span[0], training_span[1], color="gray", alpha=0.10)
-    for m in methods_data:
-        median = np.median(m["rom_errors"], axis=0)
-        excess = np.maximum(median - projection_error, 1e-16)
-        ax_diff.plot(t_pred, excess, color=m["color"],
-                     linestyle=m["linestyle"], lw=2, label=m["label"])
-    ax_diff.set_xlabel("Time")
-    ax_diff.set_ylabel("Relative Error")
-    ax_diff.set_title("Excess ROM Error (Above Basis Limit)")
-    ax_diff.legend(loc="upper left", fontsize=9)
-    ax_diff.set_yscale("log")
-
-    plt.tight_layout()
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  📊 Saved: {save_path}")
-
+    comparison.error_comparison(methods_data, projection_error, t_pred, training_span, title_suffix, save_path)
+    print(f"  Saved: {save_path}")
 
 def plot_metrics_comparison(methods_data, title_suffix, save_path):
-    """Bar chart comparing relative L2 errors and CI coverage."""
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
-    labels = [m["label"] for m in methods_data]
-    colors = [m["color"] for m in methods_data]
-    x = np.arange(len(labels))
-
-    train_errors = [m["train_error"] for m in methods_data]
-    b = axes[0].bar(x, train_errors, color=colors, edgecolor="black", linewidth=0.5)
-    for bar, v in zip(b, train_errors):
-        axes[0].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                     f"{v:.3f}", ha="center", va="bottom", fontsize=9)
-    axes[0].set_xticks(x); axes[0].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
-    axes[0].set_ylabel("Relative L2 Error"); axes[0].set_title("Training-region Error")
-
-    pred_errors = [m["pred_error"] for m in methods_data]
-    b = axes[1].bar(x, pred_errors, color=colors, edgecolor="black", linewidth=0.5)
-    for bar, v in zip(b, pred_errors):
-        axes[1].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                     f"{v:.3f}", ha="center", va="bottom", fontsize=9)
-    axes[1].set_xticks(x); axes[1].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
-    axes[1].set_ylabel("Relative L2 Error"); axes[1].set_title("Prediction-region Error")
-
-    ci_covs = [(m["ci_coverage"] * 100) if not np.isnan(m["ci_coverage"]) else 0.0
-               for m in methods_data]
-    b = axes[2].bar(x, ci_covs, color=colors, edgecolor="black", linewidth=0.5)
-    axes[2].axhline(90.0, color='k', linestyle='--', lw=1, alpha=0.6, label='Target 90%')
-    for bar, v in zip(b, ci_covs):
-        axes[2].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                     f"{v:.0f}%", ha="center", va="bottom", fontsize=9)
-    axes[2].set_xticks(x); axes[2].set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
-    axes[2].set_ylabel("CI Coverage (%)"); axes[2].set_title("90% CI Coverage")
-    axes[2].set_ylim(0, 105)
-    axes[2].legend(fontsize=8, loc='upper right')
-
-    fig.suptitle(f"Method Comparison — {title_suffix}", fontsize=14, fontweight="bold")
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  📊 Saved: {save_path}")
-
-
-# ── Main logic ───────────────────────────────────────────────────────
+    comparison.metrics_bars(methods_data, title_suffix, save_path)
+    print(f"  Saved: {save_path}")
 
 def compare_regime(schema):
     """Generate comparison plots for one data regime."""

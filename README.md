@@ -30,7 +30,7 @@ core/
   bgp_jax.py           # JAX/NumPyro GP kernels and derivative kernels
   diagnostics.py       # posterior diagnostics and trace plotting helpers
   pde_models.py        # full-order PDE model implementations
-  plotting.py          # shared plotting and metrics helpers
+  plotting/           # shared results, figures, comparisons, and physical plots
   utils.py             # data generation and utility functions
   weakform_opinf/      # canonical Bayesian algorithm, configuration, and pipeline
 
@@ -110,6 +110,20 @@ The `05_neural_ode.py` scripts train ensembles of reduced-state neural ODEs on
 the same data regimes as the Bayesian OpInf method where implemented. The
 comparison scripts treat Neural ODE outputs as method-level `.npz` files in the
 same `results/comparison/<schema>/` layout.
+
+## Shared plotting
+
+`core/plotting/` supplies `RunResult`/`TargetResult`, per-run figures,
+method-comparison charts, GP diagnostics, and physical-space paper plots.
+Legacy `from core.plotting import ...` imports remain supported.
+
+Multi-IC runs retain each target's observations and produce a trajectory
+figure per target: the primary target keeps `<prefix>_rom_trajectories.png`;
+subsequent targets use `<prefix>_ic_<index>_rom_trajectories.png`. Per-IC error
+charts distinguish the evaluated trajectories, and heat comparison bars retain
+the training/held-out split. Chemo Neural ODE figures use `05_chemo_<schema>`
+to avoid overwriting autonomous tumor figures. Tumor entry points also produce
+their spatial, volume, and (for chemo) uncertainty diagnostics.
 
 ## Running experiments
 

@@ -24,6 +24,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", ".."))
 
 import config
+from core.plotting import comparison
 from config import Basis, input_func_factory, input_parameters, test_parameters
 from core.plotting import save_metrics_table
 from step1_generate_data import TrajectorySampler
@@ -198,160 +199,17 @@ def compute_projection_error(basis, true_states_full_ic, t_pred):
 # ── Plots ────────────────────────────────────────────────────────────────────
 def plot_error_comparison(methods_with_data, projection_error, t_pred, schema,
                           ic_label, save_path):
-    """3-panel vertical plot: ROM error, projection error, excess error."""
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-
-    # Panel 1 — ROM full-order error
-    ax_rom = axes[0]
-    ax_rom.axvspan(TRAINING_SPAN[0], TRAINING_SPAN[1], color="gray", alpha=0.10)
-    for md in methods_with_data:
-        if "rom_errors" not in md or len(md["rom_errors"]) == 0:
-            continue
-        median = np.median(md["rom_errors"], axis=0)
-        q05 = np.percentile(md["rom_errors"], 5, axis=0)
-        q95 = np.percentile(md["rom_errors"], 95, axis=0)
-        ax_rom.plot(
-            t_pred, median,
-            color=md["color"], linestyle=md["linestyle"], lw=2,
-            label=f"{md['label']} (median)",
-        )
-        ax_rom.fill_between(t_pred, q05, q95, color=md["color"], alpha=0.10)
-    ax_rom.set_ylabel("Relative Error")
-    ax_rom.set_title(f"ROM Full-Order Error — Method Comparison ({ic_label})")
-    ax_rom.legend(loc="upper left", fontsize=9)
-    ax_rom.set_yscale("log")
-
-    # Panel 2 — Projection error (shared basis limit)
-    ax_proj = axes[1]
-    ax_proj.axvspan(TRAINING_SPAN[0], TRAINING_SPAN[1], color="gray", alpha=0.10)
-    ax_proj.plot(
-        t_pred, projection_error, "k--", lw=2,
-        label="Projection error (basis limit)",
-    )
-    ax_proj.set_ylabel("Relative Error")
-    ax_proj.set_title("Projection Error (Basis Limit)")
-    ax_proj.legend(loc="upper left", fontsize=9)
-    ax_proj.set_yscale("log")
-
-    # Panel 3 — Excess error above basis limit
-    ax_diff = axes[2]
-    ax_diff.axvspan(TRAINING_SPAN[0], TRAINING_SPAN[1], color="gray", alpha=0.10)
-    for md in methods_with_data:
-        if "rom_errors" not in md or len(md["rom_errors"]) == 0:
-            continue
-        median = np.median(md["rom_errors"], axis=0)
-        excess = np.maximum(median - projection_error, 1e-16)
-        ax_diff.plot(
-            t_pred, excess,
-            color=md["color"], linestyle=md["linestyle"], lw=2,
-            label=md["label"],
-        )
-    ax_diff.set_xlabel("Time")
-    ax_diff.set_ylabel("Relative Error")
-    ax_diff.set_title("Excess ROM Error (Above Basis Limit)")
-    ax_diff.legend(loc="upper left", fontsize=9)
-    ax_diff.set_yscale("log")
-
-    fig.suptitle(f"{schema['label']}", fontsize=14, fontweight="bold", y=0.98)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  📊 Saved: {save_path}")
-
+    comparison.error_comparison(methods_with_data, projection_error, t_pred,
+                                TRAINING_SPAN, f"{schema['label']} - {ic_label}",
+                                save_path)
+    print(f"  Saved: {save_path}")
 
 def plot_metrics_comparison(methods_with_data, schema, save_path,
                             train_test_errors=None):
-    """Bar chart comparing relative L2 errors and CI coverage.
+    comparison.metrics_bars(methods_with_data, schema['label'], save_path,
+                            train_test_errors=train_test_errors)
+    print(f"  Saved: {save_path}")
 
-    If `train_test_errors` is provided (dict[label] -> dict with
-    'train_l2'/'test_l2'/'pred_l2'), the error panel is split into Train ICs
-    (average) vs Test IC bars per method.
-    """
-    labels = [md["label"] for md in methods_with_data]
-    colors = [md["color"] for md in methods_with_data]
-    n = len(methods_with_data)
-
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
-    # ── Panel 1: Train-region rel-L2 error (Train ICs vs Test IC) ──
-    ax = axes[0]
-    width = 0.38
-    x = np.arange(n)
-    if train_test_errors is not None:
-        train_vals = [train_test_errors[md["label"]]["train_l2"]
-                      for md in methods_with_data]
-        test_vals = [train_test_errors[md["label"]]["test_train_l2"]
-                     for md in methods_with_data]
-        b1 = ax.bar(x - width/2, train_vals, width, color=colors,
-                    edgecolor="black", linewidth=0.5, label="Train ICs (avg)")
-        b2 = ax.bar(x + width/2, test_vals, width, color=colors, alpha=0.45,
-                    edgecolor="black", linewidth=0.5, hatch="//",
-                    label="Test IC")
-        for b, v in list(zip(b1, train_vals)) + list(zip(b2, test_vals)):
-            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
-                    f"{v:.3f}", ha="center", va="bottom", fontsize=8)
-        ax.legend(fontsize=8, loc="upper right")
-    else:
-        vals = [md["train_error"] for md in methods_with_data]
-        bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
-        for bar, v in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                    f"{v:.3f}", ha="center", va="bottom", fontsize=9)
-    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("Relative L2 Error")
-    ax.set_title("Training-region Error")
-
-    # ── Panel 2: Prediction-region rel-L2 error (Train ICs vs Test IC) ──
-    ax = axes[1]
-    if train_test_errors is not None:
-        train_vals = [train_test_errors[md["label"]]["pred_l2"]
-                      for md in methods_with_data]
-        test_vals = [train_test_errors[md["label"]]["test_pred_l2"]
-                     for md in methods_with_data]
-        b1 = ax.bar(x - width/2, train_vals, width, color=colors,
-                    edgecolor="black", linewidth=0.5, label="Train ICs (avg)")
-        b2 = ax.bar(x + width/2, test_vals, width, color=colors, alpha=0.45,
-                    edgecolor="black", linewidth=0.5, hatch="//",
-                    label="Test IC")
-        for b, v in list(zip(b1, train_vals)) + list(zip(b2, test_vals)):
-            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
-                    f"{v:.3f}", ha="center", va="bottom", fontsize=8)
-        ax.legend(fontsize=8, loc="upper right")
-    else:
-        vals = [md["pred_error"] for md in methods_with_data]
-        bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
-        for bar, v in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                    f"{v:.3f}", ha="center", va="bottom", fontsize=9)
-    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("Relative L2 Error")
-    ax.set_title("Prediction-region Error")
-
-    # ── Panel 3: CI coverage ──
-    ax = axes[2]
-    vals = [(md["ci_coverage"] * 100) if not np.isnan(md["ci_coverage"]) else 0.0
-            for md in methods_with_data]
-    bars = ax.bar(x, vals, color=colors, edgecolor="black", linewidth=0.5)
-    ax.axhline(90.0, color='k', linestyle='--', lw=1, alpha=0.6, label='Target 90%')
-    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9)
-    ax.set_ylabel("CI Coverage (%)")
-    ax.set_title("90% CI Coverage")
-    ax.set_ylim(0, 105)
-    ax.legend(fontsize=8, loc='upper right')
-    for bar, v in zip(bars, vals):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                f"{v:.0f}%", ha="center", va="bottom", fontsize=9)
-
-    fig.suptitle(
-        f"Method Comparison — {schema['label']}", fontsize=14, fontweight="bold"
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  📊 Saved: {save_path}")
-
-
-# ── Per-regime comparison ────────────────────────────────────────────────────
 def compare_regime(schema):
     """Load all methods, regenerate shared data, and create comparison plots."""
     schema_name = schema["name"]
@@ -388,10 +246,12 @@ def compare_regime(schema):
 
     for md in methods_data:
         rom_solves_ic = md["all_rom_solves"][0]
+        mt = md["t_pred"]
         if len(rom_solves_ic) == 0:
-            md["rom_errors"] = np.empty((0, len(t_pred)))
+            md["rom_errors"] = np.empty((0, len(mt)))
             continue
-        md["rom_errors"] = compute_rom_errors(basis, true_ic0, rom_solves_ic, t_pred)
+        md["rom_errors"] = compute_rom_errors(basis, true_ic0, rom_solves_ic, mt)
+        md["projection_error"] = compute_projection_error(basis, true_ic0, mt)
 
     methods_with_data = [md for md in methods_data
                          if "rom_errors" in md and len(md["rom_errors"]) > 0]
@@ -407,9 +267,10 @@ def compare_regime(schema):
     # Compute per-IC train/pred relative L2 errors split by Train ICs vs Test IC
     print("  Computing per-IC train/test relative L2 errors...")
     tt_errors = {}
-    train_mask = t_pred <= TRAINING_SPAN[1]
-    pred_mask = t_pred > TRAINING_SPAN[1]
     for md in methods_data:
+        mt = md["t_pred"]
+        train_mask = mt <= TRAINING_SPAN[1]
+        pred_mask = mt > TRAINING_SPAN[1]
         n_ics = md["n_ics"]
         train_ic_indices = list(range(n_ics - 1))  # all but last
         test_ic_idx = n_ics - 1
@@ -420,7 +281,7 @@ def compare_regime(schema):
                 return float("nan"), float("nan")
             interp = interp1d(config.time_domain, true_ic, axis=1,
                               kind="linear", fill_value="extrapolate")
-            true_at = interp(t_pred)
+            true_at = interp(mt)
             rom_full = np.array([basis.decompress(rs) for rs in rom_solves_ic])
             rom_med = np.median(rom_full, axis=0)
             tr = (np.linalg.norm(rom_med[:, train_mask] - true_at[:, train_mask])
@@ -470,8 +331,10 @@ def compare_regime(schema):
             md["rom_errors_test"] = np.empty((0, len(t_pred)))
             continue
         md["rom_errors_test"] = compute_rom_errors(
-            basis, all_true[test_ic_idx], rom_solves_test, t_pred
+            basis, all_true[test_ic_idx], rom_solves_test, md["t_pred"]
         )
+        md["projection_error_test"] = compute_projection_error(
+            basis, all_true[test_ic_idx], md["t_pred"])
 
     # Projection error for test IC
     test_ic_idx = methods_data[0]["n_ics"] - 1
@@ -483,6 +346,7 @@ def compare_regime(schema):
         for md in methods_data:
             md_copy = dict(md)
             md_copy["rom_errors"] = md.get("rom_errors_test", np.empty((0, len(t_pred))))
+            md_copy["projection_error"] = md.get("projection_error_test")
             test_methods.append(md_copy)
         test_with_data = [md for md in test_methods
                           if len(md["rom_errors"]) > 0]

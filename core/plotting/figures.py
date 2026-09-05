@@ -1,0 +1,214 @@
+"""Per-run figures: reduced-coordinate trajectories, loss, full-order error,
+operator traces. All consume the method-agnostic :class:`RunResult`.
+"""
+
+from __future__ import annotations
+
+import os
+
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
+
+from .style import save_figure
+# full-order error implementation still lives in the legacy module.
+from ._legacy import plot_full_order_error  # noqa: F401  (re-exported)
+
+
+def _observations(run, target):
+    if target.t_samp is not None and target.snapshots_comp is not None:
+        return target.t_samp, target.snapshots_comp
+    if target is run.primary:
+        return run.t_samp, run.snapshots_comp
+    return None, None
+
+
+def rom_trajectories(run, save_path, target=None, dose_days=None):
+    """Reduced-coordinate ROM trajectories with 5–95% band vs truth."""
+    tgt = target or run.primary
+    if tgt.n_stable == 0:
+        return None
+    rom = np.asarray(tgt.rom_solves)
+    med = np.median(rom, axis=0)
+    q05 = np.percentile(rom, 5, axis=0)
+    q95 = np.percentile(rom, 95, axis=0)
+    truth = interp1d(tgt.t_full, tgt.true_comp, kind="cubic",
+                     fill_value="extrapolate")(tgt.t_pred)
+    r = run.num_modes
+    t_samp, snapshots = _observations(run, tgt)
+    ncol = min(r, 4)
+    nrow = int(np.ceil(r / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.5 * ncol, 3.2 * nrow),
+                             squeeze=False)
+    for i in range(r):
+        ax = axes[i // ncol][i % ncol]
+        if dose_days is not None:
+            for dd in np.asarray(dose_days):
+                ax.axvline(dd, color="tab:red", lw=0.5, alpha=0.15, zorder=0)
+        if t_samp is not None and snapshots is not None:
+            ax.scatter(t_samp, snapshots[i], s=9,
+                       color="tab:blue", alpha=0.35, zorder=4, label="Noisy obs")
+        ax.plot(tgt.t_pred, truth[i], "k-", lw=1.5, label="Truth", zorder=3)
+        ax.plot(tgt.t_pred, med[i], color=run.color, lw=1.8,
+                label=f"{run.method_label} median", zorder=5)
+        ax.fill_between(tgt.t_pred, q05[i], q95[i], color=run.color,
+                        alpha=0.18, label="5–95%", zorder=2)
+        ax.axvline(run.training_span[1], color="gray", ls=":", lw=0.9, alpha=0.6)
+        ax.set(title=f"Mode {i}", xlabel="time")
+        if i == 0:
+            ax.legend(fontsize=7)
+    for j in range(r, nrow * ncol):
+        axes[j // ncol][j % ncol].axis("off")
+    fig.suptitle(f"{run.method_label} — {run.schema.get('label', '')}"
+                 + (f"  [{tgt.label}]" if tgt.label else ""))
+    fig.tight_layout()
+    return save_figure(fig, save_path)
+
+
+def rom_trajectories_windows(run, save_path, target=None, dose_days=None):
+    """3-column trajectories: training window | prediction window | full span.
+
+    Richer alternative to :func:`rom_trajectories` (used by the Neural ODE
+    baseline); shows obs, truth, median and 90% band split by train/predict.
+    """
+    tgt = target or run.primary
+    if tgt.n_stable == 0:
+        return None
+    rom = np.asarray(tgt.rom_solves)
+    med = np.median(rom, axis=0)
+    q05 = np.percentile(rom, 5, axis=0)
+    q95 = np.percentile(rom, 95, axis=0)
+    truth = interp1d(tgt.t_full, tgt.true_comp, kind="cubic",
+                     fill_value="extrapolate")(tgt.t_pred)
+    r = run.num_modes
+    t_pred = tgt.t_pred
+    train_end = run.training_span[1]
+    tm = t_pred <= train_end
+    pm = t_pred > train_end
+    c = run.color
+
+    fig, ax = plt.subplots(r, 3, figsize=(15, 2.5 * r), sharey="row", sharex="col")
+    ax = np.atleast_2d(ax)
+    if r == 1:
+        ax = ax.reshape(1, -1)
+    t_samp, snapshots = _observations(run, tgt)
+    have_obs = t_samp is not None and snapshots is not None
+    for i in range(r):
+        for col, mask in [(0, tm), (1, pm)]:
+            if have_obs and col == 0:
+                ax[i, col].plot(t_samp, snapshots[i], "k*", ms=3,
+                                label="Obs")
+            ax[i, col].plot(t_pred[mask], truth[i, mask], color="tab:gray",
+                            lw=1.5, label="Truth")
+            ax[i, col].plot(t_pred[mask], med[i, mask], color=c, ls="--", lw=2,
+                            alpha=0.9, label="Median")
+            ax[i, col].fill_between(t_pred[mask], q05[i, mask], q95[i, mask],
+                                    color=c, alpha=0.15, label="90% CI")
+        # full span
+        if have_obs:
+            ax[i, 2].plot(t_samp, snapshots[i], "k*", ms=3)
+        ax[i, 2].plot(t_pred, truth[i], color="tab:gray", lw=1.5)
+        ax[i, 2].plot(t_pred, med[i], color=c, ls="--", lw=2, alpha=0.9)
+        ax[i, 2].fill_between(t_pred, q05[i], q95[i], color=c, alpha=0.15)
+        ax[i, 2].axvline(train_end, color="k", ls=":", lw=0.8, alpha=0.5)
+        if dose_days is not None:
+            for dd in np.asarray(dose_days):
+                for j in range(3):
+                    ax[i, j].axvline(dd, color="tab:red", lw=0.5, alpha=0.15)
+        ax[i, 0].set_ylabel(f"Mode {i}")
+    ax[0, 0].set_title("Training Window")
+    ax[0, 1].set_title("Prediction Window")
+    ax[0, 2].set_title("Full Span")
+    ax[0, 0].legend(fontsize=7, loc="upper right")
+    for j in range(3):
+        ax[-1, j].set_xlabel("Time")
+    fig.suptitle(f"{run.method_label} — {run.schema.get('label', '')}"
+                 + (f" [{tgt.label}]" if tgt.label else ""), fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    return save_figure(fig, save_path)
+
+
+def loss(run, save_path):
+    """SVI/training loss convergence (full + last-50%)."""
+    losses = np.asarray(run.losses)
+    if losses.ndim > 1:            # ensemble (per-member) → mean
+        losses = np.mean(losses, axis=0)
+    if losses.size <= 1:
+        return None
+    fig, ax = plt.subplots(1, 2, figsize=(12, 4))
+    ax[0].plot(losses, lw=0.8, color=run.color)
+    ax[0].set(xlabel="step", ylabel="loss", title="Loss convergence")
+    half = len(losses) // 2
+    ax[1].plot(range(half, len(losses)), losses[half:], lw=0.8, color=run.color)
+    ax[1].set(xlabel="step", ylabel="loss", title="Loss (last 50%)")
+    fig.tight_layout()
+    return save_figure(fig, save_path)
+
+
+def full_order_error(run, save_path, target=None):
+    """Full-order error decomposition (ROM error, projection error, excess)."""
+    tgt = target or run.primary
+    if tgt.n_stable == 0:
+        return None
+    fig, _ = plot_full_order_error(
+        rom_solves=np.asarray(tgt.rom_solves), basis=run.basis,
+        true_states=tgt.true_states, time_domain_full=tgt.t_full,
+        time_domain_eval=tgt.t_pred, training_span=tuple(run.training_span),
+        suptitle=f"{run.method_label} — {run.schema.get('label', '')}")
+    return save_figure(fig, save_path)
+
+
+def operator_traces(run, save_path, n_random=6):
+    """Posterior trace plots for operator entries (Bayesian methods only)."""
+    if run.O_samples is None:
+        return None
+    from core.diagnostics import plot_trace
+    fig, _ = plot_trace({"O": np.asarray(run.O_samples)}, param_name="O",
+                        n_random=n_random)
+    return save_figure(fig, save_path)
+
+
+def per_ic_error(run, save_path):
+    """Fit and extrapolation errors for each evaluated initial condition."""
+    if not any(np.isfinite(t.train_error) for t in run.targets):
+        return None
+    x = np.arange(len(run.targets))
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(x - 0.19, [t.train_error for t in run.targets], 0.38, label="Fit")
+    ax.bar(x + 0.19, [t.pred_error for t in run.targets], 0.38,
+           label="Extrapolation")
+    ax.set_xticks(x)
+    ax.set_xticklabels([t.label or f"IC {i}" for i, t in enumerate(run.targets)],
+                       rotation=25, ha="right")
+    ax.set(ylabel="Relative L2 Error",
+           title=f"Per-IC Error - {run.schema.get('label', '')}")
+    ax.legend()
+    fig.tight_layout()
+    return save_figure(fig, save_path)
+
+
+def standard(run, save_dir, prefix, dose_days=None, layout="single"):
+    """Emit the standard four-figure diagnostic set for one run.
+
+    ``layout`` selects the trajectory figure: 'single' (one panel per mode) or
+    'windows' (3-column training/prediction/full-span).
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    traj = rom_trajectories_windows if layout == "windows" else rom_trajectories
+    for i, target in enumerate(run.targets):
+        target_prefix = prefix if i == 0 else f"{prefix}_ic_{i}"
+        traj(run, os.path.join(save_dir, f"{target_prefix}_rom_trajectories.png"),
+             target=target, dose_days=dose_days)
+    if len(run.targets) > 1:
+        per_ic_error(run, os.path.join(save_dir, f"{prefix}_per_ic_error.png"))
+    loss(run, os.path.join(save_dir, f"{prefix}_loss.png"))
+    try:
+        full_order_error(run, os.path.join(save_dir, f"{prefix}_full_order_error.png"))
+    except Exception as e:
+        print(f"  [plot] full_order_error skipped: {e}")
+    try:
+        operator_traces(run, os.path.join(save_dir, f"{prefix}_operator_traces.png"))
+    except Exception as e:
+        print(f"  [plot] operator_traces skipped: {e}")

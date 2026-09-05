@@ -1193,7 +1193,7 @@ def plot_operator_derivative_fit(
     -------
     fig, axes
     """
-    from .bayesian_opinf import compute_gp_derivatives
+    from ..bayesian_opinf import compute_gp_derivatives
 
     num_modes = operator.shape[0]
     if figsize is None:
