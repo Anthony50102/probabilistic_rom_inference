@@ -1,5 +1,25 @@
 # Copilot Context: Probabilistic ROM Inference
 
+## Active pipeline (supersedes the historical notebook description below)
+
+The active experiments are `experiments/{euler,burgers_2d,heat,tumor}/04_unified.py`
+and `experiments/tumor/04_unified_chemo.py`. They are thin adapters over
+`core/weakform_opinf/`; shared algorithm changes belong in that package.
+Use the `prob_rom` conda environment.
+
+The shared method marginalizes operators analytically, infers spectrum-anchored
+GP hyperparameters and hierarchical zero-mean operator-prior scales with SVI
+(`AutoNormal`) or NUTS, and defaults to integration-by-parts weak constraints
+with diagonal derivative/weak covariance blocks. Do not reintroduce MLE prior
+anchoring, adaptive SNR mode selection, or heat's old stability shift.
+
+Evaluation targets carry their own observations and initial states.
+`training_index=None` identifies a held-out target; its metrics must remain
+separate from training-IC metrics. Preserve the single-/multi-IC NPZ contracts
+used by `plot_from_npz.py`, including all targets and experiment metadata.
+See `README.md` for the current architecture; the notebook-era descriptions
+and discrepancy list below are historical, not the active method.
+
 ## Project Overview
 
 This repository implements and compares two **Bayesian operator inference** methods for learning **reduced-order models (ROMs)** from noisy PDE snapshot data. It accompanies the paper *"Probabilistic scientific machine learning: Bayesian model reduction for nonlinear dynamical systems"* by Poole, McQuarrie, Guo, and Chaudhuri.
