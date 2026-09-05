@@ -97,6 +97,7 @@ class EulerSpec:
         eval_targets = [EvalTarget(
             t_pred=t_pred, true_comp=true_comp, true_states=true_states,
             state0_comp=snaps_comp[:, 0], t_full=t_full, input_func=None,
+            t_sampled=t_samp, snapshots_comp=snaps_comp,
             label=schema["label"])]
 
         return PreparedRun(

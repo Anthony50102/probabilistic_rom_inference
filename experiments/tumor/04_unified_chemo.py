@@ -147,6 +147,7 @@ class ChemoSpec:
         eval_targets = [EvalTarget(
             t_pred=t_pred, true_comp=true_comp, true_states=true_states,
             state0_comp=snaps_comp[:, 0], t_full=t_full, input_func=ifn_jax,
+            t_sampled=t_samp, snapshots_comp=snaps_comp,
             label=schema["label"])]
 
         alpha_pred = np.array(
@@ -155,6 +156,9 @@ class ChemoSpec:
             rom=rom, trajectories=trajectories, basis=basis,
             eval_targets=eval_targets, training_span=TRAINING_SPAN,
             snapshots_comp=snaps_comp, t_sampled=t_samp,
+            npz_fields=dict(alpha_pred=alpha_pred,
+                            dose_days=np.asarray(chemo_meta["dose_days"]),
+                            operators=cfg.operators),
             extra=dict(chemo_meta=chemo_meta, alpha_pred=alpha_pred,
                        t_full=t_full))
 

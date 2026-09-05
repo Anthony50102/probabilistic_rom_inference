@@ -37,7 +37,7 @@ def _stack_theta(post, num_traj, num_modes):
     return g("lengthscale"), g("variance"), g("noise")
 
 
-def _ic_sigma(t_sampled, snapshots_comp, ells_m, sig2s_m, nus_m, num_modes):
+def _ic_sigma(t_sampled, ells_m, sig2s_m, nus_m, num_modes):
     """Posterior GP std of the state at t0 per mode (for IC uncertainty)."""
     t_tr = np.asarray(t_sampled)
     n_tr = len(t_tr)
@@ -132,34 +132,10 @@ def run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
     if verbose:
         print(f"  ‖O‖ median={np.median(op_norms):.1f}")
 
-    # Mean hypers (first trajectory) for IC uncertainty.
-    ell_m = np.asarray(ells_s[:, 0]).mean(0)
-    sig2_m = np.asarray(sig2s_s[:, 0]).mean(0)
-    nu_m = np.asarray(nus_s[:, 0]).mean(0)
-
-    # ── Predict + score each evaluation target ───────────────────────────
-    per_target = []
-    for tgt in prepared.eval_targets:
-        state0_samples = None
-        if cfg.ic_uncertainty:
-            sig_ic = _ic_sigma(prepared.t_sampled, prepared.snapshots_comp,
-                               ell_m, sig2_m, nu_m, num_modes)
-            rng_ic = np.random.default_rng(cfg.seed)
-            eps_ic = rng_ic.standard_normal((npost, num_modes))
-            state0_samples = (tgt.state0_comp[None, :]
-                              + cfg.ic_scale * sig_ic[None, :] * eps_ic)
-
-        samples_for_rom = {"O": jnp.array(O_samples)}
-        Os, _, rom_solves = generate_rom_predictions(
-            samples=samples_for_rom, rom=rom,
-            snapshots_compressed=prepared.snapshots_comp,
-            time_eval=tgt.t_pred, num_modes=num_modes,
-            num_pulls=min(200, npost), input_func=tgt.input_func,
-            state0_samples=state0_samples)
-        per_target.append(_score(tgt, rom_solves, Os, prepared.training_span))
-
-    # Aggregate (single-target experiments: just target 0).
-    agg = _aggregate(per_target)
+    mean_hypers = tuple(np.asarray(s).mean(0)
+                        for s in (ells_s, sig2s_s, nus_s))
+    per_target = _predict_targets(prepared, cfg, O_samples, mean_hypers)
+    agg = _aggregate_targets(prepared.eval_targets, per_target)
     runtime = time.time() - t0
     if verbose:
         _print_results(agg, runtime)
@@ -170,12 +146,52 @@ def run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
         runtime=runtime, num_modes=num_modes,
         basis=prepared.basis, training_span=prepared.training_span,
         eval_targets=prepared.eval_targets, per_target=per_target,
-        extra=prepared.extra, **agg,
+        extra=prepared.extra, npz_fields=prepared.npz_fields, **agg,
     )
 
     if save:
         _save_npz(result, spec, schema, script_dir)
     return result
+
+
+def _predict_targets(prepared, cfg, O_samples, mean_hypers):
+    """Use each target's initial state and GP, without fitting held-out data."""
+    npost = len(O_samples)
+    rng_ic = np.random.default_rng(cfg.seed)
+    samples_for_rom = {"O": jnp.array(O_samples)}
+    per_target = []
+    for tgt in prepared.eval_targets:
+        state0_samples = np.broadcast_to(tgt.state0_comp, (npost, cfg.num_modes))
+        if cfg.ic_uncertainty:
+            idx = tgt.training_index
+            if idx is not None and not 0 <= idx < len(prepared.trajectories):
+                raise ValueError(f"Invalid training trajectory index: {idx}")
+            # Held-out targets have no fitted GP; use training-average hypers.
+            hypers = tuple(h.mean(0) if idx is None else h[idx]
+                           for h in mean_hypers)
+            sig_ic = _ic_sigma(tgt.t_sampled, *hypers, cfg.num_modes)
+            eps_ic = rng_ic.standard_normal((npost, cfg.num_modes))
+            state0_samples = (state0_samples
+                              + cfg.ic_scale * sig_ic[None, :] * eps_ic)
+        Os, _, rom_solves = generate_rom_predictions(
+            samples=samples_for_rom, rom=prepared.rom,
+            snapshots_compressed=tgt.snapshots_comp,
+            time_eval=tgt.t_pred, num_modes=cfg.num_modes,
+            num_pulls=min(200, npost), input_func=tgt.input_func,
+            state0_samples=state0_samples)
+        per_target.append(_score(tgt, rom_solves, Os, prepared.training_span))
+    return per_target
+
+
+def _aggregate_targets(targets, scores):
+    train = [s for t, s in zip(targets, scores) if t.training_index is not None]
+    held_out = [s for t, s in zip(targets, scores) if t.training_index is None]
+    if not train:
+        raise ValueError("At least one training evaluation target is required")
+    agg = _aggregate(train)
+    if held_out:
+        agg.update({f"test_{k}": v for k, v in _aggregate(held_out).items()})
+    return agg
 
 
 def _score(tgt, rom_solves, Os, span):
@@ -185,7 +201,8 @@ def _score(tgt, rom_solves, Os, span):
     out = dict(rom_solves=rom_solves, n_stable=n_stable, n_total=n_total,
                stability_pct=stability_pct, train_error=float("inf"),
                pred_error=float("inf"), ci_coverage=float("nan"),
-               ci_width=float("nan"), t_pred=tgt.t_pred)
+               ci_width=float("nan"), ci_cov_fit=float("nan"),
+               ci_cov_ext=float("nan"), t_pred=tgt.t_pred)
     if n_stable > 0:
         rom_arr = np.array(rom_solves)
         rom_med = np.median(rom_arr, axis=0)
@@ -201,21 +218,29 @@ def _score(tgt, rom_solves, Os, span):
         q05 = np.percentile(rom_arr, 5, axis=0)
         q95 = np.percentile(rom_arr, 95, axis=0)
         out["ci_width"] = float(np.mean(q95 - q05))
-        out["ci_coverage"] = float(np.mean((ta >= q05) & (ta <= q95)))
+        inside = (ta >= q05) & (ta <= q95)
+        out["ci_coverage"] = float(np.mean(inside))
+        out["ci_cov_fit"] = float(np.mean(inside[:, tm]))
+        out["ci_cov_ext"] = float(np.mean(inside[:, pm]))
     return out
 
 
 def _aggregate(per_target):
     finite = [t for t in per_target if np.isfinite(t["train_error"])]
-    def _mean(key):
+    def _mean(key, empty=float("nan")):
         vals = [t[key] for t in finite]
-        return float(np.mean(vals)) if vals else float("nan")
+        return float(np.mean(vals)) if vals else empty
+    n_stable = sum(t["n_stable"] for t in per_target)
+    n_total = sum(t["n_total"] for t in per_target)
     return dict(
-        stability_pct=float(np.mean([t["stability_pct"] for t in per_target])),
-        train_error=_mean("train_error"),
-        pred_error=_mean("pred_error"),
+        n_stable=n_stable, n_total=n_total,
+        stability_pct=n_stable / max(n_total, 1) * 100,
+        train_error=_mean("train_error", float("inf")),
+        pred_error=_mean("pred_error", float("inf")),
         ci_coverage=_mean("ci_coverage"),
         ci_width=_mean("ci_width"),
+        ci_cov_fit=_mean("ci_cov_fit"),
+        ci_cov_ext=_mean("ci_cov_ext"),
     )
 
 
@@ -227,25 +252,55 @@ def _print_results(agg, runtime):
     print(f"    CI coverage: {agg['ci_coverage']:.1%} (target 90%)")
     print(f"    CI width:    {agg['ci_width']:.4f}")
     print(f"    Runtime:     {runtime:.0f}s")
+    if "test_train_error" in agg:
+        print("    Headline metrics above cover training ICs only.")
+        print(f"    Held-out stability: {agg['test_stability_pct']:.1f}%")
+        print(f"    Held-out fit / extrap error: "
+              f"{agg['test_train_error']:.2%} / {agg['test_pred_error']:.2%}")
+        print(f"    Held-out CI coverage: {agg['test_ci_coverage']:.1%}")
 
 
 def _save_npz(result, spec, schema, script_dir):
     out_dir = os.path.join(script_dir, "results", "comparison", schema["name"])
     os.makedirs(out_dir, exist_ok=True)
-    tgt0 = result["per_target"][0]
-    rom_arr = (np.array(tgt0["rom_solves"]) if tgt0["n_stable"] > 0
-               else np.empty((0, result["num_modes"], len(tgt0["t_pred"]))))
+    targets = result["eval_targets"]
     suffix = os.environ.get("OUTPUT_SUFFIX", "")
     fname = f"{spec.name}{suffix}.npz"
-    np.savez(
-        os.path.join(out_dir, fname),
-        rom_solves=rom_arr, t_pred=tgt0["t_pred"],
-        train_error=result["train_error"], pred_error=result["pred_error"],
-        stability_pct=result["stability_pct"], ci_coverage=result["ci_coverage"],
-        ci_width=result["ci_width"], runtime=result["runtime"],
+    data = dict(
+        t_pred=targets[0].t_pred, t_full=targets[0].t_full,
+        runtime=result["runtime"],
         op_norm_median=result["op_norm_median"], losses=result["losses"],
         num_modes=result["num_modes"],
         training_span=np.array(result["training_span"]),
         O_samples=result["O_samples"],
         basis_entries=np.asarray(result["basis"].entries),
     )
+    metric_keys = ("train_error", "pred_error", "stability_pct", "ci_coverage",
+                   "ci_width", "ci_cov_fit", "ci_cov_ext", "n_stable", "n_total")
+    for prefix in ("", "test_"):
+        for key in metric_keys:
+            if prefix + key in result:
+                data[prefix + key] = result[prefix + key]
+    if hasattr(result["basis"], "shift_"):
+        data["basis_shift"] = np.asarray(result["basis"].shift_)
+    multi = len(targets) > 1
+    if multi:
+        data["n_ics"] = len(targets)
+        data["num_train_ics"] = sum(t.training_index is not None for t in targets)
+        data["eval_labels"] = np.array([t.label for t in targets])
+    for idx, (tgt, score) in enumerate(zip(targets, result["per_target"])):
+        key_suffix = f"_{idx}" if multi else ""
+        rom_arr = (np.asarray(score["rom_solves"]) if score["n_stable"] > 0
+                   else np.empty((0, result["num_modes"], len(tgt.t_pred))))
+        fields = dict(rom_solves=rom_arr, true_comp=tgt.true_comp,
+                      true_states=tgt.true_states, snaps_comp=tgt.snapshots_comp,
+                      t_samp=tgt.t_sampled, t_pred=tgt.t_pred, t_full=tgt.t_full)
+        data.update({key + key_suffix: value for key, value in fields.items()})
+        if multi:
+            data.update({key + key_suffix: score[key] for key in metric_keys})
+    extra = result["npz_fields"]
+    overlap = data.keys() & extra.keys()
+    if overlap:
+        raise ValueError(f"Experiment NPZ fields overwrite shared fields: {overlap}")
+    data.update(extra)
+    np.savez(os.path.join(out_dir, fname), **data)

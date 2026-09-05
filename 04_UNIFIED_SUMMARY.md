@@ -1,5 +1,12 @@
 # 04 Unified — Marginalised-O × Weak-Form Bayesian OpInf
 
+> Historical snapshot of the full-covariance implementation and its results.
+> The active method now lives in `core/weakform_opinf/`, uses integration by
+> parts and diagonal covariance blocks by default, and no longer uses
+> MLE-anchored priors or adaptive SNR mode selection. See `README.md` for the
+> current architecture. The metrics below predate the centralization and must
+> not be presented as current results.
+
 `04_unified.py` is the active Bayesian OpInf method used across the PDE
 experiments. It combines Gaussian-process smoothing, weak-form constraints, and
 closed-form operator marginalisation.

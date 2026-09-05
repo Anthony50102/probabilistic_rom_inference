@@ -19,10 +19,13 @@ import numpy as np
 class EvalTarget:
     """A trajectory to predict + score after inference (one operator, one IC)."""
     t_pred: np.ndarray
-    true_comp: np.ndarray          # (num_modes, len(t_pred)) projected truth
+    true_comp: np.ndarray          # (num_modes, len(t_full)) projected truth
     true_states: np.ndarray        # full-order truth for full-order error
     state0_comp: np.ndarray        # (num_modes,) initial reduced state
     t_full: np.ndarray
+    t_sampled: np.ndarray
+    snapshots_comp: np.ndarray
+    training_index: Optional[int] = 0  # None for a held-out trajectory
     input_func: Optional[Callable] = None
     label: str = ""
 
@@ -39,6 +42,7 @@ class PreparedRun:
     snapshots_comp: np.ndarray
     t_sampled: np.ndarray
     extra: dict = field(default_factory=dict)
+    npz_fields: dict = field(default_factory=dict)
 
 
 class ExperimentSpec(Protocol):

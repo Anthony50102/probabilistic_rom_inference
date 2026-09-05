@@ -19,7 +19,8 @@ The active experiment pipeline compares:
 | `euler` | Compressible Euler | `cAH` | Single trajectory, autonomous quadratic ROM. |
 | `heat` | Cubic heat equation | `cAHBN` | Multi-IC, input-dependent ROM with lifted/shifted basis. |
 | `burgers_2d` | 2D diffusion-reaction / Burgers-style system | `cAH` | Single trajectory plus optional parametric extension scripts. |
-| `tumor` | TumorTwin tumor-growth data | `cA` | Cached FOM data, adaptive POD by GP SNR threshold. |
+| `tumor` | TumorTwin tumor-growth data | `cA` | Cached FOM data, fixed POD mode count. |
+| `tumor` (chemo) | Tumor growth with chemotherapy | `cABN` | Input-driven ROM via `04_unified_chemo.py`. |
 
 ## Repository structure
 
@@ -31,6 +32,7 @@ core/
   pde_models.py        # full-order PDE model implementations
   plotting.py          # shared plotting and metrics helpers
   utils.py             # data generation and utility functions
+  weakform_opinf/      # canonical Bayesian algorithm, configuration, and pipeline
 
 experiments/
   euler/
@@ -58,6 +60,7 @@ experiments/
 
   tumor/
     04_unified.py
+    04_unified_chemo.py
     05_neural_ode.py
     05_neural_ode_chemo.py
     06_compare_methods.py
@@ -72,27 +75,34 @@ plot_from_npz.py       # standalone plot regeneration from saved 04_unified.npz 
 
 ## Bayesian OpInf method
 
-The active `04_unified.py` method fits GP posteriors to reduced coordinates and
-uses the GP derivative posterior to constrain the ROM operator. The operator is
-analytically marginalised, so inference explores only GP hyperparameters and
-recovers a closed-form conditional Gaussian posterior for each row of the
-operator matrix.
+All five `04_unified*.py` experiments are thin adapters over
+`core/weakform_opinf/`. `WeakFormConfig` defines the method settings;
+`ExperimentSpec.prepare()` supplies the data, POD basis, ROM, and evaluation
+targets. Single- and multi-trajectory cases use the same inference pipeline.
 
-For each ROM mode, the derivative block uses the full GP derivative covariance
+The operator is analytically marginalised. By default, SVI with an `AutoNormal`
+guide infers GP hyperparameters and per-operator-block hierarchical prior
+scales, then recovers a conditional Gaussian posterior for each operator row.
+NUTS is also supported. GP priors are spectrum-anchored, not MLE-fitted; operator
+priors are zero-mean, including heat (no least-squares prior center or stability
+shift).
 
-```text
-Σ_D = Σ_z + γ² I,
-```
+Pointwise derivative constraints are combined with state-based weak-form
+constraints via integration by parts. The default derivative and weak-form
+covariance blocks are diagonal, with additive model-error slack; full blocks
+are optional configuration choices. The cross-block covariance is omitted.
 
-and the weak-form block propagates the same derivative covariance through the
-test functions:
+Each evaluation target carries its own initial state, observations, time grid,
+and training-trajectory association. IC uncertainty uses that trajectory's GP
+hyperparameters; held-out targets use training-average hyperparameters on their
+own observation grid, without fitting another GP. Heat headline metrics cover
+training ICs only, with held-out metrics reported separately as `test_*`.
 
-```text
-Σ_W = Ψ_w Σ_z Ψ_wᵀ + γ² diag(∫ ψ_k(t)^2 dt).
-```
-
-This keeps both pointwise derivative and weak-form constraints grounded in the
-same GP derivative uncertainty, with additive slack for model-form error.
+Saved results preserve truth and observation arrays for standalone plotting.
+Single-IC files use `rom_solves`, `true_comp`, `snaps_comp`, and `t_samp`;
+multi-IC files use indexed keys for every target plus `n_ics` and `eval_labels`.
+Heat also retains `basis_shift`, and chemotherapy files retain dose/input
+metadata.
 
 ## Neural ODE baseline
 

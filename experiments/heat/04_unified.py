@@ -135,10 +135,14 @@ class HeatSpec:
                 t_pred=t_pred, true_comp=all_true_comp[ic],
                 true_states=all_true[ic], state0_comp=all_comp[ic][:, 0],
                 t_full=t_full, input_func=_np_input(train_params[ic]),
+                t_sampled=all_ts[ic], snapshots_comp=all_comp[ic],
+                training_index=ic,
                 label=f"Train IC {train_params[ic]}"))
         eval_targets.append(EvalTarget(
             t_pred=t_pred, true_comp=test_true_comp, true_states=test_true[0],
             state0_comp=test_comp[:, 0], t_full=t_full,
+            t_sampled=test_ts[0], snapshots_comp=test_comp,
+            training_index=None,
             input_func=_np_input(test_parameters),
             label=f"Test IC {test_parameters}"))
 
