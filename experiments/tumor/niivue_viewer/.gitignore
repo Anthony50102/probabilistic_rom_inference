@@ -1,0 +1,6 @@
+node_modules/
+dist/
+public/data/
+.browser-test/
+__pycache__/
+.test-data-*/

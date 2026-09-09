@@ -1,11 +1,11 @@
 """Shared nominal-dose data and protocol for the matched chemo experiments."""
 
 from pathlib import Path
-import hashlib
 import json
 
 import numpy as np
 
+from chemo_artifacts import array_fingerprint
 from config import Basis, TumorTwinFOM, load_chemo_fom_data, make_jax_input_func
 
 
@@ -24,15 +24,6 @@ SCHEMAS = [
          NUM_SAMPLES=80, NOISE_LEVEL=noise, NUM_EVAL_POINTS=200)
     for level, noise in (("low", 0.01), ("medium", 0.03), ("high", 0.05))
 ]
-
-
-def array_fingerprint(*arrays):
-    digest = hashlib.sha256()
-    for array in arrays:
-        value = np.ascontiguousarray(array)
-        digest.update(str((value.shape, value.dtype.str)).encode("ascii"))
-        digest.update(memoryview(value).cast("B"))
-    return digest.hexdigest()
 
 
 def dose_path(scale):

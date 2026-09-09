@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <link rel="icon" href="data:,">
+    <title>Local TNBC ROM comparison</title>
+  </head>
+  <body>
+    <header>
+      <h1>TNBC · truth versus learned ROM</h1>
+      <p>Synthetic simulation grid; <strong>not registered patient coordinates</strong>.
+        Local-only viewing. Not for clinical use.</p>
+    </header>
+    <main>
+      <section class="controls" aria-label="Dataset selection">
+        <label>Observation noise <select id="schema" disabled></select></label>
+        <label>Method <select id="method" disabled></select></label>
+        <label>Dose multiplier <select id="dose" disabled></select></label>
+        <label>Slice view <select id="slice" disabled>
+          <option value="0">Grid XY</option><option value="1">Grid XZ</option>
+          <option value="2">Grid YZ</option><option value="3" selected>All grid planes</option>
+          <option value="4">3D rendering</option>
+        </select></label>
+        <label>Truth / prediction colors <select id="range" disabled>
+          <option value="truth">Truth range (prediction may saturate)</option>
+          <option value="full">Combined full range</option>
+        </select></label>
+      </section>
+      <section class="time">
+        <label for="time">Saved prediction time: <output id="day">—</output></label>
+        <input id="time" type="range" min="0" max="0" step="1" value="0" disabled>
+      </section>
+      <p id="status" role="status" aria-live="polite">Loading local manifest…</p>
+      <section id="panels" class="panels" aria-label="Linked volume views"></section>
+      <p>Click / scroll to move linked crosshairs. Drag to rotate in 3D.
+        Anatomical orientation labels are hidden because only simulation-grid spacing is known.
+        Intensities are unclipped tumor state; negative or large ROM values are retained.</p>
+      <p>Prediction: reconstruction of the componentwise reduced median, <strong>not</strong> a voxelwise median.
+        Uncertainty: voxelwise 90% interval width (P95 − P5), calculated <strong>after</strong>
+        reconstructing stable ensemble members. Width is not an accuracy guarantee.</p>
+      <details open><summary>Metrics and provenance</summary><pre id="metadata">No dataset loaded.</pre></details>
+      <details><summary>Skipped / incomplete results</summary><pre id="warnings"></pre></details>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

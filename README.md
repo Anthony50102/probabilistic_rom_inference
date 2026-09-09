@@ -202,6 +202,31 @@ Successful finite integrations do not guarantee physically stable or accurate
 predictions. Interval widths and negative-burden fractions are saved alongside
 coverage so excessively broad intervals cannot masquerade as good calibration.
 
+### Local Niivue tumor visualization
+
+From the repository root, export completed matched results and start the
+local-only viewer:
+
+```bash
+conda run -n prob_rom python experiments/tumor/export_chemo_niivue.py
+cd experiments/tumor/niivue_viewer
+npm ci
+npm run build
+npm start
+```
+
+Open `http://127.0.0.1:5173`. Linked views show FOM truth, reconstructed
+prediction, absolute error, and voxelwise 90% interval width, with noise,
+method, dose, time, and slice/3D controls. Values are not clipped; select
+"Combined full range" to see the full prediction range. Coordinates are
+simulation-grid coordinates, not registered patient space.
+
+The viewer bundles Niivue locally and makes no remote runtime requests.
+Generated NIfTI volumes remain local and are ignored by Git. Re-export and
+refresh as runs finish; missing cases and zero-success ensembles are explicit.
+See [the viewer README](experiments/tumor/niivue_viewer/README.md) for Node
+requirements, export subsets, resource use, and scientific definitions.
+
 ### Historical and per-experiment outputs
 
 Generated outputs are intentionally ignored by git:
