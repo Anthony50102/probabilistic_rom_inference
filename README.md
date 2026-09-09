@@ -159,6 +159,51 @@ conda run -n prob_rom python plot_from_npz.py \
 
 ## Generated outputs
 
+### Matched chemotherapy comparison and dose generalization
+
+`experiments/tumor/chemo_protocol.py` defines the chemo-only comparison:
+80 identical noisy observations on days 5-70, four shared POD modes, and
+400 prediction points through day 110, at 1%, 3%, and 5% observation noise.
+Both methods use a basis fitted to clean **nominal-dose training snapshots**;
+this is an idealized simulation-benchmark basis, not one inferred from noisy
+clinical measurements.
+
+Fit only at nominal dose, then evaluate the same operators/networks at
+0.8x, 1x, and 1.2x dose without refitting or changing the basis:
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python 06_compare_chemo.py --method bayes
+conda run -n prob_rom python 06_compare_chemo.py --method neural
+conda run -n prob_rom python 06_compare_chemo.py --method report
+```
+
+Omit `--method` to run both methods and report; optionally pass schema names,
+such as `dense_low_noise`. Completed Bayesian fits and Neural ODE ensemble
+members are checkpointed, so rerunning resumes rather than retraining them.
+Configuration/data mismatches are rejected instead of mixing incompatible runs.
+
+Outputs are isolated in
+`experiments/tumor/results/chemo_matched_80_5_70_110_v1/`, preserving historical
+comparison files. Each noise regime records a protocol/data fingerprint,
+model fingerprints, per-dose predictions and JSON metrics, and a dose-comparison
+figure. `comparison_all.csv` and `comparison_all.json` collect the final results.
+
+Errors and 90% interval coverage are split at day 70. Full-field relative L2
+error is computed for the reconstructed median reduced trajectory; coverage
+is reported separately in reduced coordinates and for total tumor burden,
+not as voxelwise field coverage. Changed-dose rows evaluate counterfactual
+trajectories over the entire time interval, including the training-time window;
+only 1x was used for fitting. Prediction intervals retain each method's existing
+uncertainty construction (Bayesian operator/IC draws versus a network ensemble).
+Neural ODE training-loss filtering is fixed at nominal dose; reported stable
+counts distinguish retained members from the original trained ensemble.
+Successful finite integrations do not guarantee physically stable or accurate
+predictions. Interval widths and negative-burden fractions are saved alongside
+coverage so excessively broad intervals cannot masquerade as good calibration.
+
+### Historical and per-experiment outputs
+
 Generated outputs are intentionally ignored by git:
 
 - `experiments/**/figures*/`

@@ -144,7 +144,7 @@ def run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
         schema=schema, cfg=cfg, losses=losses, O_samples=O_samples,
         op_norm_median=float(np.median(op_norms)),
         runtime=runtime, num_modes=num_modes,
-        basis=prepared.basis, training_span=prepared.training_span,
+        basis=prepared.basis, rom=rom, training_span=prepared.training_span,
         eval_targets=prepared.eval_targets, per_target=per_target,
         extra=prepared.extra, npz_fields=prepared.npz_fields, **agg,
     )
@@ -179,7 +179,9 @@ def _predict_targets(prepared, cfg, O_samples, mean_hypers):
             time_eval=tgt.t_pred, num_modes=cfg.num_modes,
             num_pulls=min(200, npost), input_func=tgt.input_func,
             state0_samples=state0_samples)
-        per_target.append(_score(tgt, rom_solves, Os, prepared.training_span))
+        score = _score(tgt, rom_solves, Os, prepared.training_span)
+        score["state0_samples"] = state0_samples
+        per_target.append(score)
     return per_target
 
 
@@ -295,6 +297,8 @@ def _save_npz(result, spec, schema, script_dir):
         fields = dict(rom_solves=rom_arr, true_comp=tgt.true_comp,
                       true_states=tgt.true_states, snaps_comp=tgt.snapshots_comp,
                       t_samp=tgt.t_sampled, t_pred=tgt.t_pred, t_full=tgt.t_full)
+        if "state0_samples" in score:
+            fields["state0_samples"] = score["state0_samples"]
         data.update({key + key_suffix: value for key, value in fields.items()})
         if multi:
             data.update({key + key_suffix: score[key] for key in metric_keys})

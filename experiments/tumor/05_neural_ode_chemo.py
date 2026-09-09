@@ -27,6 +27,7 @@ Usage:
 import sys
 import os
 import time
+import json
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -37,29 +38,10 @@ import optax
 from scipy.interpolate import interp1d
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-import config
-from config import (
-    Basis, TumorTwinFOM, load_chemo_fom_data, make_jax_input_func,
+from chemo_protocol import (
+    TRAINING_SPAN, PREDICTION_DAYS, FOM_DATA_PATH, SCHEMAS, OUTPUT_ROOT,
+    prepare_data, array_fingerprint,
 )
-from core.plotting import plot_full_order_error
-
-# Match chemo OpInf script.
-# Match 04 chemo: tighter training span on sparser/larger-dose schedule.
-TRAINING_SPAN = (5.0, 70.0)
-PREDICTION_DAYS = 110.0
-FOM_DATA_PATH = os.path.join(
-    os.path.dirname(__file__), 'data',
-    'TNBC_demo_001_fom_chemo_sparse5_sens0p5.npz'
-)
-
-SCHEMAS = [
-    {"name": "dense_low_noise",    "label": "Dense data, low noise",
-     "NUM_SAMPLES": 200, "NOISE_LEVEL": 0.01, "NUM_EVAL_POINTS": 400},
-    {"name": "dense_medium_noise", "label": "Dense data, medium noise",
-     "NUM_SAMPLES": 200, "NOISE_LEVEL": 0.03, "NUM_EVAL_POINTS": 400},
-    {"name": "dense_high_noise",   "label": "Dense data, high noise",
-     "NUM_SAMPLES": 200, "NOISE_LEVEL": 0.05, "NUM_EVAL_POINTS": 400},
-]
 
 MODEL_PARAMS = dict(
     NUM_MODES=4,
@@ -79,7 +61,6 @@ MODEL_PARAMS = dict(
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
 
 
 # =============================================================================
@@ -167,19 +148,103 @@ def train_single_member(key, q0, t_obs, y_obs, ifn_jax, p):
             model, opt_state, q0, t_obs, y_obs, ifn_jax, opt,
         )
         losses.append(float(loss))
+        if not np.isfinite(losses[-1]):
+            raise FloatingPointError(
+                f"Nonfinite training loss at step {step}: {losses[-1]}"
+            )
         if step % 500 == 0 or step == num_steps - 1:
             print(f"      step {step:5d}/{num_steps}  loss={losses[-1]:.6f}")
     return model, np.array(losses)
 
 
-def train_ensemble(q0, t_obs, y_obs, ifn_jax, p):
+def _model_arrays(model):
+    return [np.asarray(leaf) for leaf in jax.tree_util.tree_leaves(model)
+            if eqx.is_array(leaf)]
+
+
+def train_ensemble(q0, t_obs, y_obs, ifn_jax, p, checkpoint_dir=None,
+                   checkpoint_manifest=None, runtime_metadata=None):
+    """Train or restore completed members, retaining the original member order."""
+    if checkpoint_dir is not None:
+        if checkpoint_manifest is None:
+            raise ValueError("Checkpointing requires a protocol manifest")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        manifest_path = os.path.join(checkpoint_dir, "manifest.json")
+        expected = json.loads(json.dumps(checkpoint_manifest, sort_keys=True))
+        if os.path.exists(manifest_path):
+            with open(manifest_path) as stream:
+                actual = json.load(stream)
+            if actual != expected:
+                raise ValueError(
+                    f"Checkpoint manifest mismatch: {manifest_path}; "
+                    "schema, protocol fingerprint, or model parameters changed"
+                )
+        else:
+            if os.listdir(checkpoint_dir):
+                raise ValueError(
+                    f"Refusing checkpoints without a manifest: {checkpoint_dir}"
+                )
+            with open(manifest_path + ".pending", "w") as stream:
+                json.dump(expected, stream, indent=2, sort_keys=True)
+            os.replace(manifest_path + ".pending", manifest_path)
+
     base_key = jax.random.PRNGKey(p['SEED'])
     keys = jax.random.split(base_key, p['ENSEMBLE_SIZE'])
     ensemble = []
+    member_runtimes = []
+    runtime_new = 0.0
+    n_restored = 0
     for m in range(p['ENSEMBLE_SIZE']):
         print(f"    ── Ensemble member {m + 1}/{p['ENSEMBLE_SIZE']} ──")
-        ensemble.append(train_single_member(
-            keys[m], q0, t_obs, y_obs, ifn_jax, p))
+        if checkpoint_dir is not None:
+            model_path = os.path.join(checkpoint_dir, f"member_{m:03d}.eqx")
+            stats_path = os.path.join(checkpoint_dir, f"member_{m:03d}.npz")
+        if (checkpoint_dir is not None and os.path.exists(model_path)
+                and os.path.exists(stats_path)):
+            template = ChemoNeuralODE(
+                p['NUM_MODES'], p['HIDDEN_DIM'], p['NUM_LAYERS'], key=keys[m])
+            model = eqx.tree_deserialise_leaves(model_path, template)
+            with np.load(stats_path, allow_pickle=False) as stats:
+                losses = stats['losses']
+                member_runtime = float(stats['runtime'])
+                if int(stats['member_index']) != m:
+                    raise ValueError(f"Wrong member identity: {stats_path}")
+                if str(stats['model_id']) != array_fingerprint(*_model_arrays(model)):
+                    raise ValueError(f"Model checkpoint fingerprint mismatch: {model_path}")
+            n_restored += 1
+            print(f"      Restored completed member ({member_runtime:.1f}s training)")
+        else:
+            started = time.perf_counter()
+            model, losses = train_single_member(
+                keys[m], q0, t_obs, y_obs, ifn_jax, p)
+            member_runtime = time.perf_counter() - started
+            runtime_new += member_runtime
+
+        if losses.shape != (p['NUM_TRAIN_STEPS'],) or not np.all(np.isfinite(losses)):
+            raise FloatingPointError(f"Invalid training loss history for member {m}")
+        if not all(np.all(np.isfinite(a)) for a in _model_arrays(model)):
+            raise FloatingPointError(f"Nonfinite trained weights for member {m}")
+        if not np.isfinite(member_runtime) or member_runtime < 0:
+            raise ValueError(f"Invalid training runtime for member {m}")
+        if checkpoint_dir is not None and not (
+                os.path.exists(model_path) and os.path.exists(stats_path)):
+            # Publish statistics last: a member is complete only with both files.
+            with open(model_path + ".pending", "wb") as stream:
+                eqx.tree_serialise_leaves(stream, model)
+            with open(stats_path + ".pending", "wb") as stream:
+                np.savez_compressed(
+                    stream, losses=losses, runtime=member_runtime, member_index=m,
+                    model_id=array_fingerprint(*_model_arrays(model)))
+            os.replace(model_path + ".pending", model_path)
+            os.replace(stats_path + ".pending", stats_path)
+        ensemble.append((model, losses))
+        member_runtimes.append(member_runtime)
+    if runtime_metadata is not None:
+        runtime_metadata.update(
+            runtime_new=runtime_new, runtime_total=float(sum(member_runtimes)),
+            member_runtimes=np.asarray(member_runtimes), n_restored=n_restored,
+            n_newly_trained=p['ENSEMBLE_SIZE'] - n_restored,
+        )
     return ensemble
 
 
@@ -190,40 +255,52 @@ def evaluate_ensemble(ensemble, q0, t_pred, ifn_jax):
     saveat = diffrax.SaveAt(ts=t_pred_jnp)
 
     solves = []
+    rejected = dict(solver=0, shape=0, nonfinite=0)
     for model, _ in ensemble:
-        try:
-            term = diffrax.ODETerm(model)
-            sol = diffrax.diffeqsolve(
-                term, solver,
-                t0=float(t_pred[0]),
-                t1=float(t_pred[-1]),
-                dt0=float(t_pred[1] - t_pred[0]),
-                y0=q0_jnp,
-                args=ifn_jax,
-                saveat=saveat,
-                max_steps=16384,
-                throw=False,
-            )
-            traj = np.array(sol.ys).T  # (num_modes, len(t_pred))
-            if np.all(np.isfinite(traj)):
-                solves.append(traj)
-        except Exception:
-            pass
+        term = diffrax.ODETerm(model)
+        sol = diffrax.diffeqsolve(
+            term, solver,
+            t0=float(t_pred[0]),
+            t1=float(t_pred[-1]),
+            dt0=float(t_pred[1] - t_pred[0]),
+            y0=q0_jnp,
+            args=ifn_jax,
+            saveat=saveat,
+            max_steps=16384,
+            throw=False,
+        )
+        if sol.result != diffrax.RESULTS.successful:
+            rejected['solver'] += 1
+            continue
+        traj = np.array(sol.ys).T  # (num_modes, len(t_pred))
+        if traj.shape != (q0_jnp.shape[0], len(t_pred)):
+            rejected['shape'] += 1
+            continue
+        if not np.all(np.isfinite(traj)):
+            rejected['nonfinite'] += 1
+            continue
+        solves.append(traj)
+    print(f"  Prediction solves: {len(solves)}/{len(ensemble)} accepted; "
+          f"rejected {sum(rejected.values())} "
+          f"(solver={rejected['solver']}, shape={rejected['shape']}, "
+          f"nonfinite={rejected['nonfinite']})")
     if solves:
         return np.stack(solves, axis=0)
-    return np.empty((0, q0.shape[0], len(t_pred)))
+    return np.empty((0, q0_jnp.shape[0], len(t_pred)))
 
 
 # =============================================================================
 # Run experiment
 # =============================================================================
-def run_experiment(schema):
+def run_experiment(schema, data=None, checkpoint_dir=None):
     p = MODEL_PARAMS
-    np.random.seed(p['SEED'])
+    if data is None:
+        data = prepare_data(schema, seed=p['SEED'], num_modes=p['NUM_MODES'])
+    if data['schema'] != schema:
+        raise ValueError("Prepared data schema does not match the requested schema")
 
     noise_level = schema['NOISE_LEVEL']
     num_samples = schema['NUM_SAMPLES']
-    num_eval_points = schema['NUM_EVAL_POINTS']
     num_modes = p['NUM_MODES']
 
     print(f"\n{'='*70}")
@@ -231,43 +308,45 @@ def run_experiment(schema):
     print(f"{'='*70}")
 
     # ── Data (chemo, single trajectory) ──────────────────────────────────
-    t_pred = np.linspace(TRAINING_SPAN[0], PREDICTION_DAYS, num_eval_points)
-
-    fom, t_full, true_states, t_samp, snaps_noisy, ifn, chemo_meta = \
-        load_chemo_fom_data(FOM_DATA_PATH, t_pred, TRAINING_SPAN,
-                            num_samples, noise_level, seed=p['SEED'])
-
-    ifn_jax = make_jax_input_func(
-        ifn, float(t_pred[0]), float(t_pred[-1]), n_points=4001)
+    t_pred, t_full = data['t_pred'], data['t_full']
+    fom, basis = data['fom'], data['basis']
+    true_states, true_comp = data['true_states'], data['true_comp']
+    t_samp, snaps_comp = data['t_samp'], data['snaps_comp']
+    ifn_jax, chemo_meta = data['input_func'], data['chemo_meta']
 
     print(f"  Chemo: {len(chemo_meta['dose_days'])} doses, "
           f"sens={chemo_meta['sensitivity']:.2f}")
 
-    # ── POD basis (clean snapshots) ──────────────────────────────────────
-    snaps_clean = fom.get_states(t_samp)
-    basis = Basis(num_vectors=num_modes)
-    basis.fit(snaps_clean)
-    snaps_comp = basis.compress(snaps_noisy)
-    true_comp = basis.compress(true_states)
     print(f"  POD energy: {basis.cumulative_energy:.4%}")
 
     # ── Train ensemble ───────────────────────────────────────────────────
-    q0 = jnp.array(snaps_comp[:, 0])
+    q0 = jnp.array(data['q0'])
     t_obs = jnp.array(t_samp)
     y_obs = jnp.array(snaps_comp)
 
     print(f"\n  Training {p['ENSEMBLE_SIZE']} ensemble members "
           f"({p['NUM_TRAIN_STEPS']} steps each)...")
-    t0 = time.time()
-    ensemble = train_ensemble(q0, t_obs, y_obs, ifn_jax, p)
-    runtime = time.time() - t0
-    print(f"  Training time: {runtime:.0f}s")
+    timing = {}
+    ensemble = train_ensemble(
+        q0, t_obs, y_obs, ifn_jax, p, checkpoint_dir=checkpoint_dir,
+        checkpoint_manifest=dict(
+            version=1, schema=schema, data_fingerprint=data['fingerprint'],
+            model_params=p, integrator="Tsit5-fixed-default-max_steps16384",
+        ),
+        runtime_metadata=timing,
+    )
+    runtime = timing['runtime_total']
+    print(f"  Training time: {timing['runtime_new']:.1f}s newly spent; "
+          f"{runtime:.1f}s total across all members "
+          f"({timing['n_restored']} restored)")
 
     # ── Filter outlier ensemble members by final train loss ──────────────
     # Some random inits get stuck in bad local minima and produce
     # trajectories that blow out percentile bands. Drop members whose
     # final loss is much larger than the ensemble median.
     final_losses = np.array([losses[-1] for _, losses in ensemble])
+    if not np.all(np.isfinite(final_losses)):
+        raise FloatingPointError("Nonfinite ensemble final training losses")
     med_loss = float(np.median(final_losses))
     cutoff = med_loss * p['LOSS_OUTLIER_FACTOR']
     keep_mask = final_losses <= cutoff
@@ -281,11 +360,15 @@ def run_experiment(schema):
             if not keep_mask[i]:
                 print(f"    ✗ member {i:2d}: final loss {fl:.4g} (>{cutoff:.4g})")
     kept_ensemble = [m for m, k in zip(ensemble, keep_mask) if k]
+    if not kept_ensemble:
+        raise RuntimeError("The final-loss filter retained no ensemble members")
+    model_id = array_fingerprint(
+        *[a for model, _ in kept_ensemble for a in _model_arrays(model)])
 
     # ── Evaluate ─────────────────────────────────────────────────────────
     rom_solves = evaluate_ensemble(kept_ensemble, q0, t_pred, ifn_jax)
     n_stable = len(rom_solves)
-    n_total = p['ENSEMBLE_SIZE']
+    n_total = n_kept
     stability_pct = n_stable / n_total * 100
 
     train_error = pred_error = float('inf')
@@ -310,6 +393,8 @@ def run_experiment(schema):
 
     print(f"\n  Results ({runtime:.0f}s):")
     print(f"    Stability: {n_stable}/{n_total} ({stability_pct:.0f}%)")
+    print(f"    Trained: {len(ensemble)}; loss-filtered: {n_dropped} "
+          "(not numerical prediction failures)")
     print(f"    Train error: {train_error:.4%}  |  Pred error: {pred_error:.4%}")
     print(f"    CI coverage: {ci_coverage:.2%} (target: 90%)")
 
@@ -318,8 +403,16 @@ def run_experiment(schema):
         'train_error': train_error, 'pred_error': pred_error,
         'stability_pct': stability_pct,
         'n_stable': n_stable, 'n_total': n_total,
+        'n_trained': len(ensemble), 'n_kept': n_kept, 'n_dropped': n_dropped,
+        'kept_indices': np.flatnonzero(keep_mask),
+        'dropped_indices': np.flatnonzero(~keep_mask),
+        'final_losses': final_losses, 'median_final_loss': med_loss,
+        'loss_cutoff': cutoff, 'keep_mask': keep_mask,
         'ci_coverage': ci_coverage, 'ci_width': ci_width,
         'runtime': runtime,
+        **timing,
+        'data': data, 'data_fingerprint': data['fingerprint'],
+        'model_id': model_id, 'ensemble': ensemble,
         'losses': all_member_losses,
         'rom_solves': rom_solves,
         'kept_ensemble': kept_ensemble,
@@ -340,7 +433,8 @@ def plot_results(result, save_dir=None):
     """Standard diagnostic figures via the centralized plotting package."""
     from core.plotting import RunResult, figures
     if save_dir is None:
-        save_dir = FIGURE_DIR
+        save_dir = os.path.join(OUTPUT_ROOT, result['schema']['name'], "figures")
+    os.makedirs(save_dir, exist_ok=True)
     run = RunResult.from_flat(result, "05_neural_ode_chemo")
     figures.standard(run, save_dir, f"05_chemo_{result['schema']['name']}",
                      layout="windows", dose_days=result["chemo_meta"]["dose_days"])
@@ -568,125 +662,24 @@ DOSE_VARIATION = False
 
 def evaluate_dose_variation(result, dose_scales=(0.8, 1.0, 1.2),
                             save_dir=None):
-    """Re-integrate trained Neural ODE ensemble at modified dose scales.
+    """Evaluate changed inputs with the same nominally trained networks."""
+    from chemo_evaluation import evaluate_doses
 
-    Mirrors 04's evaluate_dose_variation: keeps the trained network weights
-    fixed and only changes the α(t) input function fed to the integrator.
-    Tests whether the MLP's input coupling generalizes to dose levels not
-    seen at training. FOM at each dose scale must already be saved as
-    `..._sparse5_sens0p5_dose<scale>.npz` (1.0 is the headline file).
-    """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    schema = result['schema']
-    prefix = f"05_chemo_{schema['name']}"
+    data = result['data']
     if save_dir is None:
-        save_dir = FIGURE_DIR
-    os.makedirs(save_dir, exist_ok=True)
+        save_dir = os.path.join(OUTPUT_ROOT, result['schema']['name'])
 
-    kept_ensemble = result['kept_ensemble']
-    basis = result['basis']
-    t_pred = result['t_pred']
-    chemo_meta = result['chemo_meta']
-    training_span = result['training_span']
-    fom_default = result['fom']
-    q0 = result['q0']
+    def predict(scale, input_func):
+        return evaluate_ensemble(
+            result['kept_ensemble'], result['q0'], data['t_pred'], input_func)
 
-    # Volume projection (same as plot_tumor_volume).
-    V = basis.entries
-    ones = np.ones(V.shape[0])
-    vol_proj = V.T @ ones
-    shift_vol = ones @ basis.shift_
-    voxel_vol = float(np.prod(fom_default.spacing))
-
-    spec = chemo_meta['chemo_spec']
-    t0_chemo = chemo_meta['t0']
-    fom_data_dir = os.path.join(SCRIPT_DIR, 'data')
-
-    print(f"\n  ── Dose variation evaluation: scales {dose_scales} ──")
-    fig, axes = plt.subplots(1, len(dose_scales),
-                             figsize=(5 * len(dose_scales), 4.5),
-                             sharey=True)
-    if len(dose_scales) == 1:
-        axes = [axes]
-
-    summary = []
-    for i, scale in enumerate(dose_scales):
-        print(f"\n    Dose × {scale:g}")
-        ifn_scaled = config.chemo_input_func_factory(spec, t0_chemo,
-                                                    dose_scale=scale)
-        ifn_jax_scaled = make_jax_input_func(
-            ifn_scaled, float(t_pred[0]), float(t_pred[-1]), n_points=4001)
-
-        rom_solves_scaled = evaluate_ensemble(
-            kept_ensemble, q0, t_pred, ifn_jax_scaled)
-        n_stable = len(rom_solves_scaled)
-        n_total = len(kept_ensemble)
-        print(f"      Stable: {n_stable}/{n_total}")
-
-        scale_tag = f"dose{scale:g}".replace('.', 'p')
-        fom_path = os.path.join(
-            fom_data_dir,
-            f'TNBC_demo_001_fom_chemo_sparse5_sens0p5_{scale_tag}.npz'
-        )
-        if not os.path.exists(fom_path) and abs(scale - 1.0) < 1e-9:
-            fom_path = FOM_DATA_PATH
-        if not os.path.exists(fom_path):
-            print(f"      ⚠ FOM file missing for scale {scale}: {fom_path} "
-                  f"— skipping panel")
-            axes[i].set_title(f'Dose × {scale:g}\n(no FOM)')
-            continue
-
-        fom_s = TumorTwinFOM(fom_path)
-        true_states_s = fom_s.get_states(t_pred)
-        fom_vol = np.array([true_states_s[:, k].sum() * voxel_vol
-                            for k in range(true_states_s.shape[1])])
-
-        ax = axes[i]
-        ax.plot(t_pred, fom_vol, color='tab:gray', lw=2.5, label='FOM Truth')
-        if n_stable > 0:
-            rom_arr_s = np.array(rom_solves_scaled)
-            rom_vols = np.array([vol_proj @ rom_arr_s[s] + shift_vol
-                                 for s in range(rom_arr_s.shape[0])]) * voxel_vol
-            rom_med_v = np.median(rom_vols, axis=0)
-            rom_lo = np.percentile(rom_vols, 5, axis=0)
-            rom_hi = np.percentile(rom_vols, 95, axis=0)
-            ax.plot(t_pred, rom_med_v, color='tab:orange', lw=2, ls='--',
-                    label='Neural ODE median')
-            ax.fill_between(t_pred, rom_lo, rom_hi, color='tab:orange',
-                            alpha=0.15, label='Neural ODE 5–95%')
-            err = float(np.linalg.norm(rom_med_v - fom_vol)
-                        / np.linalg.norm(fom_vol))
-            summary.append((scale, n_stable, err))
-            ax.text(0.04, 0.94,
-                    f'rel err (volume): {err:.2%}\nstab {n_stable}/{n_total}',
-                    transform=ax.transAxes, fontsize=9, va='top',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
-
-        ax.axvspan(training_span[0], training_span[1],
-                   color='gray', alpha=0.10)
-        ax.axvline(training_span[1], color='gray', ls='--', alpha=0.5)
-        ax.set_xlabel('Time (days)')
-        ax.set_title(f'Dose × {scale:g}', fontsize=12)
-        if i == 0:
-            ax.set_ylabel('Total Tumor Burden (mm³)')
-        ax.legend(loc='upper right', fontsize=9, frameon=True)
-
-    fig.suptitle(f'Dose-variation evaluation (Neural ODE) — {schema["label"]}',
-                 fontsize=13)
-    fig.tight_layout()
-    path = os.path.join(save_dir, f"{prefix}_dose_variation.png")
-    fig.savefig(path, dpi=200, bbox_inches='tight')
-    print(f"\n  📊 Saved: {path}")
-    plt.close(fig)
-
-    print("\n  Dose-variation summary:")
-    print(f"  {'Scale':>6s} {'Stab':>5s} {'Volume rel err':>16s}")
-    for scale, n_stable, err in summary:
-        print(f"  {scale:>6.2g} {n_stable:>5d} {err:>15.2%}")
-    return summary
+    return evaluate_doses(
+        data, predict, "05_neural_ode_chemo", save_dir,
+        nominal_solves=result['rom_solves'],
+        n_total=len(result['kept_ensemble']),
+        n_trained=MODEL_PARAMS['ENSEMBLE_SIZE'],
+        model_id=result['model_id'], dose_scales=dose_scales,
+    )
 
 
 def main(schema_names=None):
@@ -708,28 +701,40 @@ def main(schema_names=None):
 
     summary = []
     for schema in sel:
-        r = run_experiment(schema)
-        plot_results(r)
-
-        # save predictions for cross-method comparison
-        out_dir = os.path.join(SCRIPT_DIR, 'results', 'comparison',
-                               schema['name'])
+        out_dir = os.path.join(OUTPUT_ROOT, schema['name'])
         os.makedirs(out_dir, exist_ok=True)
+        r = run_experiment(
+            schema, checkpoint_dir=os.path.join(out_dir, 'neural_checkpoints'))
+
         np.savez_compressed(
             os.path.join(out_dir, '05_neural_ode_chemo.npz'),
             t_pred=r['t_pred'], t_full=r['t_full'],
+            t_samp=r['t_samp'], snaps_comp=r['snaps_comp'],
+            snaps_noisy=r['data']['snaps_noisy'], q0=np.asarray(r['q0']),
+            alpha_pred=r['data']['alpha_pred'],
+            training_span=r['training_span'],
+            basis_entries=r['basis'].entries, basis_shift=r['basis'].shift_,
+            data_fingerprint=r['data_fingerprint'], model_id=r['model_id'],
+            schema_json=json.dumps(schema, sort_keys=True),
+            model_params_json=json.dumps(MODEL_PARAMS, sort_keys=True),
             rom_solves=r['rom_solves'], true_comp=r['true_comp'],
             train_error=r['train_error'], pred_error=r['pred_error'],
             ci_coverage=r['ci_coverage'], ci_width=r['ci_width'],
             stability_pct=r['stability_pct'], runtime=r['runtime'],
+            runtime_new=r['runtime_new'], runtime_total=r['runtime_total'],
+            member_runtimes=r['member_runtimes'], n_restored=r['n_restored'],
+            n_newly_trained=r['n_newly_trained'],
+            n_stable=r['n_stable'], n_total=r['n_total'],
+            n_trained=r['n_trained'], n_kept=r['n_kept'], n_dropped=r['n_dropped'],
+            kept_indices=r['kept_indices'], dropped_indices=r['dropped_indices'],
+            losses=r['losses'], final_losses=r['final_losses'],
+            median_final_loss=r['median_final_loss'], loss_cutoff=r['loss_cutoff'],
         )
         print(f"  💾 Saved predictions: {out_dir}/05_neural_ode_chemo.npz")
+        plot_results(r, save_dir=os.path.join(out_dir, 'figures'))
 
         if DOSE_VARIATION:
-            try:
-                evaluate_dose_variation(r)
-            except Exception as e:
-                print(f"  ⚠ Dose-variation eval failed: {e}")
+            evaluate_dose_variation(r, save_dir=out_dir)
 
         summary.append((schema['label'], schema['NUM_SAMPLES'],
                         schema['NOISE_LEVEL'],

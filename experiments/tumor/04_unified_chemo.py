@@ -23,14 +23,24 @@ Usage:
 
 import sys
 import os
+import json
+from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
 from config import (
-    Basis, ChemoReducedOrderModel, load_chemo_fom_data, make_jax_input_func,
+    ChemoReducedOrderModel,
 )
+from chemo_protocol import (
+    TRAINING_SPAN, PREDICTION_DAYS, FOM_DATA_PATH, SCHEMAS, OUTPUT_ROOT,
+    prepare_data, array_fingerprint, save_protocol,
+)
+from chemo_evaluation import evaluate_doses, write_json
+from core.bayesian_opinf import generate_rom_predictions
+from core.weakform_opinf.pipeline import _score
 from core.weakform_opinf import (
     WeakFormConfig, EvalTarget, PreparedRun, run_experiment, plot_standard,
 )
@@ -38,24 +48,9 @@ import opinf
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
-TRAINING_SPAN = config.TRAINING_SPAN
 
-# Headline chemo FOM cache (matches 05_neural_ode_chemo). Override with
-# CHEMO_FOM_PATH=/abs/path for dose/schedule ablations.
-CHEMO_FOM_PATH = os.environ.get(
-    "CHEMO_FOM_PATH",
-    os.path.join(SCRIPT_DIR, "data", "TNBC_demo_001_fom_chemo_sparse5_sens0p5.npz"),
-)
-
-# ── Data regimes ─────────────────────────────────────────────────────────────
-SCHEMAS = [
-    {"name": "dense_low_noise",    "NUM_SAMPLES": 80, "NOISE_LEVEL": 0.01,
-     "NUM_EVAL_POINTS": 200, "label": "Dense data, low noise"},
-    {"name": "dense_medium_noise", "NUM_SAMPLES": 80, "NOISE_LEVEL": 0.03,
-     "NUM_EVAL_POINTS": 200, "label": "Dense data, medium noise"},
-    {"name": "dense_high_noise",   "NUM_SAMPLES": 80, "NOISE_LEVEL": 0.05,
-     "NUM_EVAL_POINTS": 200, "label": "Dense data, high noise"},
-]
+# The matched comparison uses the canonical nominal-dose cache.
+CHEMO_FOM_PATH = FOM_DATA_PATH
 
 
 def make_config(schema):
@@ -93,27 +88,21 @@ class ChemoSpec:
 
     name = "04_unified_chemo"
 
-    def prepare(self, cfg, schema):
-        noise = schema["NOISE_LEVEL"]
-        nsamp = schema["NUM_SAMPLES"]
-        neval = cfg.num_eval_points
+    def __init__(self, data=None):
+        self.data = data
 
-        t_pred_full = np.linspace(TRAINING_SPAN[0], config.PREDICTION_DAYS, neval)
-        fom, t_full, true_states, t_samp, snaps_noisy, ifn, chemo_meta = \
-            load_chemo_fom_data(CHEMO_FOM_PATH, t_pred_full, TRAINING_SPAN,
-                                nsamp, noise, seed=cfg.seed)
-        ifn_jax = make_jax_input_func(ifn, float(t_pred_full[0]),
-                                      float(t_pred_full[-1]), n_points=4001)
+    def prepare(self, cfg, schema):
+        neval = cfg.num_eval_points
+        data = self.data if self.data is not None else prepare_data(
+            schema, seed=cfg.seed, num_modes=cfg.num_modes)
+        t_full, true_states = data["t_full"], data["true_states"]
+        t_samp, snaps_noisy = data["t_samp"], data["snaps_noisy"]
+        ifn_jax, chemo_meta = data["input_func"], data["chemo_meta"]
         print(f"  Chemo: {len(chemo_meta['dose_days'])} doses, "
               f"sens={chemo_meta['sensitivity']:.2f}, "
               f"decay={chemo_meta['decay_rate']:.2f}")
 
-        # Fixed POD modes; fit basis on CLEAN snapshots (noise-free basis).
-        snaps_clean = fom.get_states(t_samp)
-        basis = Basis(num_vectors=cfg.num_modes)
-        basis.fit(snaps_clean)
-        snaps_comp = basis.compress(snaps_noisy)
-        true_comp = basis.compress(true_states)
+        basis, snaps_comp, true_comp = data["basis"], data["snaps_comp"], data["true_comp"]
         print(f"  Using {cfg.num_modes} modes  "
               f"(POD energy: {basis.cumulative_energy:.4%})")
 
@@ -142,8 +131,7 @@ class ChemoSpec:
         trajectories = [dict(t_sampled=t_samp, snapshots_comp=snaps_comp,
                              inputs_eval=inputs_eval)]
 
-        t_pred = np.linspace(TRAINING_SPAN[0], config.PREDICTION_DAYS,
-                             cfg.num_pred_points)
+        t_pred = data["t_pred"]
         eval_targets = [EvalTarget(
             t_pred=t_pred, true_comp=true_comp, true_states=true_states,
             state0_comp=snaps_comp[:, 0], t_full=t_full, input_func=ifn_jax,
@@ -158,6 +146,7 @@ class ChemoSpec:
             snapshots_comp=snaps_comp, t_sampled=t_samp,
             npz_fields=dict(alpha_pred=alpha_pred,
                             dose_days=np.asarray(chemo_meta["dose_days"]),
+                            data_fingerprint=data["fingerprint"],
                             operators=cfg.operators),
             extra=dict(chemo_meta=chemo_meta, alpha_pred=alpha_pred,
                        t_full=t_full))
@@ -169,8 +158,74 @@ class ChemoSpec:
                       dose_days=dose_days)
 
 
-def main(schema_names=None):
-    spec = ChemoSpec()
+def run_matched(schema, data=None, out_dir=None):
+    data = prepare_data(schema) if data is None else data
+    out_dir = Path(out_dir or Path(OUTPUT_ROOT) / schema["name"])
+    save_protocol(data, out_dir)
+    cfg, spec = make_config(schema), ChemoSpec(data)
+    path = out_dir / "bayesian_fit.npz"
+    meta_path = out_dir / "bayesian_fit.json"
+    metadata = dict(data_fingerprint=data["fingerprint"], config=asdict(cfg))
+    stored = None
+    if path.exists() and meta_path.exists():
+        with meta_path.open() as stream:
+            stored = json.load(stream)
+        if any(stored.get(k) != v for k, v in metadata.items()):
+            raise ValueError(f"Bayesian checkpoint does not match the protocol: {path}")
+        prepared = spec.prepare(cfg, schema)
+        with np.load(path, allow_pickle=False) as cached:
+            operators = cached["O_samples"]
+            solves = cached["rom_solves"]
+            selected = operators[np.linspace(0, len(operators) - 1, min(200, len(operators)), dtype=int)]
+            score = _score(prepared.eval_targets[0], solves, selected, TRAINING_SPAN)
+            score["state0_samples"] = cached["state0_samples"]
+            result = dict(
+                schema=schema, cfg=cfg, O_samples=operators, losses=cached["losses"],
+                runtime=float(cached["runtime"]), basis=data["basis"], rom=prepared.rom,
+                training_span=TRAINING_SPAN, num_modes=cfg.num_modes,
+                eval_targets=prepared.eval_targets, per_target=[score],
+                extra=prepared.extra, **{k: v for k, v in score.items()
+                                       if k not in ("rom_solves", "state0_samples", "t_pred")})
+        print(f"Reusing Bayesian fit: {path}", flush=True)
+    else:
+        result = run_experiment(spec, cfg, schema, SCRIPT_DIR, save=False)
+        score = result["per_target"][0]
+        np.savez_compressed(
+            path, O_samples=result["O_samples"], state0_samples=score["state0_samples"],
+            rom_solves=score["rom_solves"], losses=result["losses"],
+            runtime=result["runtime"], t_pred=data["t_pred"],
+            t_samp=data["t_samp"], snaps_comp=data["snaps_comp"],
+            basis_entries=data["basis"].entries, basis_shift=data["basis"].shift_)
+    result["data"] = data
+    result["model_id"] = array_fingerprint(
+        result["O_samples"], result["per_target"][0]["state0_samples"])
+    if stored is not None and stored["model_id"] != result["model_id"]:
+        raise ValueError(f"Bayesian checkpoint arrays do not match their fingerprint: {path}")
+    write_json(meta_path, dict(metadata, model_id=result["model_id"]))
+    return result
+
+
+def evaluate_dose_variation(result, out_dir=None):
+    data = result["data"]
+    score = result["per_target"][0]
+
+    def predict(scale, input_func):
+        _, _, solves = generate_rom_predictions(
+            {"O": result["O_samples"]}, result["rom"], data["snaps_comp"],
+            data["t_pred"], result["num_modes"], num_pulls=score["n_total"],
+            input_func=input_func, state0_samples=score["state0_samples"])
+        if len(solves) == 0:
+            return np.empty((0, result["num_modes"], len(data["t_pred"])))
+        return solves
+
+    return evaluate_doses(
+        data, predict, "04_unified_chemo",
+        out_dir or Path(OUTPUT_ROOT) / result["schema"]["name"],
+        nominal_solves=score["rom_solves"], n_total=score["n_total"],
+        model_id=result["model_id"])
+
+
+def main(schema_names=None, dose_variation=False):
     schemas = SCHEMAS if not schema_names else [
         s for s in SCHEMAS if s["name"] in schema_names]
     if not schemas:
@@ -184,9 +239,9 @@ def main(schema_names=None):
 
     results = []
     for schema in schemas:
-        cfg = make_config(schema)
-        r = run_experiment(spec, cfg, schema, SCRIPT_DIR)
-        spec.plot(r, FIGURE_DIR)
+        r = run_matched(schema)
+        if dose_variation:
+            evaluate_dose_variation(r)
         results.append(r)
 
     print(f"\n\n{'=' * 82}\nSUMMARY — Marg-O × Weak-Form (Tumor + Chemo)\n{'=' * 82}")
@@ -201,4 +256,9 @@ def main(schema_names=None):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:] if len(sys.argv) > 1 else None)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("schemas", nargs="*")
+    parser.add_argument("--dose-variation", action="store_true")
+    args = parser.parse_args()
+    main(args.schemas or None, dose_variation=args.dose_variation)
