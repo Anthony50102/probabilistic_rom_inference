@@ -51,6 +51,19 @@ def validate_dose_cache(scale):
     return path
 
 
+def projected_noise_variances(entries, clean_snapshots, noise_level):
+    """Project the declared voxel-noise covariance, excluding the exact IC."""
+    if (clean_snapshots.ndim != 2 or clean_snapshots.shape[1] < 2
+            or entries.ndim != 2 or len(entries) != len(clean_snapshots)):
+        raise ValueError("Noise projection requires matching basis and training snapshots")
+    if not np.isfinite(noise_level) or noise_level < 0:
+        raise ValueError("Noise level must be finite and nonnegative")
+    scale = noise_level * (clean_snapshots.max() - clean_snapshots.min())
+    active_fraction = np.mean(
+        clean_snapshots[:, 1:] > .001 * clean_snapshots.max(), axis=1)
+    return scale ** 2 * np.einsum("vi,v,vi->i", entries, active_fraction, entries)
+
+
 def prepare_data(schema, seed=SEED, num_modes=NUM_MODES):
     """Both methods receive exactly the same observations, POD basis and input."""
     if schema["NUM_SAMPLES"] != 80 or num_modes != NUM_MODES:
@@ -64,7 +77,10 @@ def prepare_data(schema, seed=SEED, num_modes=NUM_MODES):
         load_chemo_fom_data(FOM_DATA_PATH, t_truth, TRAINING_SPAN,
                            schema["NUM_SAMPLES"], schema["NOISE_LEVEL"], seed=seed)
     basis = Basis(num_vectors=num_modes)
-    basis.fit(fom.get_states(t_samp))
+    clean_training = fom.get_states(t_samp)
+    basis.fit(clean_training)
+    noise_variances = projected_noise_variances(
+        basis.entries, clean_training, schema["NOISE_LEVEL"])
     snaps_comp = basis.compress(snaps_noisy)
     true_comp = basis.compress(true_states)
     input_func = make_jax_input_func(input_raw, t_pred[0], t_pred[-1], n_points=4001)
@@ -76,6 +92,7 @@ def prepare_data(schema, seed=SEED, num_modes=NUM_MODES):
         schema=dict(schema), fom=fom, basis=basis, t_full=t_full, t_pred=t_pred,
         true_states=true_states, true_comp=true_comp, t_samp=t_samp,
         snaps_noisy=snaps_noisy, snaps_comp=snaps_comp, q0=snaps_comp[:, 0],
+        noise_variances_comp=noise_variances,
         input_func=input_func, chemo_meta=chemo_meta, fingerprint=fingerprint,
         alpha_pred=alpha_pred)
 

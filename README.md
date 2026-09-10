@@ -176,6 +176,12 @@ Both methods use a basis fitted to clean **nominal-dose training snapshots**;
 this is an idealized simulation-benchmark basis, not one inferred from noisy
 clinical measurements.
 
+Preparation also records `noise_variances_comp`: the time-averaged diagonal
+of the declared voxel-noise covariance projected through the fixed POD basis.
+It respects the active-voxel mask and excludes the exact initial observation.
+These variances are not a percentage of each reduced mode's signal energy.
+This diagnostic does not change observations or silently override GP priors.
+
 Fit only at nominal dose, then evaluate the same operators/networks at
 0.8x, 1x, and 1.2x dose without refitting or changing the basis:
 
