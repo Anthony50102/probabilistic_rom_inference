@@ -92,6 +92,14 @@ constraints via integration by parts. The default derivative and weak-form
 covariance blocks are diagonal, with additive model-error slack; full blocks
 are optional configuration choices. The cross-block covariance is omitted.
 
+`operator_solver="qr"` factors the whitened likelihood and declared Gaussian
+prior as one augmented least-squares system. It avoids normal-equation
+conditioning, cancellation between large quadratic forms, and the historical
+trace-scaled precision ridge, which can substantially alter weakly identified
+input coefficients. The compatibility default `"normal"` retains the old
+numerical implementation; switching solvers changes the fitted model and
+requires a new checkpoint/output directory.
+
 Each evaluation target carries its own initial state, observations, time grid,
 and training-trajectory association. IC uncertainty uses that trajectory's GP
 hyperparameters; held-out targets use training-average hyperparameters on their

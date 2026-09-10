@@ -62,6 +62,9 @@ class WeakFormConfig:
     """'block_hier' (per-block ARD scales, learned) or 'fixed' (uniform σ_O)."""
     sigma_O: float = 10.0
     hier_tau_scale: float = 3.0
+    operator_solver: str = "normal"
+    """'normal' retains the historical jittered normal equations; 'qr' factors
+    the whitened augmented system without adding an undeclared operator prior."""
 
     # ── Constraint slack + GP marginal-likelihood weight ─────────────────
     gamma2: float = 10.0
@@ -93,6 +96,7 @@ class WeakFormConfig:
         _one_of("deriv_cov", self.deriv_cov, {"diag", "full"})
         _one_of("weakform_cov", self.weakform_cov, {"diag", "full"})
         _one_of("op_prior_mode", self.op_prior_mode, {"block_hier", "fixed"})
+        _one_of("operator_solver", self.operator_solver, {"normal", "qr"})
         _one_of("infer", self.infer, {"svi", "nuts"})
 
 

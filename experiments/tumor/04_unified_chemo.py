@@ -170,7 +170,10 @@ def run_matched(schema, data=None, out_dir=None):
     if path.exists() and meta_path.exists():
         with meta_path.open() as stream:
             stored = json.load(stream)
-        if any(stored.get(k) != v for k, v in metadata.items()):
+        stored_config = dict(stored["config"])
+        stored_config.setdefault("operator_solver", "normal")
+        if (stored.get("data_fingerprint") != metadata["data_fingerprint"]
+                or stored_config != metadata["config"]):
             raise ValueError(f"Bayesian checkpoint does not match the protocol: {path}")
         prepared = spec.prepare(cfg, schema)
         with np.load(path, allow_pickle=False) as cached:
@@ -201,7 +204,8 @@ def run_matched(schema, data=None, out_dir=None):
         result["O_samples"], result["per_target"][0]["state0_samples"])
     if stored is not None and stored["model_id"] != result["model_id"]:
         raise ValueError(f"Bayesian checkpoint arrays do not match their fingerprint: {path}")
-    write_json(meta_path, dict(metadata, model_id=result["model_id"]))
+    if stored is None:
+        write_json(meta_path, dict(metadata, model_id=result["model_id"]))
     return result
 
 

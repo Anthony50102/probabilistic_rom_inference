@@ -64,6 +64,10 @@ def build_model(rom, trajectories, cfg):
     num_traj = len(trajectories)
     deriv_is_diag = (cfg.deriv_cov == "diag")
     weakform_is_diag = (cfg.weakform_cov == "diag")
+    evidence_fn = (_ev.per_mode_evidence_qr if cfg.operator_solver == "qr"
+                   else _ev.per_mode_evidence)
+    posterior_fn = (_ev.per_mode_posterior_qr if cfg.operator_solver == "qr"
+                    else _ev.per_mode_posterior)
 
     block_id, m_total, n_blocks = _block_id_from_rom(rom)
     block_id_jnp = jnp.asarray(block_id)
@@ -182,7 +186,7 @@ def build_model(rom, trajectories, cfg):
 
         total_evidence = 0.0
         for i in range(num_modes):
-            log_p_i, _, _ = _ev.per_mode_evidence(
+            log_p_i, _, _ = evidence_fn(
                 traj_blocks, i, m_total, prior_prec, log_prior_cov,
                 deriv_is_diag)
             total_evidence = total_evidence + log_p_i
@@ -208,7 +212,7 @@ def build_model(rom, trajectories, cfg):
 
         mu_all, C_all = [], []
         for i in range(num_modes):
-            mi, Ci = _ev.per_mode_posterior(
+            mi, Ci = posterior_fn(
                 traj_blocks, i, m_total, prior_prec_vec, deriv_is_diag)
             mu_all.append(mi)
             C_all.append(Ci)

@@ -129,3 +129,58 @@ def per_mode_posterior(traj_blocks, mode_i, m, prior_prec, deriv_is_diag):
     mu_i = jax.scipy.linalg.cho_solve((L_i, True), b_total)
     C_i = jax.scipy.linalg.solve_triangular(L_i, jnp.eye(m), lower=True).T
     return mu_i, C_i
+
+
+def _whiten_block(A, y, covariance, diagonal_precision=False):
+    if diagonal_precision:
+        root_precision = jnp.sqrt(covariance)
+        return (A * root_precision[:, None], y * root_precision,
+                -jnp.sum(jnp.log(covariance)))
+    L = jnp.linalg.cholesky(covariance + 1e-8 * jnp.eye(len(y)))
+    return (jax.scipy.linalg.solve_triangular(L, A, lower=True),
+            jax.scipy.linalg.solve_triangular(L, y, lower=True),
+            2 * jnp.sum(jnp.log(jnp.diag(L))))
+
+
+def _qr_operator_system(traj_blocks, mode_i, m, prior_prec, deriv_is_diag):
+    designs, observations = [], []
+    log_det_Sigma = 0.0
+    for A_D, y_D, Sigma_D, A_W, y_W, Sigma_W in traj_blocks:
+        for A, y, covariance, diagonal in (
+                (A_D, y_D[mode_i], Sigma_D[mode_i], deriv_is_diag),
+                (A_W, y_W[mode_i], Sigma_W[mode_i], False)):
+            whitened, observed, log_det = _whiten_block(
+                A, y, covariance, diagonal)
+            designs.append(whitened)
+            observations.append(observed)
+            log_det_Sigma = log_det_Sigma + log_det
+    n = sum(len(y) for y in observations)
+    augmented = jnp.vstack([*designs, jnp.diag(jnp.sqrt(prior_prec))])
+    rhs = jnp.concatenate([*observations, jnp.zeros(m)])
+    Q, R = jnp.linalg.qr(augmented, mode="reduced")
+    signs = jnp.where(jnp.diag(R) < 0, -1.0, 1.0)
+    R = signs[:, None] * R
+    mu = jax.scipy.linalg.solve_triangular(
+        R, signs * (Q.T @ rhs), lower=False)
+    # Avoid subtracting two large quadratic forms in the marginal likelihood.
+    residual = rhs - augmented @ mu
+    return mu, R, jnp.dot(residual, residual), log_det_Sigma, n
+
+
+def per_mode_evidence_qr(traj_blocks, mode_i, m, prior_prec, log_prior_cov,
+                         deriv_is_diag):
+    """Exact Gaussian evidence via whitened QR, without precision-matrix jitter."""
+    mu, R, quadratic, log_det_Sigma, n = _qr_operator_system(
+        traj_blocks, mode_i, m, prior_prec, deriv_is_diag)
+    log_det_precision = 2 * jnp.sum(jnp.log(jnp.diag(R)))
+    log_p = -0.5 * (quadratic + log_det_Sigma + log_prior_cov
+                    + log_det_precision + n * jnp.log(2 * jnp.pi))
+    return log_p, mu, R.T
+
+
+def per_mode_posterior_qr(traj_blocks, mode_i, m, prior_prec, deriv_is_diag):
+    """Return the Gaussian mean and covariance factor from the same QR system."""
+    mu, R, _, _, _ = _qr_operator_system(
+        traj_blocks, mode_i, m, prior_prec, deriv_is_diag)
+    factor = jax.scipy.linalg.solve_triangular(R, jnp.eye(m), lower=False)
+    return mu, factor
