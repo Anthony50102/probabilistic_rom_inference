@@ -1,5 +1,5 @@
 import { Niivue } from '@niivue/niivue';
-import { frameLabel, kinds, localVolumeURL, methodLabels, validateManifest } from './contract.js';
+import { frameLabel, kinds, localVolumeURL, methodLabel, validateManifest } from './contract.js';
 import './style.css';
 
 const $ = id => document.getElementById(id);
@@ -16,7 +16,7 @@ function options(id, values, label = value => value) {
 
 function refreshMethods() {
   const rows = manifest.cases.filter(item => item.schema === $('schema').value);
-  options('method', [...new Set(rows.map(item => item.method))], method => methodLabels[method]);
+  options('method', [...new Set(rows.map(item => item.method))], method => methodLabel(method, rows));
   refreshDoses();
 }
 

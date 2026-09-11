@@ -23,7 +23,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent.parent))
 
 from chemo_protocol import (
-    OUTPUT_ROOT, HISTORICAL_OUTPUT_ROOT, SCHEMAS, prepare_data, save_protocol,
+    OUTPUT_ROOT, INPUT_AWARE_OUTPUT_ROOT, SCHEMAS, prepare_data, save_protocol,
 )
 from chemo_evaluation import plot_comparison, write_json
 
@@ -36,8 +36,8 @@ def load_method(name, filename):
     return module
 
 
-def run_schema(schema, method, output_root=None, bayes_profile="input-aware"):
-    root = output_root or (HISTORICAL_OUTPUT_ROOT if bayes_profile == "historical" else OUTPUT_ROOT)
+def run_schema(schema, method, output_root=None, bayes_profile="historical"):
+    root = output_root or (OUTPUT_ROOT if bayes_profile == "historical" else INPUT_AWARE_OUTPUT_ROOT)
     directory = Path(root) / schema["name"]
     data = prepare_data(schema)
     save_protocol(data, directory)
@@ -113,7 +113,7 @@ def main():
     parser.add_argument("--method", choices=("bayes", "neural", "both", "report"),
                         default="both")
     parser.add_argument("--bayes-profile", choices=("historical", "input-aware"),
-                        default="input-aware")
+                        default="historical")
     parser.add_argument("--output-root", type=Path)
     args = parser.parse_args()
     names = args.schemas or [s["name"] for s in SCHEMAS]
@@ -122,7 +122,7 @@ def main():
         parser.error(f"Unknown schemas: {sorted(unknown)}")
     schemas = [s for s in SCHEMAS if s["name"] in names]
     output_root = args.output_root or Path(
-        HISTORICAL_OUTPUT_ROOT if args.bayes_profile == "historical" else OUTPUT_ROOT)
+        OUTPUT_ROOT if args.bayes_profile == "historical" else INPUT_AWARE_OUTPUT_ROOT)
     if args.method != "report":
         for schema in schemas:
             run_schema(schema, args.method, output_root, args.bayes_profile)

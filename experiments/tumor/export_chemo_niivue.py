@@ -12,7 +12,7 @@ import nibabel as nib
 import numpy as np
 from scipy.interpolate import interp1d
 
-from chemo_artifacts import array_fingerprint, PROTOCOL_ID as PROTOCOL, INPUT_AWARE_RESULTS_SUBDIR
+from chemo_artifacts import array_fingerprint, PROTOCOL_ID as PROTOCOL
 
 
 HERE = Path(__file__).resolve().parent
@@ -273,7 +273,7 @@ def export(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--results-root", type=Path, default=HERE / "results" / INPUT_AWARE_RESULTS_SUBDIR)
+    parser.add_argument("--results-root", type=Path, default=HERE / "results" / PROTOCOL)
     parser.add_argument("--output-dir", type=Path, default=HERE / "niivue_viewer/public/data")
     parser.add_argument("--schema", nargs="+", choices=SCHEMAS, default=list(SCHEMAS))
     parser.add_argument("--method", nargs="+", choices=list(METHODS), default=list(METHODS))

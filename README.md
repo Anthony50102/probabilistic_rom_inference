@@ -101,7 +101,7 @@ input coefficients. The generic compatibility default `"normal"` retains the
 old numerical implementation; the input-aware chemotherapy profile selects
 `"qr"`. Switching solvers requires a new checkpoint/output directory.
 
-For driven systems, `gp_input_trend=True` adds Gaussian trend coefficients
+As an **experimental model extension**, `gp_input_trend=True` adds Gaussian trend coefficients
 for a constant, time, and cumulative input exposure. The coefficients are
 marginalized into the GP kernel, including its analytic derivative covariance.
 Feature centering and scaling use training times only. This uses the supplied
@@ -191,11 +191,18 @@ Both methods use a basis fitted to clean **nominal-dose training snapshots**;
 this is an idealized simulation-benchmark basis, not one inferred from noisy
 clinical measurements.
 
-The default chemo inference profile is **input-aware**: Gaussian time/exposure
-trends, generator-derived projected-noise priors, the untempered observation
-likelihood, QR operator inference, and local float64 computation. The learned
-ROM remains `cABN`; no operator is fixed to its physical value. Other PDE
-experiments retain their existing configurations.
+The default chemo inference profile is **historical**, preserving the original
+time-only GP and inference settings. This is a model choice, not a claim that
+the original model performs well on the changed observation protocol.
+
+The **input-aware** profile is an opt-in experimental model extension, not a
+numerical repair of the same statistical model. It adds Gaussian time/exposure
+trends and changes noise priors, observation-likelihood weighting, numerical
+factorization, precision, and GP-based IC uncertainty. Its `cABN` ODE family is
+unchanged, but its statistical assumptions are not. See
+[the experiment note](experiments/tumor/INPUT_AWARE_GP_EXPERIMENT.md) for the
+model definition, complete changes, results, and unresolved original-model
+diagnosis. Both result sets are retained.
 
 Preparation also records `noise_variances_comp`: the time-averaged diagonal
 of the declared voxel-noise covariance projected through the fixed POD basis.
@@ -220,18 +227,19 @@ members are checkpointed, so rerunning resumes rather than retraining them.
 Configuration/data mismatches are rejected instead of mixing incompatible runs.
 
 Outputs are isolated in
-`experiments/tumor/results/chemo_matched_80_5_70_110_v1_input_aware_v1/`, preserving historical
+`experiments/tumor/results/chemo_matched_80_5_70_110_v1/`, preserving experimental
 comparison files. Each noise regime records a protocol/data fingerprint,
 model fingerprints, per-dose predictions and JSON metrics, and a dose-comparison
 figure. `comparison_all.csv` and `comparison_all.json` collect the final results.
 Reports validate predictions against the corresponding fitted model and record
 the inference profile.
 
-`--bayes-profile historical` selects the original **matched 5-70/110**
-inference settings and directory `results/chemo_matched_80_5_70_110_v1/`.
-It does not restore the older 5-60/90 observation protocol. `--output-root`
-selects an explicit comparison directory. The standalone Bayesian script also
-supports `--profile historical`; incompatible checkpoints are rejected.
+The default `--bayes-profile historical` selects the original **matched 5-70/110**
+inference settings. It does not restore the older 5-60/90 observation protocol.
+Explicit `--bayes-profile input-aware` selects the experimental model and
+`results/chemo_matched_80_5_70_110_v1_input_aware_v1/`. `--output-root` selects
+an explicit comparison directory. The standalone Bayesian script supports
+`--profile input-aware`; incompatible checkpoints are rejected.
 
 Errors and 90% interval coverage are split at day 70. Full-field relative L2
 error is computed for the reconstructed median reduced trajectory; coverage

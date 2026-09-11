@@ -33,10 +33,14 @@ conda run -n prob_rom python experiments/tumor/export_chemo_niivue.py \
 Run export again as results arrive, then refresh the page; rebuilding is unnecessary
 for data changes. **Each export replaces the manifest selection**, not merges it.
 The default results root is
-`experiments/tumor/results/chemo_matched_80_5_70_110_v1_input_aware_v1`.
-The metadata panel identifies the fitted inference profile. The original
-matched results remain under `chemo_matched_80_5_70_110_v1`; pass that directory
-with `--results-root` to inspect them explicitly.
+`experiments/tumor/results/chemo_matched_80_5_70_110_v1` (the original model).
+The metadata panel identifies the fitted inference profile. The experimental
+input-aware results remain under
+`chemo_matched_80_5_70_110_v1_input_aware_v1`; pass that directory with
+`--results-root` to inspect them explicitly. Changing the default model does
+not delete either result set.
+An existing export stays selected until you re-export. The method selector
+explicitly labels input-aware results as experimental.
 `--results-root`, `--output-dir`, `--schema`, `--method`, `--dose`, `--times`,
 `--chunk-voxels` and `--strict` are supported; see `--help`.
 Default exports go in `public/data`. To view a custom output directory, export

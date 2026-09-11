@@ -1,12 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { frameLabel, localVolumeURL, validateManifest } from '../src/contract.js';
+import { frameLabel, localVolumeURL, methodLabel, validateManifest } from '../src/contract.js';
 import { createLocalServer } from '../server.js';
 
 const volume = { file: `chemo-niivue-truth-${'a'.repeat(64)}.nii.gz`, min: 0, max: 1 };
 const item = { id: 'test', schema: 'dense_low_noise', method: '04_unified_chemo', dose_scale: 1,
   times_days: [5, 70, 110], training_end: 70, status: 'no_stable_solves', volumes: { truth: volume } };
+
+test('input-aware results are explicitly labeled experimental', () => {
+  assert.equal(methodLabel('04_unified_chemo', [item]), 'Bayesian OpInf');
+  assert.equal(methodLabel('04_unified_chemo', [
+    { ...item, metadata: { inference_profile: 'input-aware' } },
+  ]), 'Bayesian OpInf (experimental input-aware)');
+  assert.equal(methodLabel('05_neural_ode_chemo', [item]), 'Neural ODE');
+});
 
 test('manifest supports truth-only zero-stable cases and nonuniform actual days', () => {
   assert.equal(validateManifest({ format_version: 1, cases: [item] }).cases.length, 1);

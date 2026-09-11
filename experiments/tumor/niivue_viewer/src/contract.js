@@ -1,6 +1,12 @@
 export const methodLabels = { '04_unified_chemo': 'Bayesian OpInf', '05_neural_ode_chemo': 'Neural ODE' };
 export const kinds = ['truth', 'prediction', 'error', 'uncertainty'];
 
+export function methodLabel(method, cases) {
+  const experimental = method === '04_unified_chemo' && cases.some(
+    item => item.method === method && item.metadata?.inference_profile === 'input-aware');
+  return methodLabels[method] + (experimental ? ' (experimental input-aware)' : '');
+}
+
 export function localVolumeURL(file) {
   if (typeof file !== 'string' || !/^chemo-niivue-[a-z]+-[a-f0-9]{64}\.nii\.gz$/.test(file)) {
     throw new Error('Manifest contains an invalid local volume filename');

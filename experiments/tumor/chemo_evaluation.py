@@ -217,7 +217,7 @@ def plot_comparison(out_dir):
             stem = out_dir / f"{method}_dose{tag}"
             row = validated[method, scale]
             if method == "04_unified_chemo" and row["inference_profile"] == "input-aware":
-                label = "Bayesian OpInf (input-aware)"
+                label = "Bayesian OpInf (input-aware, experimental)"
             rows.append(row)
             with np.load(stem.with_suffix(".npz")) as d:
                 t = d["t_pred"]
