@@ -64,6 +64,7 @@ experiments/
     05_neural_ode.py
     05_neural_ode_chemo.py
     06_compare_methods.py
+    06_compare_chemo.py
     config.py
     generate_fom_data.py
     generate_fom_data_chemo.py
@@ -96,9 +97,9 @@ are optional configuration choices. The cross-block covariance is omitted.
 prior as one augmented least-squares system. It avoids normal-equation
 conditioning, cancellation between large quadratic forms, and the historical
 trace-scaled precision ridge, which can substantially alter weakly identified
-input coefficients. The compatibility default `"normal"` retains the old
-numerical implementation; switching solvers changes the fitted model and
-requires a new checkpoint/output directory.
+input coefficients. The generic compatibility default `"normal"` retains the
+old numerical implementation; the input-aware chemotherapy profile selects
+`"qr"`. Switching solvers requires a new checkpoint/output directory.
 
 For driven systems, `gp_input_trend=True` adds Gaussian trend coefficients
 for a constant, time, and cumulative input exposure. The coefficients are
@@ -190,6 +191,12 @@ Both methods use a basis fitted to clean **nominal-dose training snapshots**;
 this is an idealized simulation-benchmark basis, not one inferred from noisy
 clinical measurements.
 
+The default chemo inference profile is **input-aware**: Gaussian time/exposure
+trends, generator-derived projected-noise priors, the untempered observation
+likelihood, QR operator inference, and local float64 computation. The learned
+ROM remains `cABN`; no operator is fixed to its physical value. Other PDE
+experiments retain their existing configurations.
+
 Preparation also records `noise_variances_comp`: the time-averaged diagonal
 of the declared voxel-noise covariance projected through the fixed POD basis.
 It respects the active-voxel mask and excludes the exact initial observation.
@@ -201,6 +208,7 @@ Fit only at nominal dose, then evaluate the same operators/networks at
 
 ```bash
 cd experiments/tumor
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
 conda run -n prob_rom python 06_compare_chemo.py --method bayes
 conda run -n prob_rom python 06_compare_chemo.py --method neural
 conda run -n prob_rom python 06_compare_chemo.py --method report
@@ -212,10 +220,18 @@ members are checkpointed, so rerunning resumes rather than retraining them.
 Configuration/data mismatches are rejected instead of mixing incompatible runs.
 
 Outputs are isolated in
-`experiments/tumor/results/chemo_matched_80_5_70_110_v1/`, preserving historical
+`experiments/tumor/results/chemo_matched_80_5_70_110_v1_input_aware_v1/`, preserving historical
 comparison files. Each noise regime records a protocol/data fingerprint,
 model fingerprints, per-dose predictions and JSON metrics, and a dose-comparison
 figure. `comparison_all.csv` and `comparison_all.json` collect the final results.
+Reports validate predictions against the corresponding fitted model and record
+the inference profile.
+
+`--bayes-profile historical` selects the original **matched 5-70/110**
+inference settings and directory `results/chemo_matched_80_5_70_110_v1/`.
+It does not restore the older 5-60/90 observation protocol. `--output-root`
+selects an explicit comparison directory. The standalone Bayesian script also
+supports `--profile historical`; incompatible checkpoints are rejected.
 
 Errors and 90% interval coverage are split at day 70. Full-field relative L2
 error is computed for the reconstructed median reduced trajectory; coverage

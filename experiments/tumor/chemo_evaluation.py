@@ -182,6 +182,31 @@ def plot_comparison(out_dir):
     from core.plotting.style import save_figure
 
     out_dir = Path(out_dir)
+    with (out_dir / "protocol.json").open() as stream:
+        protocol = json.load(stream)
+    validated = {}
+    for method, fit_name in (("04_unified_chemo", "bayesian_fit"),
+                              ("05_neural_ode_chemo", "neural_fit")):
+        with (out_dir / f"{fit_name}.json").open() as stream:
+            fit = json.load(stream)
+        for scale in DOSE_SCALES:
+            tag = f"{scale:g}".replace(".", "p")
+            path = out_dir / f"{method}_dose{tag}.json"
+            with path.open() as stream:
+                row = json.load(stream)
+            if (not row.get("model_id") or row["model_id"] != fit.get("model_id")
+                    or row.get("data_fingerprint") != fit.get("data_fingerprint")
+                    or row.get("data_fingerprint") != protocol["data_fingerprint"]
+                    or row.get("method") != method or row.get("dose_scale") != scale
+                    or row.get("protocol_id") != PROTOCOL_ID
+                    or protocol.get("protocol_id") != PROTOCOL_ID
+                    or row.get("schema") != protocol["schema"]["name"]
+                    or row.get("noise") != protocol["schema"]["NOISE_LEVEL"]):
+                raise ValueError(f"Prediction, fit, or protocol provenance mismatch: {path}")
+            row["inference_profile"] = (
+                fit.get("profile", "historical") if method == "04_unified_chemo"
+                else "neural-ensemble")
+            validated[method, scale] = row
     rows = []
     fig, axes = plt.subplots(2, 3, figsize=(16, 8), squeeze=False)
     for col, scale in enumerate(DOSE_SCALES):
@@ -190,8 +215,9 @@ def plot_comparison(out_dir):
                 ("04_unified_chemo", "Bayesian OpInf", "tab:purple"),
                 ("05_neural_ode_chemo", "Neural ODE", "tab:orange")):
             stem = out_dir / f"{method}_dose{tag}"
-            with stem.with_suffix(".json").open() as stream:
-                row = json.load(stream)
+            row = validated[method, scale]
+            if method == "04_unified_chemo" and row["inference_profile"] == "input-aware":
+                label = "Bayesian OpInf (input-aware)"
             rows.append(row)
             with np.load(stem.with_suffix(".npz")) as d:
                 t = d["t_pred"]

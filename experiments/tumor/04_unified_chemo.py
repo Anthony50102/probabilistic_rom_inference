@@ -35,7 +35,7 @@ from config import (
     ChemoReducedOrderModel,
 )
 from chemo_protocol import (
-    TRAINING_SPAN, PREDICTION_DAYS, FOM_DATA_PATH, SCHEMAS, OUTPUT_ROOT, INPUT_AWARE_OUTPUT_ROOT,
+    TRAINING_SPAN, PREDICTION_DAYS, FOM_DATA_PATH, SCHEMAS, OUTPUT_ROOT, HISTORICAL_OUTPUT_ROOT,
     prepare_data, array_fingerprint, save_protocol,
 )
 from chemo_evaluation import evaluate_doses, write_json
@@ -53,9 +53,8 @@ FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
 CHEMO_FOM_PATH = FOM_DATA_PATH
 
 
-def make_config(schema, profile="historical"):
-    """WeakFormConfig for the chemo experiment (autonomous-tumor hypers +
-    cABN operators + weak-form weight 8)."""
+def make_config(schema, profile="input-aware"):
+    """Input-aware chemo inference, with the historical matched settings retained."""
     cfg = WeakFormConfig(
         operators="cABN",
         num_modes=4,
@@ -169,10 +168,10 @@ class ChemoSpec:
                       dose_days=dose_days)
 
 
-def run_matched(schema, data=None, out_dir=None, profile="historical"):
+def run_matched(schema, data=None, out_dir=None, profile="input-aware"):
     data = prepare_data(schema) if data is None else data
     cfg, spec = make_config(schema, profile), ChemoSpec(data)
-    default_root = OUTPUT_ROOT if profile == "historical" else INPUT_AWARE_OUTPUT_ROOT
+    default_root = HISTORICAL_OUTPUT_ROOT if profile == "historical" else OUTPUT_ROOT
     out_dir = Path(out_dir or Path(default_root) / schema["name"])
     save_protocol(data, out_dir)
     path = out_dir / "bayesian_fit.npz"
@@ -257,7 +256,7 @@ def evaluate_dose_variation(result, out_dir=None):
         model_id=result["model_id"])
 
 
-def main(schema_names=None, dose_variation=False, profile="historical"):
+def main(schema_names=None, dose_variation=False, profile="input-aware"):
     schemas = SCHEMAS if not schema_names else [
         s for s in SCHEMAS if s["name"] in schema_names]
     if not schemas:
@@ -292,6 +291,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("schemas", nargs="*")
     parser.add_argument("--dose-variation", action="store_true")
-    parser.add_argument("--profile", choices=("historical", "input-aware"), default="historical")
+    parser.add_argument("--profile", choices=("historical", "input-aware"), default="input-aware")
     args = parser.parse_args()
     main(args.schemas or None, dose_variation=args.dose_variation, profile=args.profile)

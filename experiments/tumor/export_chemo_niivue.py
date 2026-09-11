@@ -12,11 +12,10 @@ import nibabel as nib
 import numpy as np
 from scipy.interpolate import interp1d
 
-from chemo_artifacts import array_fingerprint
+from chemo_artifacts import array_fingerprint, PROTOCOL_ID as PROTOCOL, INPUT_AWARE_RESULTS_SUBDIR
 
 
 HERE = Path(__file__).resolve().parent
-PROTOCOL = "chemo_matched_80_5_70_110_v1"
 SCHEMAS = ("dense_low_noise", "dense_medium_noise", "dense_high_noise")
 METHODS = {"04_unified_chemo": "bayesian_fit", "05_neural_ode_chemo": "neural_fit"}
 DOSES = (0.8, 1.0, 1.2)
@@ -142,6 +141,9 @@ def load_case(root, schema, method, dose):
         embedded = {key: basis[key].item() for key in ("model_id", "data_fingerprint")
                     if key in basis}
     fit_meta = read_json(paths["basis_metadata"]) if "basis_metadata" in paths else embedded
+    metadata["inference_profile"] = (
+        fit_meta.get("profile", "historical") if method == "04_unified_chemo"
+        else "neural-ensemble")
     for key, expected in (("protocol_id", PROTOCOL), ("schema", schema), ("method", method),
                           ("dose_scale", dose)):
         if metadata.get(key) != expected:
@@ -271,7 +273,7 @@ def export(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--results-root", type=Path, default=HERE / "results" / PROTOCOL)
+    parser.add_argument("--results-root", type=Path, default=HERE / "results" / INPUT_AWARE_RESULTS_SUBDIR)
     parser.add_argument("--output-dir", type=Path, default=HERE / "niivue_viewer/public/data")
     parser.add_argument("--schema", nargs="+", choices=SCHEMAS, default=list(SCHEMAS))
     parser.add_argument("--method", nargs="+", choices=list(METHODS), default=list(METHODS))
