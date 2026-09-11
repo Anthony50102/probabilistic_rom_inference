@@ -395,6 +395,103 @@ checks and independent predictions are preserved under the session's
 `screen_score_verified.py`, and the report/validation helpers. No production
 model, default setting, or benchmark artifact was changed.
 
+### Shared-latent regression spots and remaining rollout gap
+
+Two fast existing experiments were evaluated using identical frozen data for
+the original method and the generalized shared-latent prototype. Original
+baselines retained 8,000 SVI steps; latent fits used the prototype's 40-point,
+200-iteration MAP budget. All scores here are point rollouts, not posterior
+ensemble comparisons.
+
+| Experiment | Original reduced fit / forecast | Shared-latent reduced fit / forecast |
+|---|---|---|
+| Diffusion-reaction, rank 3, 60 observations, 3% noise | 0.89% / 7.39% | 0.30% / 10.36% |
+| Euler, rank 6, 55 observations, 3% noise | 4.54% / 16.63% | Diverged during the training interval |
+
+The diffusion-reaction experiment lives under `experiments/burgers_2d`.
+Its fixed-latent control, using the same prototype assumptions but no latent
+movement, scored 0.32% / 9.36%. Thus some degradation is present before latent
+updates, with an additional forecast degradation after them.
+
+Euler exposed a genuine portability issue: the prototype's absolute GP
+lengthscale floor of 0.01 was inappropriate for training on 0-0.08.
+A single replay changed only the numerical bounds to the same
+span-relative range used for chemotherapy, [0.0000123077, 8].
+All GP bound hits disappeared; learned lengthscales were 0.00370-0.00437,
+with observation RMS 0.56-0.77 measurement-noise standard deviations.
+Nevertheless, fixed-latent and shared-latent rollouts still reached the
+divergence cap at t=0.00782 and t=0.00513 respectively, before training ends.
+The latent MAP converged; one preliminary GP fit reported abnormal
+termination. Diffusion-reaction had no lengthscale floor hits.
+
+These are **not a clean non-regression pass**. The prototype still differs
+from the original in GP fitting, operator scales, discrepancy assumptions,
+covariance treatment and omission of weak constraints. Euler failure before
+latent movement rules out attributing it solely to latent updates. Correct
+compact-quadratic ordering, feature/gradient calculations and Euler's
+physical-variable scaling were checked. Production inference was not changed.
+
+#### Where chemotherapy loses accuracy
+
+The continuous GP trajectory was reconstructed conditional on the actual
+optimized latent states, with its analytic derivative, rather than by
+interpolating the saved collocation values.
+
+| Diagnostic | Dataset A | Dataset B |
+|---|---|---|
+| Latent trajectory observation error | 0.056% | 0.051% |
+| Shared-latent ODE observation error | 27.34% | 25.38% |
+| Direct-fit ODE observation error | 0.743% | 0.661% |
+
+On A, the latent trajectory has 22.77% reduced error against training truth
+between observations. Approximately 98.43% of its squared training-truth
+error lies in the observation gap from day 20.206 to day 23.290.
+Thus fitting observations tightly has not recovered a reliable intervening
+trajectory.
+
+For the affine, input-driven cABN dynamics, the rollout error relative to the
+latent trajectory obeys the exact relation
+
+```text
+r(t) = f(x_lat(t), alpha(t); O) - dx_lat(t)/dt
+e'(t) = [A + alpha(t) N] e(t) + r(t)
+e(5) = observed_initial_state - x_lat(5)
+```
+
+Post-fit integration of this decomposition reproduces the baseline error to
+about 5.1e-11. The initial-condition component's norm is only 0.127%/0.062%
+of the total error norm on A/B; these are norm ratios, not additive variance
+fractions. Accumulated derivative defects, including their dynamical
+amplification, dominate.
+
+Whitened collocation residual RMS is only 0.26-0.56 across modes, while dense
+defects in leading modes reach 74-93% of latent derivative RMS. These use
+different normalizations: the point is that small uncertainty-weighted
+collocation errors can coexist with large physical defects between nodes.
+
+With saved GP hyperparameters, operator scales and slack held fixed,
+80 uniform collocation points gave field fit/forecast 16.28%/33.62% on A
+and 10.53%/10.89% on B. Thus forecasting improved on B but training did not,
+and all these followups hit the 200-iteration cap. A 55-point input-refined
+grid produced severely inaccurate rollouts, with A exceeding the independent
+scoring budget. More collocation is not a demonstrated universal fix;
+changing grid size also changes the number of physics constraints.
+
+A separate small prior/slack sensitivity check retained the same 40-point
+latent method and GP fits. On A, replacing the prototype's scaled operator
+prior by fixed SD 5 changed forecast error from 26.10% to 145.79%;
+using uniform discrepancy variance 0.035 changed it to 66.76%;
+changing both gave 91.20%. On B the corresponding forecasts were
+30.46%, 24.42% and 19.56%, versus 27.72% originally, with worse training
+fits. Fixed SD 5 is a nominal-scale control, **not** the original inferred
+operator-scale hierarchy. These results establish sensitivity, not a
+preferred transferable setting.
+
+The regression artifacts are under `chemo-regression-diagnostics/shared_latent_spots/`;
+continuous-path, error-decomposition and grid diagnostics are under
+`latent_gap_audit/`; prior/slack controls are under `latent_assumption_audit/`.
+The prototype is not ready to replace other experiments' defaults.
+
 ## Recorded experimental results
 
 Full-field relative L2 forecast errors on days 70-110:
