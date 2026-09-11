@@ -24,7 +24,7 @@ Usage:
 import sys
 import os
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
@@ -35,12 +35,12 @@ from config import (
     ChemoReducedOrderModel,
 )
 from chemo_protocol import (
-    TRAINING_SPAN, PREDICTION_DAYS, FOM_DATA_PATH, SCHEMAS, OUTPUT_ROOT,
+    TRAINING_SPAN, PREDICTION_DAYS, FOM_DATA_PATH, SCHEMAS, OUTPUT_ROOT, INPUT_AWARE_OUTPUT_ROOT,
     prepare_data, array_fingerprint, save_protocol,
 )
 from chemo_evaluation import evaluate_doses, write_json
 from core.bayesian_opinf import generate_rom_predictions
-from core.weakform_opinf.pipeline import _score
+from core.weakform_opinf.pipeline import _score, precision_context
 from core.weakform_opinf import (
     WeakFormConfig, EvalTarget, PreparedRun, run_experiment, plot_standard,
 )
@@ -53,10 +53,10 @@ FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
 CHEMO_FOM_PATH = FOM_DATA_PATH
 
 
-def make_config(schema):
+def make_config(schema, profile="historical"):
     """WeakFormConfig for the chemo experiment (autonomous-tumor hypers +
     cABN operators + weak-form weight 8)."""
-    return WeakFormConfig(
+    cfg = WeakFormConfig(
         operators="cABN",
         num_modes=4,
         num_eval_points=schema["NUM_EVAL_POINTS"],
@@ -81,6 +81,13 @@ def make_config(schema):
         gp_jitter_rel=1e-3,
         seed=42,
     )
+    if profile == "historical":
+        return cfg
+    if profile == "input-aware":
+        return replace(
+            cfg, mll_weight=1., operator_solver="qr", precision="float64",
+            gp_input_trend=True, gp_noise_prior="measurement", gp_jitter_rel=None)
+    raise ValueError(f"Unknown chemo inference profile: {profile}")
 
 
 class ChemoSpec:
@@ -128,8 +135,12 @@ class ChemoSpec:
             [float(np.asarray(ifn_jax(t)).ravel()[0]) for t in time_eval]
         ).reshape(1, -1)
 
-        trajectories = [dict(t_sampled=t_samp, snapshots_comp=snaps_comp,
-                             inputs_eval=inputs_eval)]
+        trajectory = dict(t_sampled=t_samp, snapshots_comp=snaps_comp, inputs_eval=inputs_eval)
+        if cfg.gp_input_trend:
+            trajectory["input_table"] = dict(times=ifn_jax.t_grid, values=ifn_jax.alpha_grid)
+        if cfg.gp_noise_prior == "measurement":
+            trajectory["noise_variances"] = data["noise_variances_comp"]
+        trajectories = [trajectory]
 
         t_pred = data["t_pred"]
         eval_targets = [EvalTarget(
@@ -158,22 +169,30 @@ class ChemoSpec:
                       dose_days=dose_days)
 
 
-def run_matched(schema, data=None, out_dir=None):
+def run_matched(schema, data=None, out_dir=None, profile="historical"):
     data = prepare_data(schema) if data is None else data
-    out_dir = Path(out_dir or Path(OUTPUT_ROOT) / schema["name"])
+    cfg, spec = make_config(schema, profile), ChemoSpec(data)
+    default_root = OUTPUT_ROOT if profile == "historical" else INPUT_AWARE_OUTPUT_ROOT
+    out_dir = Path(out_dir or Path(default_root) / schema["name"])
     save_protocol(data, out_dir)
-    cfg, spec = make_config(schema), ChemoSpec(data)
     path = out_dir / "bayesian_fit.npz"
     meta_path = out_dir / "bayesian_fit.json"
-    metadata = dict(data_fingerprint=data["fingerprint"], config=asdict(cfg))
+    metadata = dict(data_fingerprint=data["fingerprint"], config=asdict(cfg), profile=profile)
+    if cfg.gp_noise_prior == "measurement":
+        metadata["noise_variances"] = data["noise_variances_comp"].tolist()
     stored = None
     if path.exists() and meta_path.exists():
         with meta_path.open() as stream:
             stored = json.load(stream)
         stored_config = dict(stored["config"])
-        stored_config.setdefault("operator_solver", "normal")
+        for name, default in (("operator_solver", "normal"), ("gp_input_trend", False),
+                              ("gp_noise_prior", "spectrum"), ("precision", "default")):
+            stored_config.setdefault(name, default)
         if (stored.get("data_fingerprint") != metadata["data_fingerprint"]
-                or stored_config != metadata["config"]):
+                or stored_config != metadata["config"]
+                or stored.get("profile", "historical") != profile
+                or (cfg.gp_noise_prior == "measurement"
+                    and stored.get("noise_variances") != metadata["noise_variances"])):
             raise ValueError(f"Bayesian checkpoint does not match the protocol: {path}")
         prepared = spec.prepare(cfg, schema)
         with np.load(path, allow_pickle=False) as cached:
@@ -189,6 +208,9 @@ def run_matched(schema, data=None, out_dir=None):
                 eval_targets=prepared.eval_targets, per_target=[score],
                 extra=prepared.extra, **{k: v for k, v in score.items()
                                        if k not in ("rom_solves", "state0_samples", "t_pred")})
+            for key in ("gp_lengthscale_samples", "gp_variance_samples", "gp_noise_samples"):
+                if key in cached:
+                    result[key] = cached[key]
         print(f"Reusing Bayesian fit: {path}", flush=True)
     else:
         result = run_experiment(spec, cfg, schema, SCRIPT_DIR, save=False)
@@ -197,9 +219,14 @@ def run_matched(schema, data=None, out_dir=None):
             path, O_samples=result["O_samples"], state0_samples=score["state0_samples"],
             rom_solves=score["rom_solves"], losses=result["losses"],
             runtime=result["runtime"], t_pred=data["t_pred"],
+            gp_lengthscale_samples=result["gp_lengthscale_samples"],
+            gp_variance_samples=result["gp_variance_samples"],
+            gp_noise_samples=result["gp_noise_samples"],
             t_samp=data["t_samp"], snaps_comp=data["snaps_comp"],
             basis_entries=data["basis"].entries, basis_shift=data["basis"].shift_)
     result["data"] = data
+    result["profile"] = profile
+    result["output_dir"] = out_dir
     result["model_id"] = array_fingerprint(
         result["O_samples"], result["per_target"][0]["state0_samples"])
     if stored is not None and stored["model_id"] != result["model_id"]:
@@ -214,22 +241,23 @@ def evaluate_dose_variation(result, out_dir=None):
     score = result["per_target"][0]
 
     def predict(scale, input_func):
-        _, _, solves = generate_rom_predictions(
-            {"O": result["O_samples"]}, result["rom"], data["snaps_comp"],
-            data["t_pred"], result["num_modes"], num_pulls=score["n_total"],
-            input_func=input_func, state0_samples=score["state0_samples"])
+        with precision_context(result["cfg"]):
+            _, _, solves = generate_rom_predictions(
+                {"O": result["O_samples"]}, result["rom"], data["snaps_comp"],
+                data["t_pred"], result["num_modes"], num_pulls=score["n_total"],
+                input_func=input_func, state0_samples=score["state0_samples"])
         if len(solves) == 0:
             return np.empty((0, result["num_modes"], len(data["t_pred"])))
         return solves
 
     return evaluate_doses(
         data, predict, "04_unified_chemo",
-        out_dir or Path(OUTPUT_ROOT) / result["schema"]["name"],
+        out_dir or result.get("output_dir", Path(OUTPUT_ROOT) / result["schema"]["name"]),
         nominal_solves=score["rom_solves"], n_total=score["n_total"],
         model_id=result["model_id"])
 
 
-def main(schema_names=None, dose_variation=False):
+def main(schema_names=None, dose_variation=False, profile="historical"):
     schemas = SCHEMAS if not schema_names else [
         s for s in SCHEMAS if s["name"] in schema_names]
     if not schemas:
@@ -243,7 +271,7 @@ def main(schema_names=None, dose_variation=False):
 
     results = []
     for schema in schemas:
-        r = run_matched(schema)
+        r = run_matched(schema, profile=profile)
         if dose_variation:
             evaluate_dose_variation(r)
         results.append(r)
@@ -264,5 +292,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("schemas", nargs="*")
     parser.add_argument("--dose-variation", action="store_true")
+    parser.add_argument("--profile", choices=("historical", "input-aware"), default="historical")
     args = parser.parse_args()
-    main(args.schemas or None, dose_variation=args.dose_variation)
+    main(args.schemas or None, dose_variation=args.dose_variation, profile=args.profile)

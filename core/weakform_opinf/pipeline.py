@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import nullcontext
 
 import numpy as np
 import jax
@@ -23,6 +24,7 @@ from numpyro.optim import ClippedAdam
 from scipy.interpolate import interp1d
 
 from .model import build_model
+from .gp import trajectory_gp_conditional
 from core.bayesian_opinf import generate_rom_predictions
 
 
@@ -54,7 +56,19 @@ def _ic_sigma(t_sampled, ells_m, sig2s_m, nus_m, num_modes):
     return sig_ic
 
 
+def precision_context(cfg):
+    """Limit an experiment's precision choice to its numerical operations."""
+    return (nullcontext() if cfg.precision == "default"
+            else jax.experimental.enable_x64(cfg.precision == "float64"))
+
+
 def run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
+    """Run inference and prediction without leaking the requested JAX precision."""
+    with precision_context(cfg):
+        return _run_experiment(spec, cfg, schema, script_dir, save, verbose)
+
+
+def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
     """Run one data regime end-to-end. Returns a result dict."""
     numpyro.set_platform("cpu")
     rng_key = random.PRNGKey(cfg.seed)
@@ -142,6 +156,9 @@ def run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
 
     result = dict(
         schema=schema, cfg=cfg, losses=losses, O_samples=O_samples,
+        gp_lengthscale_samples=np.asarray(ells_s),
+        gp_variance_samples=np.asarray(sig2s_s),
+        gp_noise_samples=np.asarray(nus_s), gp_prior_info=prior_info,
         op_norm_median=float(np.median(op_norms)),
         runtime=runtime, num_modes=num_modes,
         basis=prepared.basis, rom=rom, training_span=prepared.training_span,
@@ -169,7 +186,18 @@ def _predict_targets(prepared, cfg, O_samples, mean_hypers):
             # Held-out targets have no fitted GP; use training-average hypers.
             hypers = tuple(h.mean(0) if idx is None else h[idx]
                            for h in mean_hypers)
-            sig_ic = _ic_sigma(tgt.t_sampled, *hypers, cfg.num_modes)
+            if cfg.gp_input_trend:
+                if idx is None:
+                    raise ValueError("Input-aware GP IC uncertainty requires a training-linked target")
+                trajectory = prepared.trajectories[idx]
+                _, batch = trajectory_gp_conditional(trajectory, cfg)(
+                    np.asarray([tgt.t_pred[0]]))
+                state_covariance = batch(
+                    *(jnp.asarray(h) for h in hypers),
+                    jnp.asarray(trajectory["snapshots_comp"]))[3]
+                sig_ic = np.sqrt(np.maximum(np.asarray(state_covariance[:, 0, 0]), 0.))
+            else:
+                sig_ic = _ic_sigma(tgt.t_sampled, *hypers, cfg.num_modes)
             eps_ic = rng_ic.standard_normal((npost, cfg.num_modes))
             state0_samples = (state0_samples
                               + cfg.ic_scale * sig_ic[None, :] * eps_ic)
@@ -277,6 +305,9 @@ def _save_npz(result, spec, schema, script_dir):
         O_samples=result["O_samples"],
         basis_entries=np.asarray(result["basis"].entries),
     )
+    for key in ("gp_lengthscale_samples", "gp_variance_samples", "gp_noise_samples"):
+        if key in result:
+            data[key] = result[key]
     metric_keys = ("train_error", "pred_error", "stability_pct", "ci_coverage",
                    "ci_width", "ci_cov_fit", "ci_cov_ext", "n_stable", "n_total")
     for prefix in ("", "test_"):

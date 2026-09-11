@@ -100,6 +100,20 @@ input coefficients. The compatibility default `"normal"` retains the old
 numerical implementation; switching solvers changes the fitted model and
 requires a new checkpoint/output directory.
 
+For driven systems, `gp_input_trend=True` adds Gaussian trend coefficients
+for a constant, time, and cumulative input exposure. The coefficients are
+marginalized into the GP kernel, including its analytic derivative covariance.
+Feature centering and scaling use training times only. This uses the supplied
+input to connect responses across observation gaps; it does not fix the ROM's
+input operators or introduce additional observations.
+
+`gp_noise_prior="measurement"` anchors noise priors to supplied projected
+measurement variances rather than a fraction of signal energy.
+`gp_jitter_rel=None` selects a roundoff-scale nugget; `precision="float64"`
+applies double precision locally to inference/prediction without changing the
+Neural ODE's precision. These choices are explicit configuration options.
+Saved Bayesian fits now retain GP hyperparameter draws for diagnosis.
+
 Each evaluation target carries its own initial state, observations, time grid,
 and training-trajectory association. IC uncertainty uses that trajectory's GP
 hyperparameters; held-out targets use training-average hyperparameters on their

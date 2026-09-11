@@ -22,7 +22,9 @@ import numpy as np
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent.parent))
 
-from chemo_protocol import OUTPUT_ROOT, SCHEMAS, prepare_data, save_protocol
+from chemo_protocol import (
+    OUTPUT_ROOT, INPUT_AWARE_OUTPUT_ROOT, SCHEMAS, prepare_data, save_protocol,
+)
 from chemo_evaluation import plot_comparison, write_json
 
 
@@ -34,14 +36,15 @@ def load_method(name, filename):
     return module
 
 
-def run_schema(schema, method):
-    directory = Path(OUTPUT_ROOT) / schema["name"]
+def run_schema(schema, method, output_root=OUTPUT_ROOT, bayes_profile="historical"):
+    directory = Path(output_root) / schema["name"]
     data = prepare_data(schema)
     save_protocol(data, directory)
     print(f"\nMatched observations: {data['fingerprint']}", flush=True)
     if method in ("bayes", "both"):
         module = load_method("matched_bayes_chemo", "04_unified_chemo.py")
-        result = module.run_matched(schema, data=data, out_dir=directory)
+        result = module.run_matched(
+            schema, data=data, out_dir=directory, profile=bayes_profile)
         module.evaluate_dose_variation(result, out_dir=directory)
         del result
         jax.clear_caches()
@@ -70,10 +73,10 @@ def run_schema(schema, method):
     gc.collect()
 
 
-def report(schemas):
+def report(schemas, output_root=OUTPUT_ROOT):
     all_rows = []
     for schema in schemas:
-        directory = Path(OUTPUT_ROOT) / schema["name"]
+        directory = Path(output_root) / schema["name"]
         rows = plot_comparison(directory)
         fingerprints = {row["data_fingerprint"] for row in rows}
         if len(fingerprints) != 1:
@@ -82,7 +85,7 @@ def report(schemas):
             if len({r["model_id"] for r in rows if r["method"] == method}) != 1:
                 raise ValueError(f"Model changed between doses: {method}, {directory}")
         all_rows.extend(rows)
-    root = Path(OUTPUT_ROOT)
+    root = Path(output_root)
     write_json(root / "comparison_all.json", all_rows)
     fields = sorted({key for row in all_rows for key in row})
     with (root / "comparison_all.csv").open("w", newline="") as stream:
@@ -108,17 +111,22 @@ def main():
     parser.add_argument("schemas", nargs="*")
     parser.add_argument("--method", choices=("bayes", "neural", "both", "report"),
                         default="both")
+    parser.add_argument("--bayes-profile", choices=("historical", "input-aware"),
+                        default="historical")
+    parser.add_argument("--output-root", type=Path)
     args = parser.parse_args()
     names = args.schemas or [s["name"] for s in SCHEMAS]
     unknown = set(names) - {s["name"] for s in SCHEMAS}
     if unknown:
         parser.error(f"Unknown schemas: {sorted(unknown)}")
     schemas = [s for s in SCHEMAS if s["name"] in names]
+    output_root = args.output_root or Path(
+        OUTPUT_ROOT if args.bayes_profile == "historical" else INPUT_AWARE_OUTPUT_ROOT)
     if args.method != "report":
         for schema in schemas:
-            run_schema(schema, args.method)
+            run_schema(schema, args.method, output_root, args.bayes_profile)
     if args.method in ("both", "report"):
-        report(schemas)
+        report(schemas, output_root)
 
 
 if __name__ == "__main__":

@@ -36,10 +36,15 @@ class WeakFormConfig:
     """LogNormal scale for the per-mode variance prior."""
     nu_prior_scale: float = 1.0
     """LogNormal scale for the per-mode noise prior."""
-    gp_jitter_rel: float = 1e-4
+    gp_jitter_rel: float | None = 1e-4
     """Relative GP kernel nugget: diag jitter = max(1e-5, σ²·gp_jitter_rel).
     A numerical stabiliser; larger values add mild extra smoothing. Euler/
-    burgers use 1e-4; the tumor cases use 1e-3 (their established value)."""
+    burgers use 1e-4; the tumor cases use 1e-3 (their established value).
+    None selects a dtype-aware roundoff nugget rather than signal smoothing."""
+    gp_input_trend: bool = False
+    """Marginalize a Gaussian trend in time and integrated scalar input."""
+    gp_noise_prior: str = "spectrum"
+    """'measurement' uses supplied projected measurement variances for noise priors."""
 
     # ── Weak-form test functions ─────────────────────────────────────────
     window_size: int = 20
@@ -78,6 +83,8 @@ class WeakFormConfig:
     num_posterior_samples: int = 500
     nuts_warmup: int = 500
     nuts_samples: int = 500
+    precision: str = "default"
+    """'default' preserves the caller's JAX setting; or select float32/float64."""
 
     # ── Least-squares ROM prior fit (structure only; values marginalised) ─
     regularizer: float = 1.0
@@ -97,6 +104,8 @@ class WeakFormConfig:
         _one_of("weakform_cov", self.weakform_cov, {"diag", "full"})
         _one_of("op_prior_mode", self.op_prior_mode, {"block_hier", "fixed"})
         _one_of("operator_solver", self.operator_solver, {"normal", "qr"})
+        _one_of("gp_noise_prior", self.gp_noise_prior, {"spectrum", "measurement"})
+        _one_of("precision", self.precision, {"default", "float32", "float64"})
         _one_of("infer", self.infer, {"svi", "nuts"})
 
 

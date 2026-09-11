@@ -19,6 +19,7 @@ PROTOCOL_ID = "chemo_matched_80_5_70_110_v1"
 SCRIPT_DIR = Path(__file__).resolve().parent
 FOM_DATA_PATH = str(SCRIPT_DIR / "data/TNBC_demo_001_fom_chemo_sparse5_sens0p5.npz")
 OUTPUT_ROOT = str(SCRIPT_DIR / "results" / PROTOCOL_ID)
+INPUT_AWARE_OUTPUT_ROOT = str(SCRIPT_DIR / "results" / f"{PROTOCOL_ID}_input_aware_v1")
 SCHEMAS = [
     dict(name=f"dense_{level}_noise", label=f"Dense data, {level} noise",
          NUM_SAMPLES=80, NOISE_LEVEL=noise, NUM_EVAL_POINTS=200)

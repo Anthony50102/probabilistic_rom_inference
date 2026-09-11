@@ -49,7 +49,11 @@ def build_model(rom, trajectories, cfg):
             't_sampled'      (n_i,)          training times
             'snapshots_comp' (num_modes, n_i) noisy POD coefficients
             'inputs_eval'    (p, num_eval) or None   input α(t) on the eval grid
+            'input_table'    optional dict(times, values), scalar-input table
+            'noise_variances' optional (num_modes,) measurement variances
         All trajectories must share ``num_eval_points`` (derived from cfg).
+        Input trends and measurement-noise priors require their corresponding
+        trajectory fields when selected in cfg.
     cfg : WeakFormConfig
 
     Returns
@@ -84,11 +88,16 @@ def build_model(rom, trajectories, cfg):
         time_eval = np.linspace(float(t_samp[0]), float(t_samp[-1]), num_eval)
         time_evals.append(time_eval)
 
-        make = _gp.make_gp_conditional(t_samp, jitter_rel=cfg.gp_jitter_rel)
+        make = _gp.trajectory_gp_conditional(tr, cfg)
         _single, _batch = make(time_eval)
         tf = _wf.build_test_functions(time_eval, cfg)
+        noise_kwargs = {}
+        if cfg.gp_noise_prior == "measurement":
+            if "noise_variances" not in tr:
+                raise ValueError("Measurement-noise priors require trajectory noise_variances")
+            noise_kwargs["noise_variances"] = tr["noise_variances"]
         locs = _gp.spectrum_anchored_prior_locs(
-            tr["snapshots_comp"], t_samp, num_modes, cfg)
+            tr["snapshots_comp"], t_samp, num_modes, cfg, **noise_kwargs)
 
         inputs_eval = tr.get("inputs_eval", None)
         inputs_eval = None if inputs_eval is None else jnp.asarray(inputs_eval)
