@@ -273,6 +273,128 @@ the scripts, per-key component arrays, source hashes, plug-in terms, and
 and weighting of GP-conditioned dynamics evidence, including its covariance
 approximations, while preserving the original GP family.
 
+### Breadth-first screen of objective alternatives
+
+All five proposed directions were screened before deeper tuning: calibrated
+measurement likelihood, explicit GP fidelity constraints, GP-first inference
+without dynamics feedback, shared latent trajectories, and direct ODE rollout
+likelihood. Two original-objective controls were also run.
+
+Both datasets have 80 observations on days 5-70, the same frozen canonical
+matched POD basis, and the same known input through day 110. Dataset A is the
+original matched 1% data. Dataset B replaces the observation times using
+uniform seed 43 while retaining the same reduced measurement residual at each
+column. This is a paired observation-design diagnostic, not an independent
+noise/patient sample.
+
+Every reported score below is an **individual ODE point rollout**, starting
+from the exact observed initial coordinate. Predictions were independently
+recomputed with input-onset-split DOP853 integration. These are not posterior
+ensemble medians, calibrated uncertainty results, dose-generalization results,
+or comparisons against the saved neural ensemble.
+
+| Approach | A field fit | A field forecast | B field fit | B field forecast |
+|---|---|---|---|---|
+| Original-objective control | 75.40% | 306.20% | 395.37% | 9606.57% |
+| QR/float64/roundoff-nugget control | 294.64% | 16023.74% | 355.45% | 9243.13% |
+| Noise-calibrated likelihood | 29.38% | 56.75% | 3.32% | 36.00% |
+| Explicit GP fidelity constraint | 29.18% | 55.80% | 2.94% | 36.75% |
+| GP-first, feedback cut | 12.92% | 31.71% | 6.50% | 15.31% |
+| Shared latent trajectory prototype | 9.91% | 26.10% | 9.41% | 27.72% |
+| Direct ODE rollout likelihood | 0.60% | 20.13% | 0.53% | 16.32% |
+
+Fit and forecast intervals are days 5-70 and 70-110. The original-objective
+controls and calibrated likelihood used 4,000 SVI updates, not the full
+12,000-step benchmark; their operator points are conditional means at mean
+hyperparameters. Control magnitudes therefore must not replace or be confused
+with the earlier 200-draw benchmark statistics.
+
+#### What was actually changed
+
+The three GP-side alternatives use the original RBF and cABN structures, with
+float64, QR, a roundoff-scale GP nugget, full observation likelihood weight,
+and declared projected-noise prior medians. Noise remains inferred.
+
+- **Noise calibration:** the original approximate GP/dynamics inference with
+  those settings; all 4,000 SVI losses were finite, but convergence was not
+  certified.
+- **Fidelity constraint:** constrained MAP, at most 200 SLSQP iterations,
+  requiring every mode's GP conditional-mean observation RMS to be at most
+  three measurement-noise standard deviations. The exact first column is
+  excluded from that RMS. Both optimizations converged and were feasible.
+  The constraint was inactive on A and active on B. This constrains a GP
+  conditional mean, not every draw from a fully Bayesian posterior.
+- **Feedback cut:** data-only GP MAP first, then hierarchical operator-scale
+  MAP with GP hyperparameters frozen, followed by the analytic conditional
+  operator posterior mean. Both stages converged. This is a plug-in cut
+  prototype, without GP hyperparameter uncertainty propagation.
+
+The **shared-latent prototype** jointly adjusts 40 whitened GP states per
+mode and profiles the conditional Gaussian operator MAP. It includes the
+full state/derivative cross-covariance and conditions derivatives on the
+shared latent states. However, its GP hyperparameters are fixed at data-only
+MAP estimates with different log-hyperparameter priors; fixed, training-scaled
+zero-mean operator priors replace the original hierarchy; discrepancy SD is
+10% of data-only GP derivative RMS; and weak constraints are omitted.
+It is therefore a feasibility prototype, not a one-change ablation.
+The latent MAP converged on both cases; two preliminary GP fits on A ended
+with abnormal line-search termination and remain a caveat.
+
+The **direct-rollout prototype** fits all 40 original cABN coefficients to
+observations using the declared-noise likelihood and original zero-mean
+hierarchical operator prior. It uses no GP or extra quadratic/input-trend
+terms. Zero and training-only spline-derivative least-squares initializations
+were each allowed 200 L-BFGS iterations; the latter won on training posterior
+score for both datasets. Those estimates hit the iteration limit and are
+**not converged**. Initializing with least squares did not change the prior
+mean. Broad bounds on log operator scales were numerical safeguards; neither
+selected solution hit them. This is joint MAP, without analytic operator
+marginalization or posterior calibration.
+
+#### What the screen establishes, and what it does not
+
+Protecting GP observation fidelity is effective at preventing collapse but
+is not sufficient for accurate ODE rollouts. Maximum per-mode GP RMS in noise
+units was 0.94/4.42 for calibration, 0.84/3.00 for the constraint, and
+1.26/1.93 for the cut on A/B. For example, the constrained A GP fits within
+one noise standard deviation while its ODE has about 29% field training error.
+
+The shared-latent GP also remains faithful at measured times after the latent
+update: its maximum RMS is 0.82/0.94 noise standard deviations. Those are
+measurement residuals, not the much larger latent-state movements at
+unobserved collocation points.
+
+After all directions had results, a cheap **no-refit** check isolated latent
+movement within that prototype: retaining its identical GP hyperparameters,
+priors, slack and collocation, but freezing states at their GP means, gives
+field fit/forecast errors 19.00%/33.12% on A and 180.24%/7416.91% on B.
+Allowing latent updates materially helps under those same prototype
+assumptions; this does not establish that its other changes are necessary.
+
+Direct rollout fitting produces the most consistently accurate training
+trajectories in this screen. It demonstrates that the unchanged cABN family
+can fit these observations much better than the original GP-derived operator
+estimates. Forecast error remains 16-20%, and observation RMS remains
+4-13 measurement-noise standard deviations, so model discrepancy and
+optimization limits still matter. No claim of solved calibration or a
+globally optimal operator posterior is supported.
+
+The evidence prioritizes direct rollout likelihood as an accuracy reference,
+and feedback-cut inference as the simpler candidate retaining conditional
+Gaussian operator inference. Joint latent inference merits a more controlled
+comparison of priors, slack and covariance assumptions before adoption.
+Neither the fidelity constraint nor noise calibration alone resolved the
+original rollout problem.
+
+All per-method results, convergence records, operators, datasets, numerical
+checks and independent predictions are preserved under the session's
+`chemo-regression-diagnostics/direction_screen/`, including
+`final_report.json` and `final_report.csv`. Scripts include `screen_common.py`,
+`screen_controls.py`, `direction_screen/gp_screens.py`,
+`joint_latent_screen.py`, `direct_rollout_screen.py`,
+`screen_score_verified.py`, and the report/validation helpers. No production
+model, default setting, or benchmark artifact was changed.
+
 ## Recorded experimental results
 
 Full-field relative L2 forecast errors on days 70-110:
