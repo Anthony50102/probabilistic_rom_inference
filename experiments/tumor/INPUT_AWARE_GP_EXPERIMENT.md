@@ -492,6 +492,115 @@ continuous-path, error-decomposition and grid diagnostics are under
 `latent_gap_audit/`; prior/slack controls are under `latent_assumption_audit/`.
 The prototype is not ready to replace other experiments' defaults.
 
+## Shared-latent weak-only followup
+
+After the regression and rollout-gap studies, a bounded eight-fit screen
+replaced the prototype's strong derivative likelihood with state-only
+integration-by-parts weak constraints. No ODE integrations were used during
+fitting; integrations below are post-fit evaluation only. These remain
+joint-MAP prototypes, not the original operator-marginalized Bayesian model
+or a posterior/dose-generalization benchmark.
+
+The two frozen low-noise datasets are the same matched acquisition A and
+replacement observation times B (seed 43) used above. Saved data-only GP
+hyperparameters, measurement noise, operator prior scales and discrepancy
+SDs were held fixed from the 40-state prototype. Latent nodal states retain
+their GP prior conditional on measurements; conditional operators are
+analytically profiled at their MAP. The weak objective does not use GP
+derivative means or derivative covariance.
+
+### Definition and quadrature controls
+
+The initial construction used ten compact polynomial bumps,
+`psi = (1-z^2)^6` inside each support, vanishing at support endpoints.
+Their radius is `65 * 20/199`, approximately 6.53 days. For trapezoidal
+matrices W (weighted psi) and V (weighted psi derivative), the weak target
+is `-V X` and the feature matrix is `W F(X, alpha)`. The complete overlap
+covariance is `slack_i^2 W W^T`; it is not diagonalized. This is the
+pushforward of independent nodal discrepancy, not the original continuous
+white-noise-style weak variance. GP state uncertainty is represented by X,
+not counted again as an independent weak observation error.
+
+An independent quadrature audit found relative known-input integral errors
+of 12.18% and 10.68% at 40 and 80 nodes. Increasing resolution did not
+monotonically remove onset-sampling error. Therefore raw failures alone
+cannot establish a weakness of weak-form inference.
+
+Two corrected 80-node fits integrated piecewise-linear nodal hat functions
+exactly to roundoff: partition at latent knots, input knots and bump support
+boundaries, then use eight-point Gauss quadrature. With nodal hats phi,
+the matrices are M = integral(psi phi), D = integral(psi' phi),
+C = integral(psi), B = integral(psi alpha), and N = integral(psi alpha phi).
+The target is `-D X`, the design is `[C, M X, B, N X]`, and discrepancy
+covariance is `slack_i^2 M M^T`. Eight- and twelve-point quadrature agree
+within 1.78e-15 for the ten-test fits.
+
+This corrects quadrature for a **piecewise-linear nodal path**, not the full
+continuous GP path between nodes. In particular, the GP measurement-fit
+diagnostic evaluates the conditional GP, not this piecewise-linear path.
+Changing node count also changes discrepancy covariance: mean diagonal
+approximately halves from 40 to 80 nodes with fixed nodal discrepancy SD.
+Thus grid refinement is not purely a numerical-accuracy comparison.
+
+### Results and overdetermination check
+
+Full-field relative L2 percentages; fit is through day 70, forecast is
+days 70-110. Strong-only rows are the already completed controls.
+
+| Formulation | Dataset | Field fit | Field forecast |
+|---|---|---:|---:|
+| Strong-only, 40 states | A | 9.91% | 26.10% |
+| Strong-only, 40 states | B | 9.41% | 27.72% |
+| Strong-only, 80 states | A | 16.28% | 33.62% |
+| Strong-only, 80 states | B | 10.53% | 10.89% |
+| Weak-only, raw 40 nodes, 10 tests | A | 51,555.79% | 23,802,206.39% |
+| Weak-only, raw 40 nodes, 10 tests | B | 217.70% | 3,110.74% |
+| Weak-only, raw 80 nodes, 10 tests | A | 1,766.65% | 49,732.92% |
+| Weak-only, raw 80 nodes, 10 tests | B | 13.43% | 62.99% |
+| Weak-only, corrected 80 nodes, 10 tests | A | 154.45% | 764.89% |
+| Weak-only, corrected 80 nodes, 10 tests | B | 29.81% | 48.25% |
+| Weak-only, corrected 80 nodes, 20 tests | A | 1,702.12% | 1,487,312.73% |
+| Weak-only, corrected 80 nodes, 20 tests | B | 6.28% | 11.18% |
+
+All six ten-test fits reported gradient-tolerance convergence in 5-24
+iterations. Raw whitened weak residuals are only 0.001-0.049 discrepancy SD;
+corrected ten-test residuals are 0.004-0.040 SD. There are ten weak equations
+per output and ten cABN coefficients, with design rank ten. Near-interpolation
+of these moments is therefore a plausible limitation, not evidence of a
+faithful ODE trajectory.
+
+The final two fits were one predeclared overdetermination check, not a sweep:
+twenty uniformly spaced test centers, unchanged radius and all other
+corrected-80 settings. Both reported function-tolerance convergence at
+120/149 iterations; gradient infinity norms were 2.61e-4/3.64e-5, above
+the requested 1e-5 gradient tolerance. The weak covariance has rank 20,
+condition number 39.98 and no added nugget; design rank remains ten.
+Whitened residual RMS spans 0.086-0.590 SD. Overdetermination substantially
+improves B but catastrophically worsens A. On B its forecast is comparable
+to, not better than, the same-grid strong-only control.
+
+Across all eight weak fits, conditional-GP observation errors remain
+approximately 0.047-0.057% in reduced coordinates. This is not the earlier
+flat-GP failure: a measurement-fitting GP and small weak residuals can still
+coexist with an inaccurate or rapidly growing learned ODE. These observations
+do not isolate one universal failure mechanism or prove weak forms fail
+intrinsically. Correcting quadrature and adding more equations are not a
+consistent rescue of this particular finite-grid, fixed-prior prototype.
+
+Saved arrays independently reproduce the weak residuals and field metrics.
+Augmented least-squares operator solves agree with the fitting normal
+equations to at worst 4.16e-11 relative difference, ruling out that solve's
+roundoff as an explanation for these gross errors.
+
+Artifacts are in `chemo-regression-diagnostics/latent_weak_only/`, including
+`summary.json`, `corrected_quadrature_summary.json`, `tests20_summary.json`,
+and per-case operators, latent states, covariance matrices and predictions.
+Implementations are `latent_weak_only_screen.py`, `latent_weak_corrected.py`
+and `latent_weak_tests20.py`; the independent audit is
+`weak_quadrature_audit.py`. These are in the same preserved session artifact
+directory as the earlier screens. No production inference code, defaults,
+canonical benchmark outputs or neural checkpoints were changed.
+
 ## Recorded experimental results
 
 Full-field relative L2 forecast errors on days 70-110:
