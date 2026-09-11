@@ -161,6 +161,118 @@ preserves `objective_audit.py`, `preregistration.json`, `selection.json`,
 samples, and GP diagnostics. The data fingerprint is
 `7c2b80ca3ebec9f33ace8d3d1c6b148a77da8f2f8906669d256e995edd1b2315`.
 
+### Bounded observation-design robustness audit
+
+Eight configurations were registered before running: the original observation
+design, small time perturbations, and two replacement uniform designs (seeds
+43 and 44), each on days 5-60 and 5-70. Every fit used the original model,
+12,000 SVI updates, 500 guide draws, and the same initialization and optimizer
+random stream. The original day-60 basis and day-110 input/prediction table
+were frozen across all eight cases.
+
+Within each span, the original reduced measurement residual at each column
+was held fixed while the clean trajectory was evaluated at the new times.
+This isolates placement from a fresh noise realization or basis refit; it is
+a conditional reduced-data diagnostic, not a new voxel-noise benchmark.
+Empirical prior locations were recomputed by the unchanged original rules.
+The two control fits reproduced the corresponding earlier fixed-basis
+ablations. No candidate was selected as a winner.
+
+Time perturbations preserved both endpoints and sample ordering. Their largest
+actual displacement was 0.2155 days, approximately 5.2 hours.
+
+| Training span | Observation design | GP mode 1 observation error | GP mode 2 observation error | Field forecast error, days 70-110 |
+|---|---|---|---|---|
+| 5-60 | Original control | 1.88% | 1.62% | 39.55% |
+| 5-60 | At most 5.2-hour perturbations | 3.01% | 97.41% | 45.63% |
+| 5-60 | Uniform replacement, seed 43 | 96.75% | 74.84% | 282.52% |
+| 5-60 | Uniform replacement, seed 44 | 97.06% | 90.66% | 346.96% |
+| 5-70 | Original control, frozen old basis | 89.47% | 3.19% | 1209.85% |
+| 5-70 | At most 5.2-hour perturbations | 89.16% | 3.87% | 1945.40% |
+| 5-70 | Uniform replacement, seed 43 | 98.32% | 96.23% | 334.98% |
+| 5-70 | Uniform replacement, seed 44 | 97.92% | 97.77% | 336.47% |
+
+Forecasts here are **40-draw screening estimates**, with the original IC
+uncertainty rule, not the full 200-draw benchmark. All 320 requested
+integrations were finite. Every forecast uses the same day-70-to-110 scoring
+interval; the old control is therefore not the earlier 9.59% reduced-coordinate
+forecast through day 90. Finite-ensemble uncertainty is substantial:
+200 bootstrap resamples give a 90% Monte Carlo range of 32.21-54.02% for the
+old control's field error and 38.58-71.01% for its perturbed counterpart.
+That small forecast difference is not resolved; the large GP mode-2 training
+collapse is the clearer perturbation result. Bootstrap ranges describe
+finite-ensemble error estimation, not predictive coverage.
+
+The important result is that **failure occurs without changing either
+endpoint**. Both replacement designs on the original 5-60 span collapse the
+dominant mode, and small perturbations collapse its second mode while leaving
+the dominant mode relatively faithful. In the latter case, full-field
+training error rises from 2.83% to 14.97% in the screening forecasts.
+Thus the known-good run is demonstrably fragile under this controlled
+observation-design audit. These few coupled cases do not estimate a population
+failure probability or establish that every configuration must fail.
+
+The session's `chemo-regression-diagnostics/observation_robustness/` contains
+the preregistration, frozen reduced datasets, all four-mode GP diagnostics,
+guide parameters, losses, forecast draws, CSV/JSON summaries, bootstrap ranges,
+and `jitter_gp_reconstruction.png`. The companion scripts are
+`robustness_audit.py` and `summarize_robustness.py`. No inference implementation,
+default setting, or saved benchmark was replaced.
+
+### Which objective component rewards collapse?
+
+A separate, no-refit audit decomposed the warm guide's before/after ELBO on the
+same matched data using 64 common independent keys. All AutoNormal sample
+densities, including transformations/Jacobians, were included. Component sums
+agreed with native same-key `Trace_ELBO` to less than 0.0001 in float32.
+These keys differ from the earlier 256-key evaluation, so the Monte Carlo
+estimates are not expected to be identical.
+
+| Component | After-minus-before ELBO contribution | Paired Monte Carlo standard error |
+|---|---|---|
+| Observation marginal likelihood, weighted 0.1 | -19.86 | 0.22 |
+| Marginal operator/dynamics evidence | +599.56 | 0.57 |
+| Hyperparameter priors | -20.44 | 0.20 |
+| Negative guide log density | +21.36 | 0.08 |
+| Total ELBO | +580.61 | 0.56 |
+
+The unweighted observation term loses 198.63. Thus downweighting observations
+reduces the penalty for losing data fidelity, but the dominant positive reward
+comes from the dynamics evidence, not the priors or guide density.
+
+At arithmetic posterior-mean hyperparameters (a plug-in diagnostic, **not an
+ELBO decomposition**), the derivative-covariance log-determinant contribution
+improves by 423.39, while the marginal quadratic contribution improves by
+144.87. Flattening the GP makes its inferred derivatives small and certain,
+and the constraint density rewards that concentration. These are
+GP-conditioned constraint summaries, not additional independent observations.
+This identifies an incentive in the implemented objective; it does not mean
+Gaussian normalization terms can simply be deleted as a principled fix.
+
+The same concern is present on the old observations. With the old day-60
+data/basis and the fixed input110 table, a moment-matched known-good guide has
+ELBO -262.78 +/- 0.28 and dominant GP observation error 1.88%. A collapsed guide
+transferred without refitting from the matched-data audit has ELBO
++89.98 +/- 4.90 and observation error 96.13%. Its paired advantage is
+352.76 +/- 4.80. Both guides were scored against exactly the same old-data
+target. The transferred guide is a valid candidate distribution, not a claim
+to be that target's optimized posterior.
+
+This supports an explanation in terms of attraction to different variational
+solutions: the successful observation design reaches a data-faithful solution,
+but the objective also gives higher scores to badly collapsed candidates.
+The new day-70 observations are not required for this incentive to exist.
+The old-data comparison uses input110, not the literal historical input90
+table; the fixed-basis control separately reproduces the prior input110 replay.
+No claim of global optimality, a population failure rate, or a proven
+replacement likelihood follows from these finite comparisons.
+
+The session's `chemo-regression-diagnostics/objective_terms_audit/` retains
+the scripts, per-key component arrays, source hashes, plug-in terms, and
+`old_target/` comparison. The next methodological issue is the construction
+and weighting of GP-conditioned dynamics evidence, including its covariance
+approximations, while preserving the original GP family.
+
 ## Recorded experimental results
 
 Full-field relative L2 forecast errors on days 70-110:
