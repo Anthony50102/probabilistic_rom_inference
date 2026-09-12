@@ -494,6 +494,10 @@ The prototype is not ready to replace other experiments' defaults.
 
 ## Shared-latent weak-only followup
 
+The subsequent strong-plus-weak, optimization and interpolation-uncertainty
+investigation is recorded separately in
+[Shared latent states: constraints, optimization and interpolation](SHARED_LATENT_CONSTRAINT_STUDY.md).
+
 After the regression and rollout-gap studies, a bounded eight-fit screen
 replaced the prototype's strong derivative likelihood with state-only
 integration-by-parts weak constraints. No ODE integrations were used during
