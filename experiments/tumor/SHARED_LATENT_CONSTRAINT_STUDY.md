@@ -378,6 +378,13 @@ Conversely, correct interpolation alone does not guarantee the best rollout
 under a particular strong residual weighting. Interpolation, residual
 weighting and subsequent dynamical amplification are separate issues.
 
+## Follow-up hypotheses
+
+[The four-hypothesis study](SHARED_LATENT_HYPOTHESIS_TESTS.md) investigates
+operator identification and amplification, operator marginalization,
+off-node feature covariance and grid consistency, and GP hyperparameter
+uncertainty. It includes a separate known-system recovery control.
+
 ## Artifacts and reproducibility
 
 Artifacts are preserved under session
