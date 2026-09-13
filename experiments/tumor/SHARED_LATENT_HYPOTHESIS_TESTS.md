@@ -361,6 +361,13 @@ than indiscriminate covariance inflation, longer optimization or a switch
 to fitting through ODE integration. Those are future research directions,
 not changes implemented or validated by this study.
 
+## Subsequent controlled correction
+
+[The full-feature covariance study](FULL_FEATURE_COVARIANCE_STUDY.md) follows
+this diagnostic audit with normalized frozen-state rescoring, known-system
+controls and paired chemotherapy refits. It separately audits the treatment
+structure justified by the simulator, without changing production defaults.
+
 ## Reproducibility
 
 Session artifacts are under
