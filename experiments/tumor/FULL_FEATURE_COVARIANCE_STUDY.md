@@ -363,6 +363,12 @@ form while continuing to learn untreated dynamics. That would be an explicit
 additional use of mechanistic information. It is deliberately not combined
 with this covariance correction in the present study.
 
+The subsequent investigation deliberately paused that treatment-specific
+restriction and broadened to all five active experiments. See the
+[cross-experiment shared-latent survey](../CROSS_EXPERIMENT_SHARED_LATENT_SURVEY.md)
+for matched density controls, non-chemotherapy regressions and the limits of
+promoting this correction from the earlier chemotherapy result.
+
 ## Artifacts
 
 Artifacts are under session
