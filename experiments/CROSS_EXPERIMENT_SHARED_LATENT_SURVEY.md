@@ -8,6 +8,10 @@ regressions. More observations help interpolation, not necessarily the
 learned ODE.** It would be premature to specialize or promote the general
 method on the strength of the earlier chemotherapy successes.
 
+Follow-up: [the shared-latent mechanism study](SHARED_LATENT_MECHANISM_STUDY.md)
+tests reduced-noise weighting, operator-prior shrinkage and GP/ODE
+initial-state consistency across these same five base acquisitions.
+
 This survey deliberately paused treatment-specific restrictions and
 input-aware GP changes. It covers all five active experiment adapters,
 with one base acquisition per problem and a nested double-observation
