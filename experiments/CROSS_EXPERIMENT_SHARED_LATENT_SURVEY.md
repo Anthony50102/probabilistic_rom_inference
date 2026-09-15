@@ -505,6 +505,16 @@ assumed to be default or pinned. The qualification is preserved in
 Archived O/IC-based ODE scores were not regenerated or changed; bitwise
 portability of those additional GP diagnostics is not established.
 
+A subsequent fully recorded post-fit repeat is archived under
+`broad_survey/evaluation/authoritative_20260915T074954/`, including its
+commands, timings and pinned native XLA configuration. It reused the
+frozen fits and reintegrated all 990 native and 220 shared/control
+trajectories. Parent comparison found every primary error and segment
+status unchanged across all 18 native and 140 shared/control role rows.
+This does not retroactively establish the older protocols' settings or
+claim bit equivalence of every GP diagnostic; see
+`broad_survey/parent_verification/recorded_runtime_repeat.json`.
+
 The existing method already obtains useful derivative/weak-form forecasts
 outside chemotherapy without integrating ODEs in the training objective.
 This survey does not refute that approach or the shared-state idea. It
