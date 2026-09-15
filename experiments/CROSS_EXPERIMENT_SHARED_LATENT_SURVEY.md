@@ -497,6 +497,14 @@ changed heat point coefficients by up to 4.47e-6; original settings restore
 exact point/root equality. Producer O-draw replays cover tested indices
 0, 248 and 499 under that setting, not an all-500/platform guarantee.
 
+A later execution-provenance audit found that 24 original evaluator
+GP/noise/source-reference/functional-guide protocols did not record their
+XLA runtime settings. Those settings are unknown, not retrospectively
+assumed to be default or pinned. The qualification is preserved in
+`broad_survey/evaluation/native_execution_qualification/summary.json`.
+Archived O/IC-based ODE scores were not regenerated or changed; bitwise
+portability of those additional GP diagnostics is not established.
+
 The existing method already obtains useful derivative/weak-form forecasts
 outside chemotherapy without integrating ODEs in the training objective.
 This survey does not refute that approach or the shared-state idea. It
