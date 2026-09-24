@@ -65,7 +65,15 @@ CASES = {
     "multi-dose-chemo": BenchmarkCase(
         "multi-dose-chemo", "Same half-strength past; different strengths of future pulses.",
         (5., 70.), 110., 120, .01, .025, .05, "cABN",
-        (20., 40., 60., 80., 100.), .5, (.25, .5, .75, 1.), PODSettings()),
+        (20., 40., 60., 80., 100.), .5, (.25, .5, .75, 1.),
+        PODSettings(4, "matched_training", "none")),
+}
+
+DEFAULT_POD_PROVENANCE = {
+    "untreated-growth": "Preserved observed-training basis from the untreated-growth comparison.",
+    "single-dose-chemo": "Preserved nominal-training control from the fixed-strength comparison.",
+    "multi-dose-chemo": ("Selected on development acquisition 45 and confirmed on fresh acquisitions 48-50; "
+                         "see experiments/TUMOR_BENCHMARK_POD_COMPARISON.md."),
 }
 
 
@@ -122,7 +130,8 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
         "POD_fitting_may_not_use_future_fields": True,
         "both_methods_must_share_observations_decoder_and_inputs": True,
         "description_only_does_not_run_or_claim_a_successful_experiment": True,
-        "default_single_and_multi_dose_POD_is_the_preserved_control_not_an_outcome_selected_winner": True,
+        "uses_default_POD": settings == case.pod,
+        "default_POD_provenance": DEFAULT_POD_PROVENANCE[case.name],
     }
 
 

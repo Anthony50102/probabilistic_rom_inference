@@ -55,8 +55,25 @@ class BenchmarkCaseTests(unittest.TestCase):
             describe(case, PODSettings(4, "matched_training", "none")),
         ]
         self.assertEqual(len({row["output_namespace"] for row in recipes}), 4)
-        self.assertEqual(recipes[0], describe(case))
+        self.assertEqual(recipes[3], describe(case))
+        self.assertEqual([row["uses_default_POD"] for row in recipes], [False, False, False, True])
         self.assertTrue(all(row["POD_fitting_may_not_use_future_fields"] for row in recipes))
+
+    def test_default_POD_per_case(self):
+        expected = {
+            "untreated-growth": PODSettings(4, "observed_training", "mean"),
+            "single-dose-chemo": PODSettings(4, "nominal_training", "mean"),
+            "multi-dose-chemo": PODSettings(4, "matched_training", "none"),
+        }
+        for name, pod in expected.items():
+            with self.subTest(case=name):
+                recipe = describe(CASES[name])
+                self.assertEqual(CASES[name].pod, pod)
+                self.assertEqual(recipe["pod"], asdict(pod))
+                self.assertTrue(recipe["uses_default_POD"])
+                self.assertTrue(recipe["default_POD_provenance"])
+        self.assertIn("TUMOR_BENCHMARK_POD_COMPARISON.md",
+                      describe(CASES["multi-dose-chemo"])["default_POD_provenance"])
 
     def test_invalid_recipes_are_explicit_errors(self):
         for rank in (0, -1, True, 2.5):

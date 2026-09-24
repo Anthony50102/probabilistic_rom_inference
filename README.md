@@ -208,13 +208,18 @@ conda run -n prob_rom python benchmark_cases.py multi-dose-chemo
 The inspector does not train models or silently change the historical
 `04_unified*.py` / `05_neural_ode*.py` entry points. It obtains the unchanged
 production inference settings from the existing Bayesian adapter; an explicit
-POD-rank override changes only `num_modes`. Its built-in POD defaults remain
-the preserved controls. Inspect the confirmed multi-dose representation with:
+POD-rank override changes only `num_modes`. The `multi-dose-chemo` default POD
+is the confirmed matched-training, uncentered rank-4 representation described
+below; the other two recipes keep their preserved bases. The sealed study
+release (commit `596fdb2`) requested the same representation explicitly:
 
 ```bash
 conda run -n prob_rom python benchmark_cases.py multi-dose-chemo \
   --pod-rank 4 --pod-source matched_training --pod-centering none
 ```
+
+The earlier nominal control remains available with
+`--pod-source nominal_training --pod-centering mean`.
 
 Recipe fingerprints distinguish POD rank, training source, centering, case, and
 inference settings. Actual runs must additionally retain their acquisition,
@@ -224,13 +229,15 @@ a representation to favor production must be done on development data rather
 than the final confirmation acquisitions. Clean training-source PODs remain
 idealized simulation-benchmark information, not clinical noisy-POD estimates.
 
-The single-dose recipe keeps the preserved nominal-training rank-4 POD. For
-multi-dose, a bounded comparison of that control, matched half-exposure
-mean-centered ranks 2/4/6, and uncentered rank 4 selected **matched-training,
-uncentered rank 4** on development acquisition 45. On fresh acquisitions
-48-50, with no reselection, production median field errors were 6.17-6.64% at
-all four future strengths versus 8.66-37.24% for the prescribed NODE medians.
-Treatment-effect errors were 12.63-13.98% versus 89-98%. See the
+The single-dose recipe keeps the preserved nominal-training rank-4 POD, which
+was better for the unchanged regimen on the one paired acquisition (5.39%
+versus 7.35%). For multi-dose, a bounded comparison of that control, matched
+half-exposure mean-centered ranks 2/4/6, and uncentered rank 4 selected
+**matched-training, uncentered rank 4** on development acquisition 45. On
+fresh acquisitions 48-50, with no reselection, production median field errors
+were 6.17-6.64% at all four future strengths versus 8.66-37.24% for the
+prescribed NODE medians. Treatment-effect errors were 12.63-13.98% versus
+89-98%. See the
 [three-benchmark POD record](experiments/TUMOR_BENCHMARK_POD_COMPARISON.md),
 including its same-anatomy and uncalibrated-band limitations.
 
