@@ -182,6 +182,66 @@ conda run -n prob_rom python plot_from_npz.py \
 
 ## Generated outputs
 
+### Three tumor benchmark cases
+
+`experiments/tumor/benchmark_cases.py` exposes explicit recipes for the three
+tumor questions. **Single-dose means one fixed dose strength, not one treatment
+administration**: both chemotherapy cases retain pulses on days 20, 40, 60, 80,
+and 100. Untreated growth retains the logistic growth model without treatment.
+
+| Recipe | Question | Observations | Main forecast |
+|---|---|---|---|
+| `untreated-growth` | Next-month growth, without treatment; faster-spreading example (`k=.05,d=.1`). | 40, 1% noise, days 5-60 | Days 60-90 |
+| `single-dose-chemo` | Continue the same half-strength regimen. | 120, 1% noise, days 5-70 | Days 70-110 |
+| `multi-dose-chemo` | Keep the same half-strength history; change only future pulse strengths to 0.25x, 0.5x, 0.75x, or 1x of original exposure. | Same chemo acquisition | Days 70-110 |
+
+Inspect the recipes and their production inference settings:
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python benchmark_cases.py
+conda run -n prob_rom python benchmark_cases.py untreated-growth
+conda run -n prob_rom python benchmark_cases.py single-dose-chemo
+conda run -n prob_rom python benchmark_cases.py multi-dose-chemo
+```
+
+The inspector does not train models or silently change the historical
+`04_unified*.py` / `05_neural_ode*.py` entry points. It obtains the unchanged
+production inference settings from the existing Bayesian adapter; an explicit
+POD-rank override changes only `num_modes`. Its built-in POD defaults remain
+the preserved controls. Inspect the confirmed multi-dose representation with:
+
+```bash
+conda run -n prob_rom python benchmark_cases.py multi-dose-chemo \
+  --pod-rank 4 --pod-source matched_training --pod-centering none
+```
+
+Recipe fingerprints distinguish POD rank, training source, centering, case, and
+inference settings. Actual runs must additionally retain their acquisition,
+basis, input, and source-data identities. Both methods must receive the same
+observations and decoder. POD fitting must not use future fields, and choosing
+a representation to favor production must be done on development data rather
+than the final confirmation acquisitions. Clean training-source PODs remain
+idealized simulation-benchmark information, not clinical noisy-POD estimates.
+
+The single-dose recipe keeps the preserved nominal-training rank-4 POD. For
+multi-dose, a bounded comparison of that control, matched half-exposure
+mean-centered ranks 2/4/6, and uncentered rank 4 selected **matched-training,
+uncentered rank 4** on development acquisition 45. On fresh acquisitions
+48-50, with no reselection, production median field errors were 6.17-6.64% at
+all four future strengths versus 8.66-37.24% for the prescribed NODE medians.
+Treatment-effect errors were 12.63-13.98% versus 89-98%. See the
+[three-benchmark POD record](experiments/TUMOR_BENCHMARK_POD_COMPARISON.md),
+including its same-anatomy and uncalibrated-band limitations.
+
+Existing numerical evidence and limitations are in the
+[untreated-growth comparison](experiments/TUMOR_GROWTH_NODE_COMPARISON.md),
+[fixed-regimen chemo comparison](experiments/TUMOR_CHEMO_TASK_COMPARISON.md),
+and [earlier nominal-basis future-dose comparison](experiments/HALF_EXPOSURE_DOSE_SWITCH.md). In
+particular, the favorable untreated example is not a claim of universal growth
+superiority, and stable dose forecasts are not calibrated treatment-effect
+uncertainty.
+
 ### Matched chemotherapy comparison and dose generalization
 
 `experiments/tumor/chemo_protocol.py` defines the chemo-only comparison:
