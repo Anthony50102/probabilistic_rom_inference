@@ -166,10 +166,14 @@ class CachedEvaluationTests(unittest.TestCase):
 
 class CommandLineTests(unittest.TestCase):
     def test_reported_seeds_and_POD_tags(self):
-        self.assertEqual(bd.DEFAULT_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
+        self.assertEqual(bd.DEFAULT_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (51, 52, 53),
                                             "multi-dose-chemo": (48, 49, 50)})
+        self.assertEqual(bd.LEGACY_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
+                                           "multi-dose-chemo": (48, 49, 50)})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
-                         {name: "segmented_observed_mean_r4" for name in bd.DEFAULT_SEEDS})
+                         {"untreated-growth": "segmented_observed_mean_r3",
+                          "single-dose-chemo": "segmented_observed_mean_r4",
+                          "multi-dose-chemo": "segmented_observed_mean_r4"})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.DEFAULT_SEEDS},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})
@@ -187,6 +191,9 @@ class CommandLineTests(unittest.TestCase):
 
     def test_earlier_design_keeps_its_output_paths(self):
         parser = bd.add_common_arguments(argparse.ArgumentParser())
+        self.assertEqual(bd.resolve(parser.parse_args(["single-dose-chemo"]))[2], (51, 52, 53))
+        self.assertEqual(bd.resolve(parser.parse_args(["single-dose-chemo", "--observation", "oracle_masked"]))[2],
+                         (45, 46, 47))
         case, pod, _ = bd.resolve(parser.parse_args(["multi-dose-chemo", "--observation", "oracle_masked"]))
         self.assertEqual((case.observation, bd.pod_tag(pod)), ("oracle_masked", "matched_none_r4"))
         self.assertEqual(bd.seed_directory(case, 48, pod, "/r"), Path("/r/multi-dose-chemo/matched_none_r4/seed48"))
@@ -254,6 +261,18 @@ class SegmentedScanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bd.observed_pod(scans, bd.PODSettings(6, "observed_training", "mean"))
 
+    def test_noise_threshold_separates_signal_modes_from_the_noise_bulk(self):
+        self.assertAlmostEqual(bd.noise_threshold(1., [50] * 50), 4. / np.sqrt(3.) * np.sqrt(50.))
+        rng = np.random.default_rng(4)
+        voxels, scans, noise_sd = 3000, 40, .02
+        pattern = np.linalg.qr(rng.standard_normal((voxels, 2)))[0]
+        signal = pattern @ (np.array([[60.], [.5]]) * rng.standard_normal((2, scans)) / np.sqrt(scans))
+        values = np.linalg.svd(signal + noise_sd * rng.standard_normal((voxels, scans)), compute_uv=False)
+        threshold = bd.noise_threshold(noise_sd, [voxels] * scans)
+        self.assertEqual(int(np.sum(values > threshold)), 1)
+        pure = np.linalg.svd(noise_sd * rng.standard_normal((voxels, scans)), compute_uv=False)
+        self.assertLess(pure.max(), threshold)
+
     def test_acquisition_is_deterministic_noisy_from_the_first_scan_and_uses_no_future_knots(self):
         case = replace(bd.get_case("multi-dose-chemo"), observations=6)
         grid = np.indices(self.shape).reshape(3, -1) - 10.
@@ -269,6 +288,9 @@ class SegmentedScanTests(unittest.TestCase):
             future[:, bd.SOURCE_KNOTS > case.training_span[1]] = 7.
             third = bd._segmented_acquisition(case, 3, pod, future, geometry, Path(tmp) / "c")
             self.assertTrue((Path(tmp) / "a" / "basis.npz").exists())
+            with self.assertRaisesRegex(ValueError, "scan-noise threshold"):
+                bd._segmented_acquisition(case, 3, replace(pod, rank=5), source, geometry, Path(tmp) / "d")
+            self.assertFalse((Path(tmp) / "d").exists())
         times, y, clean_q, D, shift, info = first
         self.assertEqual((times[0], times[-1], y.shape), (5., 70., (2, 6)))
         for index, array in enumerate(first[:5]):

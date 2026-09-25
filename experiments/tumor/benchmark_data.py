@@ -7,7 +7,8 @@ evaluation-only reference geometry for every dose arm, under
 ``segmented_<pod>`` for the reported segmented scans (see benchmark_cases.py)
 and ``<pod>`` for the earlier oracle-masked design. POD fitting never uses a
 field after the end of training, and model fitting never reads a forecast
-reference.
+reference. Segmented acquisitions refuse a POD rank that would include modes
+below the scan-noise threshold.
 """
 from __future__ import annotations
 
@@ -43,12 +44,15 @@ FIGURES = SCRIPT_DIR / "figures" / "benchmarks"
 NOMINAL_SOURCE = SCRIPT_DIR / "data" / "TNBC_demo_001_fom_chemo_sparse5_sens0p5.npz"
 
 # Reported acquisitions. Chemo seed 45 was the development acquisition used to
-# choose the multi-dose POD, so the multi-dose confirmation uses 48-50.
+# choose the chemotherapy POD, so the multi-dose confirmation uses 48-50 and the
+# single-dose task uses 51-53 (on 48-50 it would repeat the multi-dose 0.5x arm).
+# The earlier oracle-masked design keeps its original seeds.
 DEFAULT_SEEDS = {
     "untreated-growth": (42, 43, 44),
-    "single-dose-chemo": (45, 46, 47),
+    "single-dose-chemo": (51, 52, 53),
     "multi-dose-chemo": (48, 49, 50),
 }
+LEGACY_SEEDS = {**DEFAULT_SEEDS, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048
 GROWTH_BLOCK = 4096
 SOURCE_KNOTS = np.arange(0., 120.5, .5)
@@ -570,6 +574,18 @@ def observed_pod(scans, pod):
     return D, shift, np.sqrt(np.maximum(eigenvalues, 0.))
 
 
+def noise_threshold(noise_sd, lesion_voxels):
+    """Gavish-Donoho optimal hard threshold for singular values of the scan matrix, known noise level.
+
+    The noise matrix is treated as n x m with n the mean number of segmented (noisy) voxels per scan
+    and m the number of scans; modes below the threshold are indistinguishable from the noise bulk.
+    """
+    m, n = len(lesion_voxels), float(np.mean(lesion_voxels))
+    beta = min(m, n) / max(m, n)
+    factor = np.sqrt(2. * (beta + 1.) + 8. * beta / (beta + 1. + np.sqrt(beta**2 + 14. * beta + 1.)))
+    return float(factor * np.sqrt(max(m, n)) * noise_sd)
+
+
 def _training_fields(case, seed, source):
     """Noise-free training fields (scans x voxels) at this acquisition's times, from knots <= end."""
     start, end = case.training_span
@@ -605,6 +621,11 @@ def _segmented_acquisition(case, seed, pod, source, geometry, folder):
         false_positives.append(int(np.sum(lesion & (clean[j] <= 0.))))
         missed2 += float(np.sum(clean[j][~lesion]**2))
     D, shift, singular_values = observed_pod(scans, pod)
+    threshold = noise_threshold(noise_sd, lesion_voxels)
+    resolved = int(np.sum(singular_values > threshold))
+    if pod.rank > resolved:
+        raise ValueError(f"Declared POD rank {pod.rank} exceeds the {resolved} modes above the scan-noise threshold "
+                         f"{threshold:.3g}; the extra modes would be pure noise.")
     y, clean_q = D.T @ (scans - shift).T, D.T @ (clean - shift).T
     write_npz(folder / "basis.npz", physical_matrix=D, physical_shift=shift, singular_values=singular_values,
               source_training_times=times)
@@ -616,6 +637,8 @@ def _segmented_acquisition(case, seed, pod, source, geometry, folder):
         "reported_cellularity": f"clipped to [0, {THETA:g}] inside the segmented lesion, zero elsewhere",
         "noise_sha256": noise_sha.hexdigest(), "latest_source_day_used": last_knot,
         "lesion_voxels_per_scan": lesion_voxels,
+        "singular_value_threshold": threshold, "modes_above_threshold": resolved,
+        "threshold_rule": "Gavish-Donoho optimal hard threshold for the known noise level, n = mean lesion voxels",
         "basis_cumulative_energy": float(energy[:pod.rank].sum() / energy.sum()),
         "evaluation_only": {
             "false_positive_voxels_per_scan": false_positives,
@@ -817,5 +840,6 @@ def resolve(args, name=None):
         if value is not None}
     pod = replace(case.pod, **changes)
     replace(case, pod=pod)
-    seeds = tuple(args.seeds) if args.seeds else DEFAULT_SEEDS[case.name]
+    seeds = tuple(args.seeds) if args.seeds else (
+        LEGACY_SEEDS if case.observation == LEGACY_OBSERVATION else DEFAULT_SEEDS)[case.name]
     return case, pod, seeds

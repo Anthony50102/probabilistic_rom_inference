@@ -11,7 +11,9 @@ scan itself, and cellularity is reported only inside that region (clipped to
 [0, theta]) and is zero elsewhere, as in TumorTwin's ADC-to-cellularity step.
 The segmentation smooths the scan with a 1 mm Gaussian and thresholds it at a
 level that holds the family-wise false-positive rate per scan at 5%. Each
-POD is fitted to the acquisition's own noisy training scans.
+POD is fitted to the acquisition's own noisy training scans, and its rank
+never exceeds the number of modes whose singular values clear the scan-noise
+threshold (``benchmark_data.noise_threshold``).
 
 ``oracle_masked`` (earlier design): noise only where the noise-free field
 exceeds 0.1% of its maximum, a noise-free first scan, and noise-free
@@ -82,7 +84,7 @@ CASES = {
     "untreated-growth": BenchmarkCase(
         "untreated-growth", "Untreated faster-spreading tumor: next-month growth.",
         (5., 60.), 90., 40, .01, .05, .1, "cA", (), 0., (0.,),
-        PODSettings(4, "observed_training", "mean")),
+        PODSettings(3, "observed_training", "mean")),
     "single-dose-chemo": BenchmarkCase(
         "single-dose-chemo", "Fixed half-strength regimen; repeated pulses, one strength.",
         (5., 70.), 110., 120, .01, .025, .05, "cABN",
@@ -95,7 +97,8 @@ CASES = {
 }
 
 DEFAULT_POD_PROVENANCE = {
-    "untreated-growth": "Production POD of the noisy training scans, as in the untreated-growth comparison.",
+    "untreated-growth": ("Mean-centred POD of the noisy training scans; rank 3 because the fourth singular value "
+                         "lies inside the noise bulk, below the scan-noise threshold, on every acquisition."),
     "single-dose-chemo": "Production (mean-centred, rank 4) POD of the noisy training scans, declared in advance.",
     "multi-dose-chemo": "Production (mean-centred, rank 4) POD of the noisy training scans.",
 }

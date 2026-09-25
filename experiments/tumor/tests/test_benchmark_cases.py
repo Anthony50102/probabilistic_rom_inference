@@ -63,7 +63,8 @@ class BenchmarkCaseTests(unittest.TestCase):
 
     def test_default_POD_per_case(self):
         reported = {name: PODSettings(4, "observed_training", "mean")
-                    for name in ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")}
+                    for name in ("single-dose-chemo", "multi-dose-chemo")}
+        reported["untreated-growth"] = PODSettings(3, "observed_training", "mean")
         legacy = {
             "untreated-growth": PODSettings(4, "observed_training", "mean"),
             "single-dose-chemo": PODSettings(4, "nominal_training", "mean"),
