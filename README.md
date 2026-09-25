@@ -36,6 +36,7 @@ core/
   weakform_opinf/      # canonical Bayesian algorithm, configuration, and pipeline
 
 experiments/
+  aggregate_table.py     # paper's cross-experiment table from saved 04/05 predictions
   euler/
     04_unified.py
     05_neural_ode.py
@@ -179,6 +180,16 @@ Generate method-comparison plots:
 
 ```bash
 conda run -n prob_rom python 06_compare_methods.py dense_low_noise
+```
+
+Build the paper's cross-experiment table (Euler, heat and 2D diffusion-reaction)
+once `04_unified.py` and `05_neural_ode.py` have run for all seven regimes. It
+only reads the saved `.npz` files, recomputes the metrics of both methods, stops
+unless they reproduce the values each runner saved, and writes
+`experiments/results/aggregate/aggregate_table.{csv,json,tex}`:
+
+```bash
+conda run -n prob_rom python ../aggregate_table.py
 ```
 
 Regenerate standalone Bayesian OpInf plots from a saved result file:
