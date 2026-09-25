@@ -79,6 +79,7 @@ experiments/
     generate_fom_data_chemo.py
     generate_fom_data_multi.py
     generate_paper.py
+    niivue_benchmark_figure.py  # NiiVue publication figure of the multi-dose forecasts
 
 plot_from_npz.py       # standalone plot regeneration from saved 04_unified.npz files
 ```
@@ -458,6 +459,21 @@ Generated NIfTI volumes remain local and are ignored by Git. Re-export and
 refresh as runs finish; missing cases and zero-success ensembles are explicit.
 See [the viewer README](experiments/tumor/niivue_viewer/README.md) for Node
 requirements, export subsets, resource use, and scientific definitions.
+
+The paper's 3D multi-dose figure is rendered by the same viewer, headlessly,
+from the evaluations of the reported multi-dose benchmark (run
+`04_unified_benchmark.py` and `05_neural_ode_benchmark.py` for it first):
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python niivue_benchmark_figure.py export
+(cd niivue_viewer && npm run build && npm run render-figure)
+conda run -n prob_rom python niivue_benchmark_figure.py compose
+```
+
+The figure is written to
+`figures/benchmarks/segmented/multi-dose-chemo/niivue_day110_seed49.png` with a
+JSON provenance sidecar; see the viewer README's "Publication figure" section.
 
 ### Historical and per-experiment outputs
 

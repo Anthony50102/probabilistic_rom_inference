@@ -51,6 +51,40 @@ provenance produce explicit warnings and are omitted (including warnings in the
 manifest). `--strict` fails instead, leaving the previous manifest intact.
 An empty manifest is valid and explains why nothing can be viewed.
 
+## Publication figure
+
+`figure.html` is a second, widget-free page used only to render the paper's
+multi-dose panels (full-order truth, production point forecast and Neural-ODE
+loss-filtered median, day 110, acquisition 49, every future pulse strength) from the
+segmented benchmark evaluations. From `experiments/tumor`:
+
+```bash
+conda run -n prob_rom python niivue_benchmark_figure.py export   # public/data/figure/*.nii.gz + manifest.json
+(cd niivue_viewer && npm run build && npm run render-figure)     # headless Chrome -> public/data/figure/panels/*.png
+conda run -n prob_rom python niivue_benchmark_figure.py compose  # figures/benchmarks/segmented/<case>/niivue_*.png
+```
+
+`export` accepts another chemotherapy case, `--seed`, `--days` (saved evaluation
+days only) and `--observation`; `compose --paper-figure PATH` also writes the paper
+copy. Forecasts are decoded as `D q + shift` with the acquisition's own POD basis
+(unclipped), and truth follows the evaluator's cubic time interpolation. Volumes are
+cropped to the lesion (voxels above 1% of the largest shown value, plus three) and all
+panels share the colour range 0 to the largest true value. The colormap's opacity
+rises from zero at the lower limit, so values at or below 0 are transparent and low
+values faint. Each forecast panel is labelled with its relative field error
+on that day over all voxels.
+
+The camera, colormap, illumination and clip plane are in `RENDER` of
+`niivue_benchmark_figure.py` and are copied into the manifest. `render-figure`
+starts the loopback server on port 5180 and a temporary headless Chrome
+(software WebGL2, CDP port 9230; override with `PORT`, `CDP_PORT` and `CHROME`).
+`RENDER_OVERRIDES='{"azimuth": 120, "colormap": "hot"}' npm run render-figure`
+previews other settings without re-exporting; the settings actually used are saved
+as `panels/render.json`, which `compose` reads. `compose` also writes a JSON sidecar
+next to the figure with the manifest provenance (source SHA256s), the render
+settings and the per-panel errors. Volume-rendered colours are opacity-weighted
+blends along each ray, so the colour bar is a qualitative guide.
+
 ## Scientific meaning and resource use
 
 - Coordinates are a **simulation grid; not registered patient coordinates**.

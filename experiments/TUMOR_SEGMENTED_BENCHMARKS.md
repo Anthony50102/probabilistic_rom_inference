@@ -278,6 +278,18 @@ conda run -n prob_rom python 05_neural_ode_benchmark.py
 conda run -n prob_rom python 06_compare_benchmark.py
 ```
 
+The paper's three-dimensional multi-dose figure (acquisition 49, day 110) is a NiiVue
+rendering of the saved evaluations; no model is refitted:
+
+```bash
+conda run -n prob_rom python niivue_benchmark_figure.py export
+(cd niivue_viewer && npm ci && npm run build && npm run render-figure)
+conda run -n prob_rom python niivue_benchmark_figure.py compose \
+  --paper-figure ../../../GP-Bayes-Refactor/manuscript_v2/figures/selected/tumor_multidose_niivue.png
+```
+
+See `niivue_viewer/README.md` (Publication figure) for the rendering settings.
+
 Development runs use the same runners with explicit overrides. Examples are
 `04_unified_benchmark.py multi-dose-chemo --seeds 45 --pod-centering mean --pod-rank 3 --no-draws`
 and `single-dose-chemo --seeds 45 46 47 --pod-centering mean`. Rank-4 growth now stops at

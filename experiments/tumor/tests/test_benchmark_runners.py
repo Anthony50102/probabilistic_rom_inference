@@ -332,5 +332,38 @@ class ComparisonTableTests(unittest.TestCase):
                 compare.summarize(case, case.pod, (1,), Path(tmp))
 
 
+class NiivueFigureTests(unittest.TestCase):
+    def setUp(self):
+        self.figure = load_script("niivue_benchmark_figure", "niivue_benchmark_figure.py")
+
+    def test_days_must_be_saved_evaluation_times(self):
+        times = np.linspace(5., 110., 400)
+        self.assertEqual(self.figure.time_index(times, 110.), 399)
+        self.assertEqual(self.figure.time_index(times, 100.), 361)
+        with self.assertRaisesRegex(ValueError, "not a saved evaluation time; the nearest are 100.263 and 100.526"):
+            self.figure.time_index(times, 100.4)
+
+    def test_crop_covers_every_shown_field_with_a_clipped_margin(self):
+        shape = (8, 9, 10)
+        first, second = np.zeros(shape), np.zeros(shape)
+        first[2, 3, 4], second[6, 1, 9] = 1., -.5
+        crop = self.figure.lesion_crop([first.ravel(), second.ravel()], shape, margin=2)
+        self.assertEqual([(part.start, part.stop) for part in crop], [(0, 8), (0, 6), (2, 10)])
+
+    def test_volume_keeps_grid_values_and_a_display_only_affine(self):
+        import nibabel as nib
+        shape, spacing = (4, 5, 6), [1., 2., 3.]
+        field = np.arange(np.prod(shape), dtype=float)
+        crop = (slice(1, 3), slice(2, 5), slice(0, 6))
+        with tempfile.TemporaryDirectory() as tmp:
+            record = self.figure.save_volume(Path(tmp) / "panel.nii.gz", field, shape, spacing, crop)
+            image = nib.load(Path(tmp) / "panel.nii.gz")
+            np.testing.assert_array_equal(image.get_fdata(), field.reshape(shape)[crop])
+            np.testing.assert_allclose(image.affine[:3, 3], [1., 4., 0.])
+            np.testing.assert_allclose(np.diag(image.affine)[:3], spacing)
+            self.assertEqual((int(image.header["qform_code"]), int(image.header["sform_code"])), (0, 2))
+        self.assertEqual(record["max"], field.reshape(shape)[crop].max())
+
+
 if __name__ == "__main__":
     unittest.main()

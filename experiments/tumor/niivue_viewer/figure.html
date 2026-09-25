@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <link rel="icon" href="data:,">
+    <title>NiiVue figure panels</title>
+  </head>
+  <body>
+    <!-- Render target for scripts/render-figure.js: one panel of data/figure/manifest.json at a time. -->
+    <div id="frame"><canvas id="gl" aria-label="Volume rendering"></canvas></div>
+    <p id="status" role="status" hidden>Loading figure manifest…</p>
+    <script type="module" src="/src/figure.js"></script>
+  </body>
+</html>
