@@ -455,6 +455,7 @@ def evaluate_production(case, seed, pod=None, root=None, *, draws=True, log=prin
     bd.write_npz(folder / "evaluation" / "production.npz", **arrays)
     result = {
         "method": "production", "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod),
+        "observation": case.observation,
         "fit_status": fit["result"]["status"], "fit_steps": fit["result"]["steps"],
         "operators_sha256": fit["result"]["operators_sha256"],
         "initial_conditions_sha256": fit["result"]["initial_conditions_sha256"],
@@ -528,6 +529,7 @@ def evaluate_node(case, seed, pod=None, root=None, *, log=print):
     bd.write_npz(folder / "evaluation" / "neural_ode.npz", **arrays)
     result = {
         "method": "neural_ode", "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod),
+        "observation": case.observation,
         "headline_window": grid.headline, "headline_center": headline_node_center(case),
         "filter": fit["filter"], "members": len(fit["members"]), "node_summary_sha256": trained,
         "node_source": fit["summary"].get("source"),

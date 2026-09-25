@@ -151,7 +151,8 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         log(f"  resuming production SVI at update {done}")
     else:
         bd.write_json(folder / "fit_start.json", {
-            "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "production_config": asdict(cfg),
+            "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
+            "production_config": asdict(cfg),
             "planned_updates": total, "observations_sha256": data["metadata"]["observations_sha256"],
             "inputs": "Reduced training observations and (chemo) the training exposure table only.",
             "ODE_calls_in_objective": 0, "thread_environment": benchmark_environment.current()})
@@ -172,7 +173,8 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     complete = bool(np.isfinite(losses).all() and np.isfinite(exported["O_point"]).all())
     result = {
         "status": "complete" if complete else "nonfinite_production_fit",
-        "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "steps": total,
+        "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
+        "steps": total,
         "recipe_steps": cfg.num_steps, "reduced_steps": total != cfg.num_steps,
         "finite_losses": int(np.isfinite(losses).sum()),
         "finite_operator_draws": int(np.isfinite(exported["O_samples"]).all(axis=(1, 2)).sum()),
@@ -616,7 +618,8 @@ def train_node(case, seed, pod=None, root=None, *, members=None, steps=None, onl
     observations = data["observations"]
     if not (folder / "fit_start.json").exists():
         bd.write_json(folder / "fit_start.json", {
-            "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "members": count, "updates": total,
+            "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
+            "members": count, "updates": total,
             "baseline": "05_neural_ode_chemo.py" if case.dose_days else "05_neural_ode.py",
             "observations_sha256": data["metadata"]["observations_sha256"],
             "architecture": f"tanh MLP [{'q, alpha(t)' if case.dose_days else 'q'}] -> 128 -> 128 -> 128 -> r",
@@ -649,7 +652,8 @@ def train_node(case, seed, pod=None, root=None, *, members=None, steps=None, onl
     selection = _filter(last)
     bd.write_json(folder / "filter.json", selection)
     summary = {
-        "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "members": count, "steps": total,
+        "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
+        "members": count, "steps": total,
         "reduced_members_or_steps": count != NODE_MEMBERS or total != (CHEMO_NODE_STEPS if case.dose_days
                                                                         else GROWTH_NODE_STEPS),
         "completed_members": sum(row["status"] == "complete" for row in results),
