@@ -4,6 +4,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from dataclasses import replace
+
 from benchmark_cases import CASES, PODSettings, describe, get_case, production_config, _adapter
 
 
@@ -47,7 +49,7 @@ class BenchmarkCaseTests(unittest.TestCase):
             asdict(_adapter(True).make_config(schema, profile="historical")))
 
     def test_POD_identity_is_not_a_checkpoint_alias(self):
-        case = CASES["multi-dose-chemo"]
+        case = get_case("multi-dose-chemo", "oracle_masked")
         recipes = [
             describe(case, PODSettings(4, "nominal_training", "mean")),
             describe(case, PODSettings(2, "matched_training", "mean")),
@@ -60,20 +62,44 @@ class BenchmarkCaseTests(unittest.TestCase):
         self.assertTrue(all(row["POD_fitting_may_not_use_future_fields"] for row in recipes))
 
     def test_default_POD_per_case(self):
-        expected = {
+        reported = {name: PODSettings(4, "observed_training", "mean")
+                    for name in ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")}
+        legacy = {
             "untreated-growth": PODSettings(4, "observed_training", "mean"),
             "single-dose-chemo": PODSettings(4, "nominal_training", "mean"),
             "multi-dose-chemo": PODSettings(4, "matched_training", "none"),
         }
-        for name, pod in expected.items():
-            with self.subTest(case=name):
-                recipe = describe(CASES[name])
-                self.assertEqual(CASES[name].pod, pod)
-                self.assertEqual(recipe["pod"], asdict(pod))
-                self.assertTrue(recipe["uses_default_POD"])
-                self.assertTrue(recipe["default_POD_provenance"])
+        for observation, expected in (("segmented", reported), ("oracle_masked", legacy)):
+            for name, pod in expected.items():
+                with self.subTest(case=name, observation=observation):
+                    case = get_case(name, observation)
+                    recipe = describe(case)
+                    self.assertEqual((case.pod, case.observation), (pod, observation))
+                    self.assertEqual(recipe["pod"], asdict(pod))
+                    self.assertEqual(recipe["observation"], observation)
+                    self.assertTrue(recipe["uses_default_POD"])
+                    self.assertTrue(recipe["default_POD_provenance"])
+        self.assertTrue(all(case.observation == "segmented" for case in CASES.values()))
         self.assertIn("TUMOR_BENCHMARK_POD_COMPARISON.md",
-                      describe(CASES["multi-dose-chemo"])["default_POD_provenance"])
+                      describe(get_case("multi-dose-chemo", "oracle_masked"))["default_POD_provenance"])
+
+    def test_earlier_design_keeps_its_recorded_fingerprints(self):
+        recorded = {"untreated-growth": "712f1f331f330eed", "single-dose-chemo": "122f5bcc0b6161ee",
+                    "multi-dose-chemo": "bd342ef7bd246912"}
+        for name, prefix in recorded.items():
+            with self.subTest(case=name):
+                self.assertEqual(describe(get_case(name, "oracle_masked"))["recipe_fingerprint"][:16], prefix)
+                self.assertNotEqual(describe(get_case(name))["recipe_fingerprint"][:16], prefix)
+
+    def test_segmented_scans_fit_their_own_POD(self):
+        case = CASES["multi-dose-chemo"]
+        for source in ("nominal_training", "matched_training"):
+            with self.assertRaisesRegex(ValueError, "observed_training"):
+                replace(case, pod=PODSettings(4, source, "mean"))
+        with self.assertRaises(ValueError):
+            replace(case, observation="clean")
+        with self.assertRaises(ValueError):
+            get_case("multi-dose-chemo", "clean")
 
     def test_invalid_recipes_are_explicit_errors(self):
         for rank in (0, -1, True, 2.5):

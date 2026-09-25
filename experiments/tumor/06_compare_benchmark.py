@@ -4,12 +4,14 @@
 Reads the evaluations written by 04_unified_benchmark.py and
 05_neural_ode_benchmark.py and writes
 
-    results/benchmarks/comparison.json, comparison.csv   per-seed values and medians over seeds
-    figures/benchmarks/<case>/burden_seed<N>.png          tumor-burden forecasts of both methods
-    figures/benchmarks/multi-dose-chemo/dose_transfer_seed<N>.png
-    figures/benchmarks/summary_errors.png                 headline errors of every benchmark
+    results/benchmarks/comparison_segmented.json, .csv   per-seed values and medians over seeds
+    figures/benchmarks/segmented/<case>/burden_seed<N>.png   tumor-burden forecasts of both methods
+    figures/benchmarks/segmented/multi-dose-chemo/dose_transfer_seed<N>.png
+    figures/benchmarks/segmented/summary_errors.png          headline errors of every benchmark
 
-(with --output-root, tables go to that root and figures to <root>/figures).
+for the reported segmented scans; --observation oracle_masked keeps the
+earlier design's untagged names (comparison.json, figures/benchmarks/<case>/).
+With --output-root, tables go to that root and figures to <root>/figures.
 
 The headline score is the relative full-field (decoded plus POD-residual)
 error over the main forecast window: days 60-90 for untreated growth and
@@ -89,7 +91,8 @@ def summarize(case, pod, seeds, root):
     grid, arms = bd.grid(case), bd.arms(case)
     evaluations = _load(case, pod, seeds, root)
     center = be.headline_node_center(case)
-    table = {"case": case.name, "pod_tag": bd.pod_tag(pod), "seeds": list(seeds), "headline_window": grid.headline,
+    table = {"case": case.name, "observation": case.observation, "pod_tag": bd.pod_tag(pod),
+             "tag": bd.acquisition_tag(case, pod), "seeds": list(seeds), "headline_window": grid.headline,
              "node_headline_center": center, "arms": {}}
     rows = []
     for arm, strength in arms.items():
@@ -106,7 +109,8 @@ def summarize(case, pod, seeds, root):
             }
             for method, name, scores in [("production", "point", production)] + [
                     ("neural_ode", name, node[name]) for name in CENTERS]:
-                rows += [{"case": case.name, "pod_tag": bd.pod_tag(pod), "seed": seed, "arm": entry["label"],
+                rows += [{"case": case.name, "observation": case.observation, "pod_tag": bd.pod_tag(pod),
+                          "seed": seed, "arm": entry["label"],
                           "quantity": "field", "window": window, "method": method, "center": name,
                           "physical_percent": score["physical_percent"], "burden_percent": score["burden_percent"],
                           "reduced_percent": score["reduced_percent"],
@@ -155,7 +159,8 @@ def summarize(case, pod, seeds, root):
                     for s, d in zip(seeds, draws)}
             for method, name, scores in [("production", "point", production)] + [
                     ("neural_ode", name, node[name]) for name in CENTERS]:
-                rows += [{"case": case.name, "pod_tag": bd.pod_tag(pod), "seed": seed, "arm": entry["label"],
+                rows += [{"case": case.name, "observation": case.observation, "pod_tag": bd.pod_tag(pod),
+                          "seed": seed, "arm": entry["label"],
                           "quantity": "effect", "window": entry["effect"]["window"], "method": method,
                           "center": name, "physical_percent": score["physical_percent"],
                           "burden_percent": score["burden_percent"], "reduced_percent": score["reduced_percent"],
@@ -176,7 +181,7 @@ def print_table(table):
     center = table["node_headline_center"]
     other = next(name for name in CENTERS if name != center)
     windows = (table["headline_window"],) + EXTRA_WINDOWS.get(table["case"], ())
-    print(f"\n{table['case']} [{table['pod_tag']}], seeds {table['seeds']}: full-field error (%), "
+    print(f"\n{table['case']} [{table['tag']}], seeds {table['seeds']}: full-field error (%), "
           "per seed (median)")
     for window in windows:
         print(f"  {window}")
@@ -271,7 +276,7 @@ def figure_burden(case, pod, seed, root, table, folder):
         ax.set_xlabel("Day")
     axes[0, 0].set_ylabel("Tumor burden (integrated cellularity)")
     axes[0, 0].legend(loc="best")
-    fig.suptitle(f"{case.name}, seed {seed} ({bd.pod_tag(pod)} POD)", fontsize=10)
+    fig.suptitle(f"{case.name}, seed {seed} ({bd.acquisition_tag(case, pod)})", fontsize=10)
     path = save_figure(fig, str(folder / case.name / f"burden_seed{seed}.png"))
     print(f"  figure: {path}")
 
@@ -377,6 +382,9 @@ def main(argv=None):
     args = parse(argv)
     root = Path(args.output_root or bd.RESULTS)
     figures = bd.FIGURES if args.output_root is None else root / "figures"
+    observation = args.observation or bd.get_case(args.case or next(iter(bd.CASES))).observation
+    tagged = observation != bd.LEGACY_OBSERVATION
+    figures = figures / observation if tagged else figures
     tables, rows = [], []
     for name in [args.case] if args.case else list(bd.CASES):
         case, pod, seeds = bd.resolve(args, name)
@@ -392,7 +400,7 @@ def main(argv=None):
             figure_burden(case, pod, seed, args.output_root, table, figures)
             if case.name == "multi-dose-chemo":
                 figure_transfer(case, pod, seed, args.output_root, table, figures, args.paper_figure)
-    suffix = "" if args.case is None else f"_{args.case}"
+    suffix = ("" if args.case is None else f"_{args.case}") + (f"_{observation}" if tagged else "")
     bd.write_json(root / f"comparison{suffix}.json", {
         "tables": tables, "bands_are_not_calibrated_uncertainty": True,
         "headline_score": "Relative full-field error (decoded state plus POD residual) over the main forecast "

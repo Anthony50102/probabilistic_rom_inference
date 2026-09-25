@@ -3,7 +3,9 @@
 TumorTwin sources are cached under ``data/benchmarks`` and reused. Each
 acquisition stores the observations handed to *both* methods, plus
 evaluation-only reference geometry for every dose arm, under
-``results/benchmarks/<case>/<pod>/seed<N>/data``. POD fitting never uses a
+``results/benchmarks/<case>/<tag>/seed<N>/data``. The tag is
+``segmented_<pod>`` for the reported segmented scans (see benchmark_cases.py)
+and ``<pod>`` for the earlier oracle-masked design. POD fitting never uses a
 field after the end of training, and model fitting never reads a forecast
 reference.
 """
@@ -21,6 +23,8 @@ import time
 
 import numpy as np
 from scipy.interpolate import interp1d
+from scipy.ndimage import gaussian_filter
+from scipy.stats import norm
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parents[1]
@@ -28,7 +32,8 @@ for _path in (str(ROOT), str(SCRIPT_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from benchmark_cases import CASES, BenchmarkCase, PODSettings, describe, get_case  # noqa: E402
+from benchmark_cases import (  # noqa: E402
+    CASES, LEGACY_OBSERVATION, OBSERVATION_MODELS, BenchmarkCase, PODSettings, describe, get_case)
 
 TUMORTWIN = ROOT.parent / "TumorTwin"
 PATIENT = "TNBC_demo_001"
@@ -59,6 +64,12 @@ INPUT_POINTS = 4001
 MATCHED_BASIS_SEED = 45
 NOMINAL_BASIS_SEED = 42
 NOMINAL_BASIS_OBSERVATIONS = 40
+# Segmented scans: the lesion is detected on the scan smoothed by a Gaussian of
+# this standard deviation, holding the family-wise false-positive rate per scan
+# at DETECTION_ALPHA; scan noise is drawn from default_rng([seed, NOISE_STREAM]).
+DETECTION_ALPHA = .05
+SEGMENTATION_SMOOTHING_MM = 1.
+NOISE_STREAM = 1
 
 
 @dataclass(frozen=True)
@@ -114,9 +125,14 @@ def pod_tag(pod: PODSettings) -> str:
     return f"{pod.source.replace('_training', '')}_{pod.centering}_r{pod.rank}"
 
 
+def acquisition_tag(case, pod=None) -> str:
+    """Output tag: the POD recipe, prefixed by the observation model unless it is the earlier design."""
+    tag = pod_tag(case.pod if pod is None else pod)
+    return tag if case.observation == LEGACY_OBSERVATION else f"{case.observation}_{tag}"
+
+
 def seed_directory(case, seed, pod=None, root=None) -> Path:
-    pod = case.pod if pod is None else pod
-    return Path(root or RESULTS) / case.name / pod_tag(pod) / f"seed{seed}"
+    return Path(root or RESULTS) / case.name / acquisition_tag(case, pod) / f"seed{seed}"
 
 
 # -----------------------------------------------------------------------------
@@ -509,6 +525,104 @@ def _growth_observations(case, seed, raw, knots, pod):
         "basis_cumulative_energy": float(basis.cumulative_energy)}
 
 
+# -----------------------------------------------------------------------------
+# Segmented acquisitions (reported design)
+# -----------------------------------------------------------------------------
+def detection_rule(tissue, spacing, noise_sd, alpha=DETECTION_ALPHA, smoothing_mm=SEGMENTATION_SMOOTHING_MM):
+    """Lesion threshold on the smoothed scan, Bonferroni-controlling false-positive voxels per scan."""
+    width = float(smoothing_mm) / np.asarray(spacing, dtype=float)
+    radius = [int(4. * w + .5) for w in width]  # gaussian_filter's default truncation
+    impulse = np.zeros([2 * r + 1 for r in radius])
+    impulse[tuple(radius)] = 1.
+    gain = float(np.sqrt(np.sum(gaussian_filter(impulse, width, mode="constant")**2)))
+    voxels = int(np.sum(tissue))
+    z = float(norm.isf(alpha / voxels))
+    return {"smoothing_mm": float(smoothing_mm), "smoothing_voxels": width.tolist(), "family_wise_alpha": alpha,
+            "tissue_voxels": voxels, "z": z, "smoothed_noise_gain": gain, "threshold": z * noise_sd * gain}
+
+
+def noisy_scan(clean, noise, tissue, noise_sd):
+    """Measurement: independent Gaussian noise in every tissue voxel, nothing outside the tissue."""
+    raw = np.zeros(tissue.size)
+    raw[tissue] = clean[tissue] + noise_sd * noise
+    return raw
+
+
+def cellularity_map(raw, tissue, shape, rule):
+    """Segment the lesion from the noisy scan alone; clipped cellularity inside it, zero elsewhere."""
+    smoothed = gaussian_filter(raw.reshape(shape), rule["smoothing_voxels"], mode="constant").reshape(-1)
+    lesion = tissue & (smoothed > rule["threshold"])
+    return np.where(lesion, np.clip(raw, 0., THETA), 0.), lesion
+
+
+def observed_pod(scans, pod):
+    """POD of noisy training scans (one row per scan): orthonormal decoder with a fixed column sign."""
+    shift = scans.mean(axis=0) if pod.centering == "mean" else np.zeros(scans.shape[1])
+    centered = scans - shift
+    eigenvalues, vectors = np.linalg.eigh(centered @ centered.T)
+    order = np.argsort(eigenvalues)[::-1]
+    eigenvalues, vectors = eigenvalues[order], vectors[:, order]
+    kept = eigenvalues[:pod.rank]
+    if len(kept) < pod.rank or not np.isfinite(kept).all() or np.any(kept <= 1e-12 * eigenvalues[0]):
+        raise ValueError("Declared POD rank is numerically unresolved; refusing to reduce it silently.")
+    D, _ = np.linalg.qr(centered.T @ (vectors[:, :pod.rank] / np.sqrt(kept)), mode="reduced")
+    D *= np.sign(D[np.argmax(abs(D), axis=0), np.arange(pod.rank)])[None]
+    return D, shift, np.sqrt(np.maximum(eigenvalues, 0.))
+
+
+def _training_fields(case, seed, source):
+    """Noise-free training fields (scans x voxels) at this acquisition's times, from knots <= end."""
+    start, end = case.training_span
+    if case.dose_days:
+        times = sample_times((start, end), case.observations, np.random.default_rng(seed))
+    else:
+        # Same scan times as the earlier untreated-growth design for this seed.
+        times = np.sort(np.random.RandomState(seed).uniform(start, end, size=case.observations))
+        times[0], times[-1] = start, end
+    knots = SOURCE_KNOTS[SOURCE_KNOTS <= end]
+    weights = temporal_weights(knots, times)
+    clean = np.empty((len(times), len(source)))
+    for left in range(0, len(source), BLOCK):
+        clean[:, left:left + BLOCK] = (np.asarray(source[left:left + BLOCK, :len(knots)], dtype=float) @ weights).T
+    return times, clean, float(knots[-1])
+
+
+def _segmented_acquisition(case, seed, pod, source, geometry, folder):
+    """Segmented scans, their POD (saved to basis.npz) and the reduced observations."""
+    times, clean, last_knot = _training_fields(case, seed, source)
+    tissue = np.asarray(geometry["breast_mask"], dtype=bool).reshape(-1)
+    shape = tuple(int(n) for n in geometry["grid_shape"])
+    noise_sd = case.noise_level * float(clean.max() - clean.min())
+    rule = detection_rule(tissue, geometry["spacing"], noise_sd)
+    rng, noise_sha = np.random.default_rng([seed, NOISE_STREAM]), hashlib.sha256()
+    scans = np.empty_like(clean)
+    lesion_voxels, false_positives, missed2 = [], [], 0.
+    for j in range(len(times)):
+        noise = rng.standard_normal(int(tissue.sum()))
+        noise_sha.update(noise.tobytes())
+        scans[j], lesion = cellularity_map(noisy_scan(clean[j], noise, tissue, noise_sd), tissue, shape, rule)
+        lesion_voxels.append(int(lesion.sum()))
+        false_positives.append(int(np.sum(lesion & (clean[j] <= 0.))))
+        missed2 += float(np.sum(clean[j][~lesion]**2))
+    D, shift, singular_values = observed_pod(scans, pod)
+    y, clean_q = D.T @ (scans - shift).T, D.T @ (clean - shift).T
+    write_npz(folder / "basis.npz", physical_matrix=D, physical_shift=shift, singular_values=singular_values,
+              source_training_times=times)
+    energy = singular_values**2
+    return times, y, clean_q, D, shift, {
+        "observation_model": "segmented", "noise_sd": noise_sd,
+        "noise_sd_rule": "noise_level x range of the noise-free training fields",
+        "noisy_voxels": "every breast-tissue voxel of every scan, including the first", "detection": rule,
+        "reported_cellularity": f"clipped to [0, {THETA:g}] inside the segmented lesion, zero elsewhere",
+        "noise_sha256": noise_sha.hexdigest(), "latest_source_day_used": last_knot,
+        "lesion_voxels_per_scan": lesion_voxels,
+        "basis_cumulative_energy": float(energy[:pod.rank].sum() / energy.sum()),
+        "evaluation_only": {
+            "false_positive_voxels_per_scan": false_positives,
+            "missed_field_energy_percent": 100 * float(np.sqrt(missed2 / np.sum(clean**2))),
+            "scan_relative_error_percent": 100 * float(np.linalg.norm(scans - clean) / np.linalg.norm(clean))}}
+
+
 def _reference(field_blocks, D, shift, times, effects):
     """Reduced truth plus exact affine-decoder geometry for the full-field metric."""
     rank, n = D.shape[1], len(times)
@@ -538,8 +652,9 @@ def _reference(field_blocks, D, shift, times, effects):
 
 
 def _chemo_reference(case, strength, D, shift, basis_path, log):
-    path = CACHE / f"reference_{Path(basis_path).stem}_{arm_name(strength)}.npz"
-    if path.exists():
+    """Evaluation geometry for one arm; cached only for shared (not per-acquisition) bases."""
+    path = None if basis_path is None else CACHE / f"reference_{Path(basis_path).stem}_{arm_name(strength)}.npz"
+    if path is not None and path.exists():
         return read_npz(path)
     history, _ = chemo_history(case, log)
     branch = None if strength == case.training_strength else chemo_branch(case, strength, log)
@@ -561,7 +676,8 @@ def _chemo_reference(case, strength, D, shift, basis_path, log):
     log(f"  reference geometry for {arm_label(strength)} ...")
     reference = _reference(blocks, D, shift, times, effects=True)
     reference.update(chemo_inputs(case, strength))
-    write_npz(path, **reference)
+    if path is not None:
+        write_npz(path, **reference)
     return reference
 
 
@@ -591,17 +707,24 @@ def node_step_cuts(input_times, dose_days, span):
 def prepare(case, seed, pod=None, root=None, log=print) -> Path:
     """Create (or reuse) one acquisition and its evaluation-only references."""
     pod = case.pod if pod is None else pod
+    replace(case, pod=pod)  # rejects POD sources the observation model does not allow
+    segmented = case.observation != LEGACY_OBSERVATION
     folder = seed_directory(case, seed, pod, root) / "data"
     if (folder / "metadata.json").exists():
         return folder
     started = time.monotonic()
-    log(f"Preparing {case.name} seed {seed} ({pod_tag(pod)})")
+    log(f"Preparing {case.name} seed {seed} ({acquisition_tag(case, pod)})")
     recipe = describe(case, pod)
     references = {}
     if case.dose_days:
         history, geometry = chemo_history(case, log)
-        D, shift, basis_path = chemo_basis(case, pod, log)
-        times, y, clean_q, acquisition = _chemo_observations(case, seed, history, D, shift)
+        if segmented:
+            times, y, clean_q, D, shift, acquisition = _segmented_acquisition(
+                case, seed, pod, history, geometry, folder)
+            basis_path = None
+        else:
+            D, shift, basis_path = chemo_basis(case, pod, log)
+            times, y, clean_q, acquisition = _chemo_observations(case, seed, history, D, shift)
         volume = float(np.prod(geometry["spacing"]))
         inputs = _training_inputs(case)
         extra = {
@@ -611,15 +734,19 @@ def prepare(case, seed, pod=None, root=None, log=print) -> Path:
         }
         for arm, strength in arms(case).items():
             references[arm] = _chemo_reference(case, strength, D, shift, basis_path, log)
-        sources = {"training_history": file_record(chemo_history_path(case)), "basis": file_record(basis_path)}
+        sources = {"training_history": file_record(chemo_history_path(case)),
+                   "basis": file_record(basis_path or folder / "basis.npz")}
         sources.update({f"future_branch_{arm}": file_record(chemo_branch_path(case, strength))
                         for arm, strength in arms(case).items() if strength != case.training_strength})
     else:
         raw, geometry = growth_source(case, log)
         volume = float(np.prod(geometry["spacing"]))
-        times, y, clean_q, D, shift, acquisition = _growth_observations(
-            case, seed, raw, geometry["times_days"], pod)
-        write_npz(folder / "basis.npz", physical_matrix=D, physical_shift=shift)
+        if segmented:
+            times, y, clean_q, D, shift, acquisition = _segmented_acquisition(case, seed, pod, raw, geometry, folder)
+        else:
+            times, y, clean_q, D, shift, acquisition = _growth_observations(
+                case, seed, raw, geometry["times_days"], pod)
+            write_npz(folder / "basis.npz", physical_matrix=D, physical_shift=shift)
         log("  reference geometry ...")
         references["untreated"] = _growth_reference(case, raw, geometry["times_days"], D, shift, volume)
         extra = {}
@@ -638,11 +765,13 @@ def prepare(case, seed, pod=None, root=None, log=print) -> Path:
         "recipe_fingerprint": recipe["recipe_fingerprint"], "recipe": recipe,
         "arms": arms(case), "acquisition": acquisition, "voxel_volume": volume, "sources": sources,
         "observations_sha256": digest(folder / "observations.npz"),
-        "POD_fitted_on": ("noisy training observations" if not case.dose_days else
+        "observation_model": case.observation,
+        "POD_fitted_on": ("noisy segmented training scans of this acquisition" if segmented else
+                          "noisy training observations" if not case.dose_days else
                           f"clean training-regimen history on days {case.training_span[0]:g}-"
                           f"{case.training_span[1]:g} ({pod.source})"),
-        "observation_interpolation_knots_days": [0., float(SOURCE_KNOTS[-1] if not case.dose_days
-                                                            else case.training_span[1])],
+        "observation_interpolation_knots_days": [0., float(case.training_span[1] if segmented or case.dose_days
+                                                            else SOURCE_KNOTS[-1])],
         "runtime_seconds": time.monotonic() - started,
     })
     log(f"  prepared in {time.monotonic() - started:.0f} s")
@@ -671,6 +800,9 @@ def add_common_arguments(parser, *, case_optional=False):
         parser.add_argument("case", choices=tuple(CASES))
     parser.add_argument("--seeds", type=int, nargs="+",
                         help="Acquisition seeds (default: the reported seeds for the case).")
+    parser.add_argument("--observation", choices=OBSERVATION_MODELS,
+                        help="Observation model (default: segmented, the reported design; oracle_masked "
+                             "reproduces the earlier design and its POD defaults).")
     parser.add_argument("--pod-rank", type=int)
     parser.add_argument("--pod-source", choices=("observed_training", "nominal_training", "matched_training"))
     parser.add_argument("--pod-centering", choices=("mean", "none"))
@@ -679,10 +811,11 @@ def add_common_arguments(parser, *, case_optional=False):
 
 
 def resolve(args, name=None):
-    case = get_case(name or args.case)
+    case = get_case(name or args.case, getattr(args, "observation", None))
     changes = {key: value for key, value in (
         ("rank", args.pod_rank), ("source", args.pod_source), ("centering", args.pod_centering))
         if value is not None}
     pod = replace(case.pod, **changes)
+    replace(case, pod=pod)
     seeds = tuple(args.seeds) if args.seeds else DEFAULT_SEEDS[case.name]
     return case, pod, seeds

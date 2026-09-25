@@ -1,6 +1,7 @@
 """Fast checks of the tumor benchmark runners (no fits, no reference solves)."""
 import argparse
 from contextlib import redirect_stderr
+from dataclasses import replace
 import importlib.util
 import io
 import os
@@ -167,7 +168,9 @@ class CommandLineTests(unittest.TestCase):
     def test_reported_seeds_and_POD_tags(self):
         self.assertEqual(bd.DEFAULT_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
                                             "multi-dose-chemo": (48, 49, 50)})
-        self.assertEqual({name: bd.pod_tag(bd.get_case(name).pod) for name in bd.DEFAULT_SEEDS},
+        self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
+                         {name: "segmented_observed_mean_r4" for name in bd.DEFAULT_SEEDS})
+        self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.DEFAULT_SEEDS},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})
         self.assertEqual(list(bd.arms(bd.get_case("multi-dose-chemo"))),
@@ -182,6 +185,17 @@ class CommandLineTests(unittest.TestCase):
         _, _, seeds = bd.resolve(parser.parse_args(["single-dose-chemo", "--seeds", "46"]))
         self.assertEqual(seeds, (46,))
 
+    def test_earlier_design_keeps_its_output_paths(self):
+        parser = bd.add_common_arguments(argparse.ArgumentParser())
+        case, pod, _ = bd.resolve(parser.parse_args(["multi-dose-chemo", "--observation", "oracle_masked"]))
+        self.assertEqual((case.observation, bd.pod_tag(pod)), ("oracle_masked", "matched_none_r4"))
+        self.assertEqual(bd.seed_directory(case, 48, pod, "/r"), Path("/r/multi-dose-chemo/matched_none_r4/seed48"))
+        case, pod, _ = bd.resolve(parser.parse_args(["multi-dose-chemo", "--pod-centering", "none"]))
+        self.assertEqual(bd.seed_directory(case, 48, pod, "/r"),
+                         Path("/r/multi-dose-chemo/segmented_observed_none_r4/seed48"))
+        with self.assertRaisesRegex(ValueError, "observed_training"):
+            bd.resolve(parser.parse_args(["multi-dose-chemo", "--pod-source", "matched_training"]))
+
     def test_case_specific_options_need_a_case(self):
         scripts = {"benchmark_04": "04_unified_benchmark.py", "benchmark_05": "05_neural_ode_benchmark.py",
                    "benchmark_06": "06_compare_benchmark.py"}
@@ -195,6 +209,75 @@ class CommandLineTests(unittest.TestCase):
         with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
             compare.parse(["single-dose-chemo", "--paper-figure", "figure.png"])
         self.assertEqual(compare.parse(["multi-dose-chemo", "--figure-seed", "49"]).figure_seed, 49)
+
+
+class SegmentedScanTests(unittest.TestCase):
+    shape = (20, 20, 20)
+
+    def setUp(self):
+        self.tissue = np.ones(self.shape, dtype=bool)
+        self.tissue[:, :, :3] = False
+        self.tissue = self.tissue.reshape(-1)
+        self.rule = bd.detection_rule(self.tissue, (1., 1., 1.), .01)
+
+    def test_threshold_controls_false_positives_on_empty_scans(self):
+        from scipy.stats import norm
+        self.assertAlmostEqual(self.rule["z"], norm.isf(bd.DETECTION_ALPHA / self.tissue.sum()))
+        self.assertAlmostEqual(self.rule["threshold"], self.rule["z"] * .01 * self.rule["smoothed_noise_gain"])
+        self.assertLess(self.rule["smoothed_noise_gain"], .2)
+        rng, empty = np.random.default_rng(0), np.zeros(self.tissue.size)
+        scans_with_detections = sum(
+            bool(bd.cellularity_map(bd.noisy_scan(empty, rng.standard_normal(self.tissue.sum()), self.tissue, .01),
+                                    self.tissue, self.shape, self.rule)[1].any()) for _ in range(300))
+        self.assertLessEqual(scans_with_detections / 300, 2 * bd.DETECTION_ALPHA)
+
+    def test_cellularity_is_reported_only_inside_the_detected_lesion(self):
+        grid = np.indices(self.shape) - 10.
+        clean = .9 * np.exp(-np.sum(grid**2, axis=0) / 8.).reshape(-1) * self.tissue
+        raw = bd.noisy_scan(clean, np.random.default_rng(1).standard_normal(self.tissue.sum()), self.tissue, .05)
+        observed, lesion = bd.cellularity_map(raw, self.tissue, self.shape, bd.detection_rule(
+            self.tissue, (1., 1., 1.), .05))
+        self.assertTrue(lesion[np.argmax(clean)])
+        self.assertFalse(np.any(lesion & ~self.tissue))
+        np.testing.assert_array_equal(observed[~lesion], 0.)
+        np.testing.assert_array_equal(observed[lesion], np.clip(raw[lesion], 0., bd.THETA))
+        self.assertTrue(np.any(raw[~lesion & self.tissue] != 0.))
+
+    def test_observed_POD_is_orthonormal_signed_and_refuses_unresolved_ranks(self):
+        scans = np.random.default_rng(2).standard_normal((6, 50))
+        for centering in ("mean", "none"):
+            D, shift, values = bd.observed_pod(scans, bd.PODSettings(3, "observed_training", centering))
+            np.testing.assert_allclose(D.T @ D, np.eye(3), atol=1e-12)
+            self.assertTrue(np.all(D[np.argmax(abs(D), axis=0), np.arange(3)] > 0))
+            np.testing.assert_allclose(shift, scans.mean(axis=0) if centering == "mean" else 0.)
+            self.assertTrue(np.all(np.diff(values) <= 0))
+        with self.assertRaises(ValueError):
+            bd.observed_pod(scans, bd.PODSettings(6, "observed_training", "mean"))
+
+    def test_acquisition_is_deterministic_noisy_from_the_first_scan_and_uses_no_future_knots(self):
+        case = replace(bd.get_case("multi-dose-chemo"), observations=6)
+        grid = np.indices(self.shape).reshape(3, -1) - 10.
+        radius = 2. + bd.SOURCE_KNOTS / 20.
+        source = .8 * np.exp(-np.sum(grid**2, axis=0)[:, None] / radius[None]**2) * self.tissue[:, None]
+        geometry = {"breast_mask": self.tissue.reshape(self.shape), "grid_shape": np.array(self.shape),
+                    "spacing": np.ones(3)}
+        pod = bd.PODSettings(2, "observed_training", "mean")
+        with tempfile.TemporaryDirectory() as tmp:
+            first = bd._segmented_acquisition(case, 3, pod, source, geometry, Path(tmp) / "a")
+            second = bd._segmented_acquisition(case, 3, pod, source, geometry, Path(tmp) / "b")
+            future = source.copy()
+            future[:, bd.SOURCE_KNOTS > case.training_span[1]] = 7.
+            third = bd._segmented_acquisition(case, 3, pod, future, geometry, Path(tmp) / "c")
+            self.assertTrue((Path(tmp) / "a" / "basis.npz").exists())
+        times, y, clean_q, D, shift, info = first
+        self.assertEqual((times[0], times[-1], y.shape), (5., 70., (2, 6)))
+        for index, array in enumerate(first[:5]):
+            np.testing.assert_array_equal(array, second[index])
+            np.testing.assert_array_equal(array, third[index])
+        self.assertGreater(abs(y[:, 0] - clean_q[:, 0]).max(), 0.)
+        self.assertEqual(info["observation_model"], "segmented")
+        self.assertEqual(len(info["lesion_voxels_per_scan"]), 6)
+        self.assertLessEqual(info["latest_source_day_used"], case.training_span[1])
 
 
 class ComparisonTableTests(unittest.TestCase):

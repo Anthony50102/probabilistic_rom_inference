@@ -2,6 +2,20 @@
 
 Here single-dose means one fixed dose strength, not one administration.
 Both chemotherapy cases use repeated pulses; multi-dose changes future strengths.
+
+Observation models
+------------------
+``segmented`` (reported): every scan, including the baseline, adds Gaussian
+noise to every breast-tissue voxel. The lesion is segmented from the noisy
+scan itself, and cellularity is reported only inside that region (clipped to
+[0, theta]) and is zero elsewhere, as in TumorTwin's ADC-to-cellularity step.
+The segmentation smooths the scan with a 1 mm Gaussian and thresholds it at a
+level that holds the family-wise false-positive rate per scan at 5%. Each
+POD is fitted to the acquisition's own noisy training scans.
+
+``oracle_masked`` (earlier design): noise only where the noise-free field
+exceeds 0.1% of its maximum, a noise-free first scan, and noise-free
+simulation bases for the chemotherapy cases.
 """
 from __future__ import annotations
 
@@ -13,6 +27,9 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+
+OBSERVATION_MODELS = ("segmented", "oracle_masked")
+LEGACY_OBSERVATION = "oracle_masked"
 
 
 @dataclass(frozen=True)
@@ -45,6 +62,14 @@ class BenchmarkCase:
     training_strength: float
     future_strengths: tuple[float, ...]
     pod: PODSettings
+    observation: str = "segmented"
+
+    def __post_init__(self):
+        if self.observation not in OBSERVATION_MODELS:
+            raise ValueError(f"Unknown observation model: {self.observation}")
+        if self.observation == "segmented" and self.pod.source != "observed_training":
+            raise ValueError("Segmented acquisitions fit their POD to the noisy training scans "
+                             "(observed_training); simulation bases belong to the oracle_masked design.")
 
     def pulse_coefficients(self, future_strength: float) -> tuple[float, ...]:
         if future_strength not in self.future_strengths:
@@ -61,15 +86,27 @@ CASES = {
     "single-dose-chemo": BenchmarkCase(
         "single-dose-chemo", "Fixed half-strength regimen; repeated pulses, one strength.",
         (5., 70.), 110., 120, .01, .025, .05, "cABN",
-        (20., 40., 60., 80., 100.), .5, (.5,), PODSettings()),
+        (20., 40., 60., 80., 100.), .5, (.5,), PODSettings(4, "observed_training", "mean")),
     "multi-dose-chemo": BenchmarkCase(
         "multi-dose-chemo", "Same half-strength past; different strengths of future pulses.",
         (5., 70.), 110., 120, .01, .025, .05, "cABN",
         (20., 40., 60., 80., 100.), .5, (.25, .5, .75, 1.),
-        PODSettings(4, "matched_training", "none")),
+        PODSettings(4, "observed_training", "mean")),
 }
 
 DEFAULT_POD_PROVENANCE = {
+    "untreated-growth": "Production POD of the noisy training scans, as in the untreated-growth comparison.",
+    "single-dose-chemo": "Production (mean-centred, rank 4) POD of the noisy training scans, declared in advance.",
+    "multi-dose-chemo": "Production (mean-centred, rank 4) POD of the noisy training scans.",
+}
+
+# The earlier oracle-masked design, kept reproducible under its original output paths.
+LEGACY_PODS = {
+    "untreated-growth": PODSettings(4, "observed_training", "mean"),
+    "single-dose-chemo": PODSettings(),
+    "multi-dose-chemo": PODSettings(4, "matched_training", "none"),
+}
+LEGACY_POD_PROVENANCE = {
     "untreated-growth": "Preserved observed-training basis from the untreated-growth comparison.",
     "single-dose-chemo": "Preserved nominal-training control from the fixed-strength comparison.",
     "multi-dose-chemo": ("Selected on development acquisition 45 and confirmed on fresh acquisitions 48-50; "
@@ -77,11 +114,16 @@ DEFAULT_POD_PROVENANCE = {
 }
 
 
-def get_case(name: str) -> BenchmarkCase:
+def get_case(name: str, observation: str | None = None) -> BenchmarkCase:
     try:
-        return CASES[name]
+        case = CASES[name]
     except KeyError as exc:
         raise ValueError(f"Unknown tumor benchmark {name!r}; choose from {tuple(CASES)}.") from exc
+    if observation is None or observation == case.observation:
+        return case
+    if observation == LEGACY_OBSERVATION:
+        return replace(case, observation=observation, pod=LEGACY_PODS[name])
+    raise ValueError(f"Unknown observation model: {observation}")
 
 
 @lru_cache(maxsize=2)
@@ -121,38 +163,47 @@ def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
 
 def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
     settings = case.pod if pod is None else pod
-    recipe = {**asdict(case), "pod": asdict(settings), "production_config": asdict(production_config(case, settings))}
+    legacy = case.observation == LEGACY_OBSERVATION
+    fields = asdict(case)
+    if legacy:
+        # Keeps the fingerprints recorded by the earlier design reproducible.
+        fields.pop("observation")
+    recipe = {**fields, "pod": asdict(settings), "production_config": asdict(production_config(case, settings))}
     fingerprint = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()
+    default = LEGACY_PODS[case.name] if legacy else CASES[case.name].pod
     return {
-        **recipe, "recipe_fingerprint": fingerprint,
+        **recipe, "observation": case.observation, "recipe_fingerprint": fingerprint,
         "output_namespace": f"tumor_benchmarks_v1/{case.name}/{fingerprint[:16]}",
         "future_pulse_coefficients": {str(x): case.pulse_coefficients(x) for x in case.future_strengths},
         "POD_fitting_may_not_use_future_fields": True,
         "both_methods_must_share_observations_decoder_and_inputs": True,
         "description_only_does_not_run_or_claim_a_successful_experiment": True,
-        "uses_default_POD": settings == case.pod,
-        "default_POD_provenance": DEFAULT_POD_PROVENANCE[case.name],
+        "uses_default_POD": settings == default,
+        "default_POD_provenance": (LEGACY_POD_PROVENANCE if legacy else DEFAULT_POD_PROVENANCE)[case.name],
     }
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("case", nargs="?", choices=tuple(CASES))
+    parser.add_argument("--observation", choices=OBSERVATION_MODELS)
     parser.add_argument("--pod-rank", type=int)
     parser.add_argument("--pod-source", choices=("observed_training", "nominal_training", "matched_training"))
     parser.add_argument("--pod-centering", choices=("mean", "none"))
     args = parser.parse_args()
     if args.case is None:
-        if any(value is not None for value in (args.pod_rank, args.pod_source, args.pod_centering)):
-            parser.error("Select a benchmark before overriding its POD settings.")
+        if any(value is not None for value in (args.pod_rank, args.pod_source, args.pod_centering,
+                                               args.observation)):
+            parser.error("Select a benchmark before overriding its observation or POD settings.")
         print(json.dumps({key: value.description for key, value in CASES.items()}, indent=2))
         return
-    case = get_case(args.case)
+    case = get_case(args.case, args.observation)
     changes = {key: value for key, value in (
         ("rank", args.pod_rank), ("source", args.pod_source),
         ("centering", args.pod_centering)) if value is not None}
     try:
         pod = replace(case.pod, **changes)
+        replace(case, pod=pod)
     except ValueError as exc:
         parser.error(str(exc))
     print(json.dumps(describe(case, pod), indent=2))

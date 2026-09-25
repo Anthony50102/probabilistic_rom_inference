@@ -12,10 +12,12 @@ Usage:
     python 04_unified_benchmark.py multi-dose-chemo         # seeds 48 49 50
     python 04_unified_benchmark.py single-dose-chemo --seeds 46
     python 04_unified_benchmark.py untreated-growth --no-draws
+    python 04_unified_benchmark.py multi-dose-chemo --observation oracle_masked   # earlier design
     python 04_unified_benchmark.py multi-dose-chemo --seeds 48 --steps 500 \\
         --output-root /tmp/tumor-smoke                      # quick smoke run
 
-Results go to results/benchmarks/<case>/<pod>/seed<N>/{data,production,evaluation};
+Results go to results/benchmarks/<case>/<tag>/seed<N>/{data,production,evaluation},
+where <tag> is segmented_<pod> (reported) or <pod> (earlier oracle-masked design);
 then run 05_neural_ode_benchmark.py and 06_compare_benchmark.py.
 """
 import argparse
@@ -54,7 +56,7 @@ def _percent(score):
 
 def report(case, pod, seeds, root):
     grid = bd.grid(case)
-    print(f"\n{case.name} [{bd.pod_tag(pod)}]: production {grid.headline} full-field error (%)")
+    print(f"\n{case.name} [{bd.acquisition_tag(case, pod)}]: production {grid.headline} full-field error (%)")
     print(f"  {'arm':<10}" + "".join(f"{'seed ' + str(seed):>12}" for seed in seeds) + f"{'draws<=25%':>14}")
     evaluations = [bd.read_json(bd.seed_directory(case, seed, pod, root) / "evaluation" / "production.json")
                    for seed in seeds]
@@ -75,7 +77,7 @@ def main(argv=None):
               "results may differ in the last float digits.")
     for name in [args.case] if args.case else list(bd.CASES):
         case, pod, seeds = bd.resolve(args, name)
-        print(f"\n=== {case.name} [{bd.pod_tag(pod)}], seeds {list(seeds)}")
+        print(f"\n=== {case.name} [{bd.acquisition_tag(case, pod)}], seeds {list(seeds)}")
         for seed in seeds:
             started = time.monotonic()
             bd.prepare(case, seed, pod, args.output_root)

@@ -65,7 +65,7 @@ def report(case, pod, seeds, root):
             rows[seed] = bd.read_json(path)
     if not rows:
         return
-    print(f"\n{case.name} [{bd.pod_tag(pod)}]: Neural-ODE {center.replace('_', ' ')} "
+    print(f"\n{case.name} [{bd.acquisition_tag(case, pod)}]: Neural-ODE {center.replace('_', ' ')} "
           f"{grid.headline} full-field error (%)")
     print(f"  {'arm':<10}" + "".join(f"{'seed ' + str(seed):>12}" for seed in rows) + f"{'kept':>12}")
     kept = "/".join(str(len(row["filter"]["kept_indices"] or [])) for row in rows.values())
@@ -82,7 +82,7 @@ def main(argv=None):
               "results may differ in the last float digits.")
     for name in [args.case] if args.case else list(bd.CASES):
         case, pod, seeds = bd.resolve(args, name)
-        print(f"\n=== {case.name} [{bd.pod_tag(pod)}], seeds {list(seeds)}")
+        print(f"\n=== {case.name} [{bd.acquisition_tag(case, pod)}], seeds {list(seeds)}")
         for seed in seeds:
             started = time.monotonic()
             bd.prepare(case, seed, pod, args.output_root)
