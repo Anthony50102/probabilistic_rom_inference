@@ -172,8 +172,8 @@ class CommandLineTests(unittest.TestCase):
                                            "multi-dose-chemo": (48, 49, 50)})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
                          {"untreated-growth": "segmented_observed_mean_r3",
-                          "single-dose-chemo": "segmented_observed_mean_r4",
-                          "multi-dose-chemo": "segmented_observed_mean_r4"})
+                          "single-dose-chemo": "segmented_observed_none_r4",
+                          "multi-dose-chemo": "segmented_observed_none_r4"})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.DEFAULT_SEEDS},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})

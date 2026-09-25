@@ -88,19 +88,22 @@ CASES = {
     "single-dose-chemo": BenchmarkCase(
         "single-dose-chemo", "Fixed half-strength regimen; repeated pulses, one strength.",
         (5., 70.), 110., 120, .01, .025, .05, "cABN",
-        (20., 40., 60., 80., 100.), .5, (.5,), PODSettings(4, "observed_training", "mean")),
+        (20., 40., 60., 80., 100.), .5, (.5,), PODSettings(4, "observed_training", "none")),
     "multi-dose-chemo": BenchmarkCase(
         "multi-dose-chemo", "Same half-strength past; different strengths of future pulses.",
         (5., 70.), 110., 120, .01, .025, .05, "cABN",
         (20., 40., 60., 80., 100.), .5, (.25, .5, .75, 1.),
-        PODSettings(4, "observed_training", "mean")),
+        PODSettings(4, "observed_training", "none")),
 }
 
+_CHEMO_SELECTION = ("chosen on development acquisition 45 among observed mean/none x rank 4/3 by the multi-dose rule "
+                    "of experiments/TUMOR_BENCHMARK_POD_COMPARISON.md (lowest mean production error over the four "
+                    "future strengths; centred bases failed)")
 DEFAULT_POD_PROVENANCE = {
     "untreated-growth": ("Mean-centred POD of the noisy training scans; rank 3 because the fourth singular value "
                          "lies inside the noise bulk, below the scan-noise threshold, on every acquisition."),
-    "single-dose-chemo": "Production (mean-centred, rank 4) POD of the noisy training scans, declared in advance.",
-    "multi-dose-chemo": "Production (mean-centred, rank 4) POD of the noisy training scans.",
+    "single-dose-chemo": f"Uncentred rank-4 POD of the noisy training scans (as multi-dose); {_CHEMO_SELECTION}.",
+    "multi-dose-chemo": f"Uncentred rank-4 POD of the noisy training scans; {_CHEMO_SELECTION}.",
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.

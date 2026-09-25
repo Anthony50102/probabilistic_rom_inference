@@ -62,7 +62,7 @@ class BenchmarkCaseTests(unittest.TestCase):
         self.assertTrue(all(row["POD_fitting_may_not_use_future_fields"] for row in recipes))
 
     def test_default_POD_per_case(self):
-        reported = {name: PODSettings(4, "observed_training", "mean")
+        reported = {name: PODSettings(4, "observed_training", "none")
                     for name in ("single-dose-chemo", "multi-dose-chemo")}
         reported["untreated-growth"] = PODSettings(3, "observed_training", "mean")
         legacy = {
