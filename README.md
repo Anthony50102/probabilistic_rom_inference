@@ -21,6 +21,7 @@ The active experiment pipeline compares:
 | `burgers_2d` | 2D diffusion-reaction / Burgers-style system | `cAH` | Single trajectory plus optional parametric extension scripts. |
 | `tumor` | TumorTwin tumor-growth data | `cA` | Cached FOM data, fixed POD mode count. |
 | `tumor` (chemo) | Tumor growth with chemotherapy | `cABN` | Input-driven ROM via `04_unified_chemo.py`. |
+| `tumor` (reported benchmarks) | Untreated growth, single-dose and multi-dose chemo | `cA` / `cABN` | `04/05/06_*_benchmark.py`; see [Running the three reported tumor benchmarks](#running-the-three-reported-tumor-benchmarks). |
 
 ## Repository structure
 
@@ -60,11 +61,19 @@ experiments/
 
   tumor/
     04_unified.py
+    04_unified_benchmark.py
     04_unified_chemo.py
     05_neural_ode.py
+    05_neural_ode_benchmark.py
     05_neural_ode_chemo.py
+    06_compare_benchmark.py
     06_compare_methods.py
     06_compare_chemo.py
+    benchmark_cases.py       # the three reported benchmark recipes
+    benchmark_data.py        # shared acquisitions, POD bases and reference fields
+    benchmark_environment.py # reproducible thread settings
+    benchmark_evaluation.py  # full-field, burden and treatment-effect scores
+    benchmark_models.py      # production and Neural-ODE fits for the benchmarks
     config.py
     generate_fom_data.py
     generate_fom_data_chemo.py
@@ -76,8 +85,8 @@ plot_from_npz.py       # standalone plot regeneration from saved 04_unified.npz 
 
 ## Bayesian OpInf method
 
-All five `04_unified*.py` experiments are thin adapters over
-`core/weakform_opinf/`. `WeakFormConfig` defines the method settings;
+All `04_unified*.py` entry points, including the tumor benchmark runner, are thin
+adapters over `core/weakform_opinf/`. `WeakFormConfig` defines the method settings;
 `ExperimentSpec.prepare()` supplies the data, POD basis, ROM, and evaluation
 targets. Single- and multi-trajectory cases use the same inference pipeline.
 
@@ -248,6 +257,58 @@ and [earlier nominal-basis future-dose comparison](experiments/HALF_EXPOSURE_DOS
 particular, the favorable untreated example is not a claim of universal growth
 superiority, and stable dose forecasts are not calibrated treatment-effect
 uncertainty.
+
+### Running the three reported tumor benchmarks
+
+`04_unified_benchmark.py`, `05_neural_ode_benchmark.py`, and
+`06_compare_benchmark.py` are the reported runners for the three recipes,
+mirroring the 04/05/06 layout of the other experiments. One shared preparation
+(`benchmark_data.py`) gives each acquisition seed its noisy reduced
+observations and POD decoder, handed identically to both methods, plus
+evaluation-only reference fields for every dose arm.
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python 04_unified_benchmark.py      # production Bayesian OpInf, all three cases
+conda run -n prob_rom python 05_neural_ode_benchmark.py   # Neural-ODE ensembles on the same data
+conda run -n prob_rom python 06_compare_benchmark.py      # tables and figures
+```
+
+Each runner accepts a case (`untreated-growth`, `single-dose-chemo`,
+`multi-dose-chemo`), `--seeds`, the `--pod-*` overrides of
+`benchmark_cases.py`, and `--output-root` for scratch runs; `--help` lists the
+rest (`--steps` and `--members` are for smoke tests only). The reported seeds
+are 42-44 (untreated growth), 45-47 (single-dose), and 48-50 (multi-dose,
+whose development acquisition was 45). Outputs go to
+`results/benchmarks/<case>/<pod>/seed<N>/{data,production,neural_ode,evaluation}`
+and `figures/benchmarks/`; `06` also writes `results/benchmarks/comparison.{json,csv}`
+and, with `--paper-figure <path>`, the manuscript's multi-dose figure.
+
+On a laptop CPU a production fit takes about a minute, and scoring its point
+forecast and 64 posterior draws about another minute per dose arm. A chemo Neural-ODE member takes 6-8
+minutes, so 20 members take 2-3 hours per seed; `--only-members` splits a seed
+across processes. A growth ensemble takes about 10 minutes. Fits resume from
+their 1000-update checkpoints, and completed data, fits, and evaluations are
+reused unless their inputs change. `benchmark_environment.py` pins the
+single-thread BLAS/XLA settings under which untreated-growth production is
+bitwise reproducible; the runners apply them before importing NumPy.
+
+The runners reproduce the sealed studies: all nine acquisitions bitwise, and
+the production fits, 20 growth Neural-ODE members, and every evaluation score
+for seeds 43, 46, and 48; chemo Neural-ODE training matches the sealed members
+bitwise through all 6000 updates (checked for member 0 of seeds 46 and 48). The
+locally reported chemo ensembles reuse those sealed members rather than
+retraining them.
+
+| Benchmark (seeds) | Production | Neural ODE |
+|---|---|---|
+| Untreated growth, days 60-90 (42-44) | 8.14% | 14.97% (all-member median) |
+| Single-dose chemo, days 70-110 (45-47) | 5.39% | 9.93% (loss-filtered median) |
+| Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 6.64/6.17/6.62/6.37% | 22.08/9.53/14.10/29.39% (loss-filtered median) |
+
+Values are medians over seeds of the relative full-field forecast error,
+including the POD residual. Figure bands are empirical posterior-draw bands,
+not calibrated uncertainty.
 
 ### Matched chemotherapy comparison and dose generalization
 
