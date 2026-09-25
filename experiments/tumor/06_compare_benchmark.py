@@ -354,7 +354,8 @@ def figure_transfer(case, pod, seed, root, table, folder, extra=None):
 def figure_summary(tables, folder):
     plt, save_figure, colors = _plotting()
     groups = [(table, arm) for table in tables for arm in sorted(
-        table["arms"], key=lambda key: -1 if table["arms"][key]["strength"] is None else table["arms"][key]["strength"])]
+        table["arms"],
+        key=lambda key: -1 if table["arms"][key]["strength"] is None else table["arms"][key]["strength"])]
     fig, ax = plt.subplots(figsize=(1.0 + .75 * len(groups), 3.4))
     positions = np.arange(len(groups))
     for offset, method in zip((-.18, .18), ("production", "neural_ode")):

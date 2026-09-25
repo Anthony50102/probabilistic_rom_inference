@@ -200,8 +200,8 @@ and 100. Untreated growth retains the logistic growth model without treatment.
 
 | Recipe | Question | Observations | Main forecast |
 |---|---|---|---|
-| `untreated-growth` | Next-month growth, without treatment; faster-spreading example (`k=.05,d=.1`). | 40, 1% noise, days 5-60 | Days 60-90 |
-| `single-dose-chemo` | Continue the same half-strength regimen. | 120, 1% noise, days 5-70 | Days 70-110 |
+| `untreated-growth` | Next-month growth, without treatment; faster-spreading example (`k=.05,d=.1`). | 40 segmented scans, 1% voxel noise, days 5-60 | Days 60-90 |
+| `single-dose-chemo` | Continue the same half-strength regimen. | 120 segmented scans, 1% voxel noise, days 5-70 | Days 70-110 |
 | `multi-dose-chemo` | Keep the same half-strength history; change only future pulse strengths to 0.25x, 0.5x, 0.75x, or 1x of original exposure. | Same chemo acquisition | Days 70-110 |
 
 Inspect the recipes and their production inference settings:
@@ -217,21 +217,28 @@ conda run -n prob_rom python benchmark_cases.py multi-dose-chemo
 The inspector does not train models or silently change the historical
 `04_unified*.py` / `05_neural_ode*.py` entry points. It obtains the unchanged
 production inference settings from the existing Bayesian adapter; an explicit
-POD-rank override changes only `num_modes`. The `multi-dose-chemo` default POD
+POD-rank override changes only `num_modes`. The default observation model is
+`segmented`, whose PODs are fitted to each acquisition's own noisy scans (see
+[Running the three reported tumor benchmarks](#running-the-three-reported-tumor-benchmarks)).
+`--observation oracle_masked` restores the earlier design, in which noise was
+added only where the true tumor was present, the initial state was noise-free,
+and the chemo PODs came from clean simulated snapshots. The rest of this
+subsection describes that earlier design. Its `multi-dose-chemo` default POD
 is the confirmed matched-training, uncentered rank-4 representation described
 below; the other two recipes keep their preserved bases. The sealed study
 release (commit `596fdb2`) requested the same representation explicitly:
 
 ```bash
-conda run -n prob_rom python benchmark_cases.py multi-dose-chemo \
+conda run -n prob_rom python benchmark_cases.py multi-dose-chemo --observation oracle_masked \
   --pod-rank 4 --pod-source matched_training --pod-centering none
 ```
 
 The earlier nominal control remains available with
-`--pod-source nominal_training --pod-centering mean`.
+`--observation oracle_masked --pod-source nominal_training --pod-centering mean`.
 
-Recipe fingerprints distinguish POD rank, training source, centering, case, and
-inference settings. Actual runs must additionally retain their acquisition,
+Recipe fingerprints distinguish the observation model, POD rank, training
+source, centering, case, and inference settings (oracle-masked fingerprints
+are unchanged from the sealed studies). Actual runs must additionally retain their acquisition,
 basis, input, and source-data identities. Both methods must receive the same
 observations and decoder. POD fitting must not use future fields, and choosing
 a representation to favor production must be done on development data rather
@@ -274,41 +281,86 @@ conda run -n prob_rom python 05_neural_ode_benchmark.py   # Neural-ODE ensembles
 conda run -n prob_rom python 06_compare_benchmark.py      # tables and figures
 ```
 
+The reported observation model is `segmented`. Every scan, the first
+included, adds independent Gaussian noise (standard deviation 1% of the range
+of the noise-free training fields) to every breast-tissue voxel. The lesion is
+then segmented from the noisy scan alone: a voxel belongs to it if the scan,
+smoothed by a 1 mm Gaussian, exceeds a Bonferroni threshold that holds the
+chance of any false-positive voxel in a scan at 5%. As in TumorTwin, the
+reported cellularity is the noisy value clipped to [0, θ] inside the lesion
+and zero elsewhere. Both methods start from the reduced first scan. Each
+acquisition's POD is fitted to its own segmented training scans, and
+preparation refuses a rank above the number of singular values that exceed
+the Gavish-Donoho optimal hard threshold for the known noise level: modes
+below it cannot be told apart from noise. Noise-free fields are used only to
+score forecasts. Each `data/metadata.json` records the segmentation rule, the
+threshold, and evaluation-only segmentation errors (over the nine reported
+acquisitions: 0.3% of the field energy missed, three false-positive voxels in
+840 scans, observed fields 2.2-2.7% from the truth).
+
+| Case | Seeds | POD (result tag) | How it was fixed |
+|---|---|---|---|
+| `untreated-growth` | 42-44 | mean-centered rank 3 (`segmented_observed_mean_r3`) | The threshold admits three modes. The earlier rank 4 added a noise mode and diverged on acquisition 42 (operator eigenvalue +0.76/day). |
+| `single-dose-chemo` | 51-53 | uncentered rank 4 (`segmented_observed_none_r4`) | The multi-dose basis; the unchanged regimen is the multi-dose 0.5x arm. The declared mean-centered rank 4 failed on 45-47 (30-121% error), so the task moved to fresh acquisitions. |
+| `multi-dose-chemo` | 48-50 | uncentered rank 4 (`segmented_observed_none_r4`) | Chosen among ranks 3 and 4, centered or not, by production's multi-dose error on development acquisition 45, then frozen before 48-50 were fitted. |
+
 Each runner accepts a case (`untreated-growth`, `single-dose-chemo`,
-`multi-dose-chemo`), `--seeds`, the `--pod-*` overrides of
+`multi-dose-chemo`), `--seeds`, `--observation`, the `--pod-*` overrides of
 `benchmark_cases.py`, and `--output-root` for scratch runs; `--help` lists the
-rest (`--steps` and `--members` are for smoke tests only). The reported seeds
-are 42-44 (untreated growth), 45-47 (single-dose), and 48-50 (multi-dose,
-whose development acquisition was 45). Outputs go to
-`results/benchmarks/<case>/<pod>/seed<N>/{data,production,neural_ode,evaluation}`
-and `figures/benchmarks/`; `06` also writes `results/benchmarks/comparison.{json,csv}`
-and, with `--paper-figure <path>`, the manuscript's multi-dose figure.
+rest (`--steps` and `--members` are for smoke tests only). Outputs go to
+`results/benchmarks/<case>/<tag>/seed<N>/{data,production,neural_ode,evaluation}`
+and `figures/benchmarks/segmented/`; `06` also writes
+`results/benchmarks/comparison_segmented.{json,csv}` and, with
+`--paper-figure <path>`, the manuscript's multi-dose figure. Development fits
+at the other configurations keep their own tags (for example
+`multi-dose-chemo/segmented_observed_mean_r4/seed45`).
 
-On a laptop CPU a production fit takes about a minute, and scoring its point
-forecast and 64 posterior draws about another minute per dose arm. A chemo Neural-ODE member takes 6-8
-minutes, so 20 members take 2-3 hours per seed; `--only-members` splits a seed
-across processes. A growth ensemble takes about 10 minutes. Fits resume from
-their 1000-update checkpoints, and completed data, fits, and evaluations are
-reused unless their inputs change. `benchmark_environment.py` pins the
-single-thread BLAS/XLA settings under which untreated-growth production is
-bitwise reproducible; the runners apply them before importing NumPy.
-
-The runners reproduce the sealed studies: all nine acquisitions bitwise, and
-the production fits, 20 growth Neural-ODE members, and every evaluation score
-for seeds 43, 46, and 48; chemo Neural-ODE training matches the sealed members
-bitwise through all 6000 updates (checked for member 0 of seeds 46 and 48). The
-locally reported chemo ensembles reuse those sealed members rather than
-retraining them.
+On a laptop CPU, preparing a segmented chemo acquisition takes about a minute
+and peaks near 3 GB of memory, so let `04` prepare chemo seeds one or two at a
+time. A production fit takes about a minute, and scoring its point forecast
+and 64 posterior draws about another minute per dose arm. A chemo Neural-ODE
+member takes 6-8 minutes, so 20 members take 2-3 hours per seed;
+`--only-members` splits a seed across processes once its data exist. A growth
+ensemble takes about 10 minutes. Fits resume from their 1000-update
+checkpoints, and completed data, fits, and evaluations are reused unless their
+inputs change. `benchmark_environment.py` pins the single-thread BLAS/XLA
+settings under which untreated-growth production is bitwise reproducible; the
+runners apply them before importing NumPy.
 
 | Benchmark (seeds) | Production | Neural ODE |
+|---|---|---|
+| Untreated growth, days 60-90 (42-44) | 7.11% | 12.33% (all-member median) |
+| Single-dose chemo, days 70-110 (51-53) | 11.38% | 11.15% (loss-filtered median) |
+| Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 7.04/6.02/6.48/6.32% | 26.65/13.87/11.36/23.97% (loss-filtered median) |
+
+Values are medians over seeds of the relative full-field forecast error,
+including the POD residual. Production is lower on every acquisition for
+untreated growth and at every multi-dose strength, but not for the
+single-dose continuation, where the NODE is lower on two of three
+acquisitions. That forecast is also the multi-dose 0.5x arm; over all six
+reported chemo acquisitions production gives 4.78-16.96% (median 7.55%) and
+the NODE 9.75-14.15% (median 12.62%). Figure bands are empirical
+posterior-draw bands, not calibrated uncertainty. The
+[segmented benchmark record](experiments/TUMOR_SEGMENTED_BENCHMARKS.md) has
+per-seed results, the development selection, and the limitations.
+
+`--observation oracle_masked` restores the earlier design, in which noise was
+added only where the true tumor was present, the initial state was
+noise-free, and the chemo PODs came from clean simulated snapshots. It keeps
+its own seeds (45-47 for single-dose), untagged output names
+(`comparison.json`, `figures/benchmarks/<case>/`), and results. With it the
+runners reproduce the sealed studies: all nine acquisitions bitwise, and the
+production fits, 20 growth Neural-ODE members, and every evaluation score for
+seeds 43, 46, and 48; chemo Neural-ODE training matches the sealed members
+bitwise through all 6000 updates (checked for member 0 of seeds 46 and 48).
+The locally reported chemo ensembles reuse those sealed members rather than
+retraining them. Its idealized results were:
+
+| Earlier design (seeds) | Production | Neural ODE |
 |---|---|---|
 | Untreated growth, days 60-90 (42-44) | 8.14% | 14.97% (all-member median) |
 | Single-dose chemo, days 70-110 (45-47) | 5.39% | 9.93% (loss-filtered median) |
 | Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 6.64/6.17/6.62/6.37% | 22.08/9.53/14.10/29.39% (loss-filtered median) |
-
-Values are medians over seeds of the relative full-field forecast error,
-including the POD residual. Figure bands are empirical posterior-draw bands,
-not calibrated uncertainty.
 
 ### Matched chemotherapy comparison and dose generalization
 
