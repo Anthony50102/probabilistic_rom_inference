@@ -1,5 +1,6 @@
 // Render every panel of public/data/figure/manifest.json with NiiVue in headless Chrome (software WebGL2)
 // and write public/data/figure/panels/<id>.png plus the colormap tables used by the figure's colour bar.
+// MRI-style manifests are then laid out by compose.html and captured as panels/figure.png.
 // Usage (after `npm run build`): npm run render-figure   [CHROME=/path/to/chrome PORT=5180 CDP_PORT=9230]
 // RENDER_OVERRIDES='{"azimuth":120}' previews other camera/colour settings; the settings used are saved
 // with the panels (panels/render.json) and read by the figure composer.
@@ -59,31 +60,49 @@ try {
     if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
     return response.result.value;
   };
+  // Waits for a page's status; the pathname check keeps the previous page's status from counting.
+  const open = async (page, metrics) => {
+    await command('Emulation.setDeviceMetricsOverride', { ...metrics, mobile: false });
+    await command('Page.navigate', { url: `http://127.0.0.1:${port}/${page}` });
+    const probe = `location.pathname === '/${page}' ? document.getElementById('status')?.dataset.state : null`;
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const state = await evaluate(probe);
+      if (state === 'ready') return;
+      if (state === 'error') throw new Error(await evaluate("document.getElementById('status').textContent"));
+      await sleep(200);
+    }
+    throw new Error(`Timed out waiting for ${page}`);
+  };
+  const capture = async (file, clip) => {
+    const shot = await command('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, ...clip, scale: 1 } });
+    await writeFile(path.join(figure, 'panels', file), Buffer.from(shot.data, 'base64'));
+  };
   await command('Runtime.enable');
   await command('Page.enable');
-  await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 2, mobile: false });
-  await command('Page.navigate', { url: `http://127.0.0.1:${port}/figure.html` });
-  for (let attempt = 0; attempt < 150; attempt++) {
-    const state = await evaluate("document.getElementById('status')?.dataset.state");
-    if (state === 'ready') break;
-    if (state === 'error') throw new Error(await evaluate("document.getElementById('status').textContent"));
-    if (attempt === 149) throw new Error('Timed out waiting for the figure page');
-    await sleep(200);
-  }
+  await open('figure.html', { width, height, deviceScaleFactor: 2 });
   await mkdir(path.join(figure, 'panels'), { recursive: true });
+  const tiles = {};
   for (const panel of manifest.panels) {
     const info = await evaluate(`window.renderPanel(${JSON.stringify(panel.id)}, ${JSON.stringify(overrides)})`);
     await sleep(300);
-    const shot = await command('Page.captureScreenshot', { format: 'png',
-      clip: { x: 0, y: 0, width, height, scale: 1 } });
-    await writeFile(path.join(figure, 'panels', `${panel.id}.png`), Buffer.from(shot.data, 'base64'));
+    await capture(`${panel.id}.png`, { width, height });
+    if (info.tile) tiles[panel.id] = { tile: info.tile, canvas: info.canvas };
     console.log(`${panel.id}: grid ${info.dims.join('x')}, colour range ${info.cal_min}-${info.cal_max}`);
   }
   const names = [...new Set(manifest.panels.map(panel => settings.colormap ?? panel.colormap))];
   const tables = await evaluate(`window.colormapTables(${JSON.stringify(names)})`);
+  const used = Object.keys(tiles).length ? { ...settings, tiles } : settings;
   await writeFile(path.join(figure, 'panels', 'colormaps.json'), JSON.stringify(tables, null, 2));
-  await writeFile(path.join(figure, 'panels', 'render.json'), JSON.stringify(settings, null, 2));
+  await writeFile(path.join(figure, 'panels', 'render.json'), JSON.stringify(used, null, 2));
   console.log(`Rendered ${manifest.panels.length} panels to ${path.join(figure, 'panels')}`);
+  if (manifest.style === 'mri') {
+    const { width_px: figureWidth, scale } = manifest.figure;
+    await open('compose.html', { width: figureWidth, height: 2000, deviceScaleFactor: scale });
+    const [boxWidth, boxHeight] = await evaluate(
+      "(box => [Math.ceil(box.width), Math.ceil(box.height)])(document.getElementById('figure').getBoundingClientRect())");
+    await capture('figure.png', { width: boxWidth, height: boxHeight });
+    console.log(`Laid out the figure (${boxWidth}x${boxHeight} CSS px at ${scale}x): ${path.join(figure, 'panels', 'figure.png')}`);
+  }
 } finally {
   socket?.close();
   browser.kill();

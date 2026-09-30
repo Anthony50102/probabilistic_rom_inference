@@ -279,13 +279,14 @@ conda run -n prob_rom python 06_compare_benchmark.py
 ```
 
 The paper's three-dimensional multi-dose figure (acquisition 49, day 110) is a NiiVue
-rendering of the saved evaluations; no model is refitted:
+rendering of the saved evaluations on a slice of the demonstration patient's T1
+post-contrast MRI; no model is refitted:
 
 ```bash
 conda run -n prob_rom python niivue_benchmark_figure.py export
 (cd niivue_viewer && npm ci && npm run build && npm run render-figure)
 conda run -n prob_rom python niivue_benchmark_figure.py compose \
-  --paper-figure ../../../GP-Bayes-Refactor/manuscript_v2/figures/selected/tumor_multidose_niivue.png
+  --paper-figure ../../../GP-Bayes-Refactor/manuscript_v2/figures/selected/tumor_multidose_mri.png
 ```
 
 See `niivue_viewer/README.md` (Publication figure) for the rendering settings.

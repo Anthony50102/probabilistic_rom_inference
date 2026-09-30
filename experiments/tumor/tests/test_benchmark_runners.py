@@ -364,6 +364,53 @@ class NiivueFigureTests(unittest.TestCase):
             self.assertEqual((int(image.header["qform_code"]), int(image.header["sform_code"])), (0, 2))
         self.assertEqual(record["max"], field.reshape(shape)[crop].max())
 
+    def test_display_volume_keeps_the_dtype_and_places_the_parent_grid_origin(self):
+        import nibabel as nib
+        data = np.arange(24, dtype=np.int16).reshape(2, 3, 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            record = self.figure.save_display_volume(Path(tmp) / "anatomy.nii.gz", data, [1., 1., 2.], [3, 4, 0],
+                                                     "display only")
+            image = nib.load(Path(tmp) / "anatomy.nii.gz")
+            self.assertEqual(image.get_data_dtype(), np.int16)
+            np.testing.assert_array_equal(np.asanyarray(image.dataobj), data)
+            np.testing.assert_allclose(image.affine[:3, 3], [3., 4., 0.])
+            self.assertEqual((int(image.header["qform_code"]), int(image.header["sform_code"])), (0, 2))
+            self.assertEqual(image.header["descrip"].item(), b"display only")
+        self.assertEqual(record, {"file": "anatomy.nii.gz", "min": 0., "max": 23.})
+
+    def test_display_window_centres_the_heaviest_slice_and_stays_inside_the_image(self):
+        burden = np.zeros((6, 5, 4))
+        burden[1, 1, 2] = burden[3, 3, 2] = 1.
+        burden[5, 0, 0] = 1.5
+        box = (slice(10, 16), slice(20, 25), slice(3, 7))
+        voxel, fov = self.figure.display_window(burden, box, (30, 28, 12), (8, 6))
+        self.assertEqual(voxel, [12, 22, 5])
+        self.assertEqual([(part.start, part.stop) for part in fov], [(8, 16), (19, 25), (0, 12)])
+        _, fov = self.figure.display_window(burden, box, (30, 24, 12), (8, 10))
+        self.assertEqual((fov[1].start, fov[1].stop), (14, 24))
+        with self.assertRaisesRegex(ValueError, "31-voxel field of view does not fit in an image of 30 voxels"):
+            self.figure.display_window(burden, box, (30, 24, 12), (31, 10))
+
+    def test_embed_places_the_field_and_zero_fills_outside_the_simulation_box(self):
+        shape = (3, 4, 2)
+        field = np.arange(1., 25.)
+        box = (slice(5, 8), slice(10, 14), slice(0, 2))
+        out = self.figure.embed(field, shape, box, (slice(4, 7), slice(12, 16), slice(0, 2)))
+        expected = np.zeros((3, 4, 2), dtype=np.float32)
+        expected[1:3, 0:2] = field.reshape(shape)[0:2, 2:4]
+        np.testing.assert_array_equal(out, expected)
+        outside = self.figure.embed(field, shape, box, (slice(0, 5), slice(12, 16), slice(0, 2)))
+        np.testing.assert_array_equal(outside, np.zeros((5, 4, 2)))
+
+    def test_columns_mark_the_training_strength_and_list_only_future_doses(self):
+        manifest = {"dose_days": [20., 40., 60., 80., 100.], "training_span": [5., 70.], "training_strength": .5,
+                    "panels": [{"row": "truth", "arm": "low", "day": 110., "strength": .25},
+                               {"row": "production", "arm": "low", "day": 110., "strength": .25},
+                               {"row": "truth", "arm": "base", "day": 110., "strength": .5}]}
+        title, shown = self.figure.columns(manifest)
+        self.assertEqual(title, "Strength of the future pulses (days 80, 100); forecast on day 110")
+        self.assertEqual(shown, [("low", 110., "0.25×"), ("base", 110., "0.5× (as trained)")])
+
 
 if __name__ == "__main__":
     unittest.main()

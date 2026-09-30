@@ -65,30 +65,55 @@ conda run -n prob_rom python niivue_benchmark_figure.py compose  # figures/bench
 ```
 
 `export` accepts another chemotherapy case, `--seed`, `--days` (saved evaluation
-days only) and `--observation`; `compose --paper-figure PATH` also writes the paper
-copy. Forecasts are decoded as `D q + shift` with the acquisition's own POD basis
-(unclipped), and truth follows the evaluator's cubic time interpolation. Volumes are
-cropped to the lesion (voxels above 1% of the largest shown value, plus three) and all
-panels share the colour range 0 to the largest true value. The colormap's opacity
-rises from zero at the lower limit, so values at or below 0 are transparent and low
-values faint. Each forecast panel is labelled with its relative field error
-on that day over all voxels.
+days only), `--observation` and `--style`; `compose --paper-figure PATH` also writes
+the paper copy. Forecasts are decoded as `D q + shift` with the acquisition's own POD
+basis (unclipped), and truth follows the evaluator's cubic time interpolation. All
+panels share the colour range 0 to the largest true value, and each forecast panel is
+labelled with its relative field error on that day over all voxels. `compose` writes a
+JSON sidecar next to the figure with the manifest provenance (source SHA256s), the
+render settings and the per-panel errors. With the same Chrome, rerunning the three
+commands reproduces the PNG byte for byte.
 
-The camera, colormap, illumination and clip plane are in `RENDER` of
-`niivue_benchmark_figure.py` and are copied into the manifest. `render-figure`
-starts the loopback server on port 5180 and a temporary headless Chrome
-(software WebGL2, CDP port 9230; override with `PORT`, `CDP_PORT` and `CHROME`).
-`RENDER_OVERRIDES='{"azimuth": 120, "colormap": "hot"}' npm run render-figure`
-previews other settings without re-exporting; the settings actually used are saved
-as `panels/render.json`, which `compose` reads. `compose` also writes a JSON sidecar
-next to the figure with the manifest provenance (source SHA256s), the render
-settings and the per-panel errors. Volume-rendered colours are opacity-weighted
-blends along each ray, so the colour bar is a qualitative guide.
+**`--style mri` (default, the paper figure).** The simulation grid is TumorTwin's crop
+of the demonstration patient's images (the enhancing region of all visits plus ten
+voxels), so the fields are placed back on the patient's 1 mm image grid; `export`
+checks that the simulation's breast mask equals the patient's inside the crop box and
+that the voxel sizes agree. It writes the T1 post-contrast image
+(`anatomy_T1_post.nii.gz`, windowed from 0 to its 99.5th percentile inside the breast
+mask) and the fields (zero outside the crop box) on one in-plane field of view,
+176 x 132 mm, centred on the true lesion in the slice with the most true tumour summed
+over the shown columns. Each panel is that slice in NiiVue with the field as an overlay
+coloured from 0 (`redyell`); the overlay's alpha is `(u / 0.05)^2` below 0.05 and 1
+above (NiiVue's zero-to-max, transparent-below-min overlay type), and the whole overlay
+is drawn at 70% opacity. `render-figure` then lays out the figure in `compose.html`
+(labels, errors, a 20 mm scale bar and a colour bar from NiiVue's own lookup table,
+faded below 0.05 as drawn over black) and captures it at 4x as
+`panels/figure.png`; `compose` copies it with its resolution. The image files carry no
+orientation (qform and sform codes 0), so no anatomical directions are shown. The
+settings are in `MRI` of `niivue_benchmark_figure.py`.
+
+**`--style volume`.** The earlier figure: volume renderings of the lesion region
+(voxels above 1% of the largest shown value, plus three), clipped by a plane through
+its centre and laid out by `compose` with matplotlib. The colormap's opacity rises from
+zero at the lower limit, so values at or below 0 are transparent and low values faint;
+volume-rendered colours are opacity-weighted blends along each ray, so the colour bar
+is a qualitative guide. The camera, colormap, illumination and clip plane are in
+`RENDER`.
+
+Both styles copy their settings into the manifest. `render-figure` starts the loopback
+server on port 5180 and a temporary headless Chrome (software WebGL2, CDP port 9230;
+override with `PORT`, `CDP_PORT` and `CHROME`).
+`RENDER_OVERRIDES='{"opacity": 0.8}' npm run render-figure` (or, for the volume style,
+`'{"azimuth": 120, "colormap": "hot"}'`) previews other settings without re-exporting;
+the settings actually used are saved as `panels/render.json`, which the layout and
+`compose` read.
 
 ## Scientific meaning and resource use
 
 - Coordinates are a **simulation grid; not registered patient coordinates**.
   Source arrays have no anatomical orientation, origin, or patient-space affine.
+  (The grid is a crop of the TumorTwin demonstration patient's image grid, which the
+  MRI-style publication figure uses; those images carry no orientation either.)
   NIfTI axes follow NumPy `reshape(grid_shape)`; the affine is spacing-scaled
   with zero grid origin. The sform stores this display transform (code 2);
   it is not evidence of anatomical registration. Anatomical labels are hidden.

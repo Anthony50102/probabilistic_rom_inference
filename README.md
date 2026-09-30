@@ -482,9 +482,12 @@ conda run -n prob_rom python niivue_benchmark_figure.py export
 conda run -n prob_rom python niivue_benchmark_figure.py compose
 ```
 
-The figure is written to
-`figures/benchmarks/segmented/multi-dose-chemo/niivue_day110_seed49.png` with a
-JSON provenance sidecar; see the viewer README's "Publication figure" section.
+The default (`--style mri`) figure overlays the fields on a slice of the TumorTwin
+demonstration patient's T1 post-contrast MRI, whose image grid the simulations use, and
+is written to `figures/benchmarks/segmented/multi-dose-chemo/niivue_mri_day110_seed49.png`
+with a JSON provenance sidecar. `export --style volume` gives the earlier volume
+renderings (`niivue_day110_seed49.png`); see the viewer README's "Publication figure"
+section.
 
 ### Historical and per-experiment outputs
 
