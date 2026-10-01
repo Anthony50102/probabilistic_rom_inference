@@ -112,7 +112,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     folder = production_directory(case, seed, pod, root)
     cfg = production_config(case, pod)
     total = _checked_steps(steps, cfg.num_steps)
-    _same_request(folder / "fit_start.json", {"planned_updates": total})
+    _same_request(folder / "fit_start.json", {"planned_updates": total, "production_config": asdict(cfg)})
     if (folder / "result.json").exists():
         return bd.read_json(folder / "result.json")
     data = bd.load(case, seed, pod, root, references=False)
@@ -200,7 +200,7 @@ def _export_production(folder, cfg, observations, guide, svi, state, conditional
     posterior = guide.sample_posterior(posterior_key, params, sample_shape=(PRODUCTION_DRAWS,), gamma2=cfg.gamma2)
     theta = _stack_theta(posterior, 1, r)
     tau = jnp.exp(jnp.asarray(posterior["log_tau_block"]))
-    sigma_O = jnp.asarray(cfg.sigma_O)
+    sigma_O = None if cfg.sigma_O is None else jnp.asarray(cfg.sigma_O)
     keys = random.split(operator_key, PRODUCTION_DRAWS)
 
     @jax.jit
@@ -224,7 +224,8 @@ def _export_production(folder, cfg, observations, guide, svi, state, conditional
     }
     bd.write_npz(folder / "operators.npz", **arrays)
     # Native initial-state rule: GP posterior sd at t0 from the mean hyperparameters, 500 draws.
-    sigma = _ic_sigma(observations["t_sampled"], *(value[0] for value in mean_hypers), r)
+    sigma = _ic_sigma(observations["t_sampled"], *(value[0] for value in mean_hypers), r,
+                      roundoff_nugget=cfg.gp_jitter_rel is None)
     epsilon = np.random.default_rng(cfg.seed).standard_normal((PRODUCTION_DRAWS, r))
     draws = np.broadcast_to(observations["q0"], (PRODUCTION_DRAWS, r))
     if cfg.ic_uncertainty:

@@ -3,9 +3,10 @@
 All per-experiment behaviour is expressed as fields on :class:`WeakFormConfig`.
 There are deliberately **no environment-variable toggles and no MLE anywhere**:
 GP-hyperparameter priors are spectrum-anchored (derived from the observation
-window and the POD singular-value spectrum), and SVI/NUTS explores the
-hyperparameters. This mirrors the euler/burgers experiments and makes every
-case study provably run the identical algorithm.
+window and the POD singular-value spectrum), the operator prior is
+nondimensionalised by the training window and the state/input scales, the GP
+nugget sits at floating-point round-off, and SVI/NUTS explores the
+hyperparameters. This makes every case study run the identical algorithm.
 """
 
 from __future__ import annotations
@@ -36,11 +37,11 @@ class WeakFormConfig:
     """LogNormal scale for the per-mode variance prior."""
     nu_prior_scale: float = 1.0
     """LogNormal scale for the per-mode noise prior."""
-    gp_jitter_rel: float | None = 1e-4
-    """Relative GP kernel nugget: diag jitter = max(1e-5, σ²·gp_jitter_rel).
-    A numerical stabiliser; larger values add mild extra smoothing. Euler/
-    burgers use 1e-4; the tumor cases use 1e-3 (their established value).
-    None selects a dtype-aware roundoff nugget rather than signal smoothing."""
+    gp_jitter_rel: float | None = None
+    """GP training-kernel nugget. None (default, every reported experiment):
+    the round-off level n·ε·max diag K of the n×n training kernel (ε = machine
+    epsilon of the working dtype); scale invariant, no floor, no smoothing.
+    A float selects the historical relative nugget max(1e-5, σ²·gp_jitter_rel)."""
     gp_input_trend: bool = False
     """Marginalize a Gaussian trend in time and integrated scalar input."""
     gp_noise_prior: str = "spectrum"
@@ -64,8 +65,14 @@ class WeakFormConfig:
 
     # ── Operator prior ───────────────────────────────────────────────────
     op_prior_mode: str = "block_hier"
-    """'block_hier' (per-block ARD scales, learned) or 'fixed' (uniform σ_O)."""
-    sigma_O: float = 10.0
+    """'block_hier' (per-block ARD scales, learned) or 'fixed' (scales held at
+    their prior centre)."""
+    sigma_O: float | None = None
+    """None (default, every reported experiment): nondimensional operator prior
+    O_ij ~ N(0, (κ_b s_j)²), s_j = S^(1-p_j) U^(-q_j) / T, with T the training
+    window, S the RMS training POD coefficient, U the RMS input and p_j, q_j the
+    state/input degree of column j; log κ_b ~ N(0, hier_tau_scale²). A float
+    selects the historical dimensional prior log τ_b ~ N(log σ_O, hier_tau_scale²)."""
     hier_tau_scale: float = 3.0
     operator_solver: str = "normal"
     """'normal' retains the historical jittered normal equations; 'qr' factors
@@ -107,6 +114,10 @@ class WeakFormConfig:
         _one_of("gp_noise_prior", self.gp_noise_prior, {"spectrum", "measurement"})
         _one_of("precision", self.precision, {"default", "float32", "float64"})
         _one_of("infer", self.infer, {"svi", "nuts"})
+        for name in ("sigma_O", "gp_jitter_rel"):
+            value = getattr(self, name)
+            if value is not None and not value > 0:
+                raise ValueError(f"WeakFormConfig.{name}={value!r} must be None or positive")
 
 
 def _one_of(name, value, allowed):

@@ -39,17 +39,24 @@ def _stack_theta(post, num_traj, num_modes):
     return g("lengthscale"), g("variance"), g("noise")
 
 
-def _ic_sigma(t_sampled, ells_m, sig2s_m, nus_m, num_modes):
-    """Posterior GP std of the state at t0 per mode (for IC uncertainty)."""
+def _ic_sigma(t_sampled, ells_m, sig2s_m, nus_m, num_modes, roundoff_nugget=False):
+    """Posterior GP std of the state at t0 per mode (for IC uncertainty).
+
+    ``roundoff_nugget`` uses the inference GP's nugget n·ε·σ² (cfg.gp_jitter_rel
+    None, ε of the hyperparameters' dtype); otherwise the historical max(1e-5, 1e-4·σ²).
+    """
     t_tr = np.asarray(t_sampled)
     n_tr = len(t_tr)
     sq_tt = (t_tr[:, None] - t_tr[None, :]) ** 2
     sq_0t = (t_tr[0] - t_tr) ** 2
+    eps = float(np.finfo(np.asarray(sig2s_m).dtype).eps)
     sig_ic = np.zeros(num_modes)
     for i in range(num_modes):
         ell2 = ells_m[i] ** 2
+        nugget = (eps * n_tr * sig2s_m[i] if roundoff_nugget
+                  else max(1e-5, sig2s_m[i] * 1e-4))
         K = (sig2s_m[i] * np.exp(-sq_tt / (2 * ell2))
-             + (nus_m[i] + max(1e-5, sig2s_m[i] * 1e-4)) * np.eye(n_tr))
+             + (nus_m[i] + nugget) * np.eye(n_tr))
         k0 = sig2s_m[i] * np.exp(-sq_0t / (2 * ell2))
         var = sig2s_m[i] - k0 @ np.linalg.solve(K, k0)
         sig_ic[i] = np.sqrt(max(float(var), 0.0))
@@ -125,7 +132,7 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
     ells_s, sig2s_s, nus_s = _stack_theta(post, num_traj, num_modes)
     tau_block_s = (jnp.exp(jnp.asarray(post["log_tau_block"]))
                    if "log_tau_block" in post else None)
-    sigma_O_j = jnp.asarray(cfg.sigma_O)
+    sigma_O_j = None if cfg.sigma_O is None else jnp.asarray(cfg.sigma_O)
 
     rng_key, ok = random.split(rng_key)
     keys = jax.random.split(ok, npost)
@@ -197,7 +204,8 @@ def _predict_targets(prepared, cfg, O_samples, mean_hypers):
                     jnp.asarray(trajectory["snapshots_comp"]))[3]
                 sig_ic = np.sqrt(np.maximum(np.asarray(state_covariance[:, 0, 0]), 0.))
             else:
-                sig_ic = _ic_sigma(tgt.t_sampled, *hypers, cfg.num_modes)
+                sig_ic = _ic_sigma(tgt.t_sampled, *hypers, cfg.num_modes,
+                                   roundoff_nugget=cfg.gp_jitter_rel is None)
             eps_ic = rng_ic.standard_normal((npost, cfg.num_modes))
             state0_samples = (state0_samples
                               + cfg.ic_scale * sig_ic[None, :] * eps_ic)

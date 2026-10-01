@@ -164,6 +164,9 @@ def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
     }
     adapter = _adapter(bool(case.dose_days))
     cfg = adapter.make_config(schema, profile="historical") if case.dose_days else adapter.make_config(schema)
+    if case.observation == LEGACY_OBSERVATION:
+        # The earlier design was fitted with the dimensional operator prior and relative GP nugget.
+        cfg = replace(cfg, sigma_O=5.0, gp_jitter_rel=1e-3)
     return replace(cfg, num_modes=settings.rank)
 
 

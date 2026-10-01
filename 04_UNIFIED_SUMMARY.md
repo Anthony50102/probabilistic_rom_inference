@@ -52,9 +52,11 @@ y_i = A(X) O_i^T + η_i,
 η_i ~ N(0, blockdiag(Σ_D,i, Σ_W,i)).
 ```
 
-With `O_i ~ N(0, σ_O² I)`, the conditional posterior of `O_i` and the marginal
-likelihood are available in closed form. SVI therefore only explores the GP
-hyperparameters (and optional hyperparameters such as hierarchical `σ_O`).
+With the Gaussian prior `O_i ~ N(0, Σ_O)`, `Σ_O = diag(κ_b(j)² s_j²)` (the
+nondimensional column scales `s_j` and per-block multipliers `κ_b` described in
+the README), the conditional posterior of `O_i` and the marginal likelihood are
+available in closed form. SVI therefore only explores the GP hyperparameters and
+the block multipliers `log κ_b`.
 
 ## Active experiments
 

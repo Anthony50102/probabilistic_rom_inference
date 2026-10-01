@@ -45,6 +45,8 @@ class InputModelTests(unittest.TestCase):
             self.assertEqual(mean.dtype, jnp.float64)
             self.assertTrue(np.isfinite(mean).all() and np.isfinite(factor).all())
             np.testing.assert_allclose(priors["nu"], trajectory["noise_variances"])
+            self.assertEqual(priors["operator_prior"]["state_degree"], [0, 1, 1, 0, 1, 1])
+            self.assertEqual(priors["operator_prior"]["input_degree"], [0, 0, 0, 1, 1, 1])
             _, baseline, _, _ = build_model(
                 rom, [trajectory], replace(cfg, gp_input_trend=False))
             baseline_mean, _ = baseline(theta, cfg.gamma2, cfg.sigma_O, jnp.ones(4))

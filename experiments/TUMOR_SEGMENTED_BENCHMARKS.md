@@ -3,25 +3,34 @@
 ## Status and scope
 
 **Complete, with a mixed outcome.** Every scan is now noisy and every basis
-is fitted to noisy scans. Under this design production (unchanged Bayesian
-OpInf) stays more accurate than the NODE on every acquisition in two
-benchmarks:
+is fitted to noisy scans. Under this design production (Bayesian OpInf)
+stays more accurate than the NODE on every acquisition in two benchmarks:
 
-- untreated growth: 7.11% against 12.33% median over days 60-90;
-- multi-dose chemo: 6.02-7.04% against 11.36-26.65% at every future strength.
+- untreated growth: 7.45% against 12.33% median over days 60-90;
+- multi-dose chemo: 5.60-7.08% against 11.36-26.65% at every future strength.
   Here the frozen development-selected basis passed every pre-declared
   confirmation check.
 
-Production's median day-110 gains are 0.91-0.96, so it recovers most of the
+Production's median day-110 gains are 0.94-1.00, so it recovers most of the
 true treatment effect, while the NODE predicts almost none (gains within
 0.02 of zero).
 
-The single-dose continuation is no longer a production win. Its medians are
-11.38% against 11.15%, and the NODE is lower on two of three acquisitions.
+The single-dose continuation is not a production win. Its medians are
+11.20% against 11.15%, and the NODE is lower on two of three acquisitions.
 The same unchanged-regimen forecast is also the multi-dose 0.5x arm. Over all
-six reported chemo acquisitions it gives production 4.78-16.96% (median
-7.55%) against NODE 9.75-14.15% (median 12.62%). No method or configuration
-was changed after the reported acquisitions were scored.
+six reported chemo acquisitions it gives production 4.90-17.11% (median
+6.16%) against NODE 9.75-14.15% (median 12.62%).
+
+**Operator prior.** All values use the nondimensional operator prior and the
+round-off GP nugget (`sigma_O=None`, `gp_jitter_rel=None`, the
+`WeakFormConfig` defaults), which replaced the hand-set `sigma_O=5.0` and
+`gp_jitter_rel=1e-3` here and the corresponding settings in every other
+experiment. The replacement was chosen because it has no per-experiment
+constant, but only after an ablation that included these acquisitions, so
+the choice was not blind to them. The task design and the chemo basis were
+fixed under the earlier prior. Values marked "earlier prior" come from it;
+the full earlier record is at git tag `pre-universal-prior`. No other method
+or configuration was changed after the reported acquisitions were scored.
 
 The three reported tumor benchmarks now observe the simulated tumor through
 noisy scans from which the lesion is segmented (`--observation segmented`, the
@@ -33,8 +42,9 @@ noise-free, and the chemo PODs were fitted to clean simulated snapshots. That
 design remains available with `--observation oracle_masked` and reproduces its
 sealed results.
 
-The production Bayesian algorithm, its inference settings, and the Neural ODE
-(NODE) recipe are unchanged. Only the data, the POD bases fitted to them, and
+Apart from the operator prior and nugget above, the production Bayesian
+algorithm, its inference settings, and the Neural ODE (NODE) recipe are those
+of the earlier design. Only the data, the POD bases fitted to them, and
 the POD ranks changed. All acquisitions share one synthetic anatomy and one
 set of true trajectories; only the scan times and noise differ.
 
@@ -88,14 +98,15 @@ from noise.
 rank 4 was fitted first. On acquisition 42 its fourth singular value lies in
 the noise bulk. The GP interpolated that mode, the learned operator acquired a
 growing eigenvalue (+0.76 per day), and the forecast diverged
-(`threshold_censored`). On 43 and 44, rank 4 gave 7.35% and 7.44% over days
-60-90. This failure is why the rank guard was added. The guard admits three
+(`threshold_censored`). Refitted under the current prior, the eigenvalue is
++1.0 per day and the point forecast and all 64 draws still diverge. On 43 and
+44, rank 4 gave 7.35% and 7.44% over days 60-90 (earlier prior; not refitted). This failure is why the rank guard was added. The guard admits three
 modes on every growth acquisition, and all three acquisitions report rank 3.
 
 **Chemo: uncentered rank 4.** This was selected on development acquisition 45
 among four candidates by the lowest mean production error over the four
 future strengths, then frozen before any reported chemo acquisition was
-fitted. The NODE was not consulted.
+fitted. The NODE was not consulted. The selection used the earlier prior:
 
 | Candidate on acquisition 45 | 0.25x | 0.5x | 0.75x | 1x | Mean |
 |---|---|---|---|---|---|
@@ -117,9 +128,23 @@ comparison finished after the freeze and passes every stage-2 check:
   against each;
 - 19 of 20 members kept.
 
+Repeated under the current prior, the same rule selects the same basis:
+
+| Candidate on acquisition 45, current prior | 0.25x | 0.5x | 0.75x | 1x | Mean |
+|---|---|---|---|---|---|
+| **Uncentered rank 4 (selected)** | 5.97 | 6.90 | 8.31 | 9.42 | **7.65** |
+| Uncentered rank 3 | 7.79 | 9.27 | 10.83 | 11.96 | 9.96 |
+| Mean-centered rank 4 | 13.27 | 26.60 | 26.50 | 19.19 | 21.39 |
+| Mean-centered rank 3 | 15.74 | 30.95 | 37.30 | 27.05 | 27.76 |
+
+Uncentered rank 3 is 30% worse than the selected basis, and against the same
+NODE ensembles the selected basis has mean paired ratios of 0.46 (filtered)
+and 0.45 (all-member), with 4/4 wins against each.
+
 **Single-dose: the same basis on fresh acquisitions 51-53.** The single-dose
 task was first declared with the mean-centered rank-4 basis on acquisitions
-45-47, where it failed (29.88%, 120.59%, and 33.25%). A single-dose forecast is
+45-47, where it failed (29.88%, 120.59%, and 33.25%; under the current prior
+26.60%, 104.22%, and 33.78%). A single-dose forecast is
 the unchanged 0.5x arm of the multi-dose forecast on the same acquisition,
 with identical data, basis, settings, and fit. The task therefore adopted the
 selected chemo basis. It is reported on fresh acquisitions 51-53, because 45
@@ -136,9 +161,9 @@ projection onto the basis.
 
 | Window | Production | NODE all-member | NODE filtered | Floor (median) |
 |---|---|---|---|---|
-| Training, days 5-60 | 0.79 / 0.79 / 0.80 | 0.75 / 0.75 / 0.77 | 0.75 / 0.75 / 0.77 | 0.73 |
-| Days 60-90 | 6.96 / 7.11 / 7.27 | 12.33 / 14.82 / 11.72 | 13.92 / 14.82 / 11.65 | 6.53 |
-| Days 60-120 | 19.42 / 19.76 / 20.14 | 28.01 / 31.84 / 27.42 | 29.69 / 31.84 / 27.26 | 18.45 |
+| Training, days 5-60 | 0.78 / 0.77 / 0.80 | 0.75 / 0.75 / 0.77 | 0.75 / 0.75 / 0.77 | 0.73 |
+| Days 60-90 | 7.14 / 7.45 / 7.52 | 12.33 / 14.82 / 11.72 | 13.92 / 14.82 / 11.65 | 6.53 |
+| Days 60-120 | 20.59 / 21.55 / 21.75 | 28.01 / 31.84 / 27.42 | 29.69 / 31.84 / 27.26 | 18.45 |
 
 NODE kept 16, 18, and 17 members after its loss filter.
 
@@ -146,8 +171,8 @@ NODE kept 16, 18, and 17 members after its loss filter.
 
 | Window | Production | NODE filtered | NODE all-member | Floor (median) |
 |---|---|---|---|---|
-| Training, days 5-70 | 2.83 / 2.50 / 3.42 | 1.31 / 1.34 / 1.87 | 1.31 / 1.34 / 1.90 | 0.51 |
-| Days 70-110 | 16.96 / 11.38 / 8.33 | 11.15 / 9.75 / 13.61 | 11.15 / 9.75 / 14.27 | 2.46 |
+| Training, days 5-70 | 2.84 / 2.51 / 4.09 | 1.31 / 1.34 / 1.87 | 1.31 / 1.34 / 1.90 | 0.51 |
+| Days 70-110 | 17.11 / 11.20 / 4.90 | 11.15 / 9.75 / 13.61 | 11.15 / 9.75 / 14.27 | 2.46 |
 
 The NODE kept 20, 20, and 19 members, and production wins only on 53.
 
@@ -155,11 +180,11 @@ The NODE kept 20, 20, and 19 members, and production wins only on 53.
 
 | Future pulses | Production | NODE filtered | NODE all-member | Floor (median) |
 |---|---|---|---|---|
-| Training, days 5-70 | 2.80 / 1.77 / 1.75 | 1.48 / 1.32 / 1.41 | 1.46 / 1.32 / 1.41 | 0.51 |
-| 0.25x | 7.04 / 5.94 / 7.23 | 28.02 / 26.65 / 24.10 | 24.98 / 26.65 / 24.10 | 2.85 |
-| 0.5x (unchanged) | 4.78 / 6.02 / 6.76 | 14.15 / 13.87 / 11.64 | 11.76 / 13.87 / 11.64 | 2.54 |
-| 0.75x | 4.16 / 6.53 / 6.48 | 10.66 / 11.36 / 13.84 | 12.06 / 11.36 / 13.84 | 2.30 |
-| 1x | 4.64 / 7.03 / 6.32 | 23.97 / 23.57 / 27.59 | 26.01 / 23.57 / 27.59 | 2.10 |
+| Training, days 5-70 | 2.88 / 1.76 / 1.76 | 1.48 / 1.32 / 1.41 | 1.46 / 1.32 / 1.41 | 0.51 |
+| 0.25x | 7.41 / 4.99 / 6.66 | 28.02 / 26.65 / 24.10 | 24.98 / 26.65 / 24.10 | 2.85 |
+| 0.5x (unchanged) | 4.99 / 5.60 / 6.72 | 14.15 / 13.87 / 11.64 | 11.76 / 13.87 / 11.64 | 2.54 |
+| 0.75x | 4.38 / 6.48 / 6.93 | 10.66 / 11.36 / 13.84 | 12.06 / 11.36 / 13.84 | 2.30 |
+| 1x | 4.90 / 7.14 / 7.08 | 23.97 / 23.57 / 27.59 | 26.01 / 23.57 / 27.59 | 2.10 |
 
 Production wins every seed at every strength against both centers. The NODE
 kept 19, 20, and 20 members. Every frozen confirmation check passes at every
@@ -167,7 +192,7 @@ strength:
 
 - production median at most 15% and every seed at most 25%;
 - median paired ratio at most 0.90 against both NODE centers (observed
-  0.23-0.47);
+  0.26-0.50);
 - at least two of three wins (observed 3/3).
 
 The treatment effect is the change from the unchanged arm after day 80. The
@@ -176,9 +201,9 @@ Gain is the predicted day-110 change divided by the true one.
 
 | Effect versus 0.5x | Production error | Production gain | NODE filtered error | NODE gain |
 |---|---|---|---|---|
-| 0.25x | 21.72 / 13.90 / 13.90 | 1.07 / 0.96 / 0.87 | 98.71 / 94.75 / 95.98 | -0.03 / 0.01 / -0.02 |
-| 0.75x | 16.49 / 10.58 / 12.57 | 1.02 / 0.92 / 0.83 | 100.52 / 95.03 / 94.97 | -0.02 / 0.01 / -0.02 |
-| 1x | 14.73 / 9.62 / 12.29 | 1.00 / 0.91 / 0.83 | 100.03 / 94.86 / 94.52 | -0.00 / 0.02 / -0.03 |
+| 0.25x | 23.05 / 13.00 / 12.93 | 1.11 / 1.00 / 0.90 | 98.71 / 94.75 / 95.98 | -0.03 / 0.01 / -0.02 |
+| 0.75x | 17.20 / 8.88 / 11.01 | 1.05 / 0.96 / 0.87 | 100.52 / 95.03 / 94.97 | -0.02 / 0.01 / -0.02 |
+| 1x | 15.21 / 7.74 / 10.62 | 1.04 / 0.94 / 0.86 | 100.03 / 94.86 / 94.52 | -0.00 / 0.02 / -0.03 |
 
 ## The unchanged regimen on every chemo acquisition
 
@@ -188,35 +213,37 @@ day-110 column is the predicted over the true tumor burden.
 
 | Acquisition | Role | Production | NODE filtered | NODE all-member | Floor | Day-110 burden |
 |---|---|---|---|---|---|---|
-| 45 | development | 7.04 | 9.84 | 10.29 | 2.65 | 0.87 |
-| 48 | multi-dose | 4.78 | 14.15 | 11.76 | 2.55 | 0.97 |
-| 49 | multi-dose | 6.02 | 13.87 | 13.87 | 2.54 | 0.90 |
-| 50 | multi-dose | 6.76 | 11.64 | 11.64 | 2.53 | 0.88 |
-| 51 | single-dose | 16.96 | 11.15 | 11.15 | 2.46 | 0.72 |
-| 52 | single-dose | 11.38 | 9.75 | 9.75 | 2.59 | 0.82 |
-| 53 | single-dose | 8.33 | 13.61 | 14.27 | 2.46 | 0.89 |
+| 45 | development | 6.90 | 9.84 | 10.29 | 2.65 | 0.87 |
+| 48 | multi-dose | 4.99 | 14.15 | 11.76 | 2.55 | 1.00 |
+| 49 | multi-dose | 5.60 | 13.87 | 13.87 | 2.54 | 0.92 |
+| 50 | multi-dose | 6.72 | 11.64 | 11.64 | 2.53 | 0.89 |
+| 51 | single-dose | 17.11 | 11.15 | 11.15 | 2.46 | 0.72 |
+| 52 | single-dose | 11.20 | 9.75 | 9.75 | 2.59 | 0.83 |
+| 53 | single-dose | 4.90 | 13.61 | 14.27 | 2.46 | 0.96 |
 
-Over the six reported acquisitions (48-53), production's median is 7.55%.
+Over the six reported acquisitions (48-53), production's median is 6.16%.
 The NODE's is 12.62% filtered and 11.70% all-member. Production is lower on
-four of the six, with median paired ratios of 0.60 and 0.58.
+four of the six, with median paired ratios of 0.49 and 0.50.
 
 Production's error varies much more between acquisitions than the NODE's.
-On every acquisition it under-predicts the day-110 burden, most on 51 and 52.
-There it recovers only 54% and 63% of the true regrowth between the day-80
-and day-100 pulses, against 69-90% on 48, 49, and 53. The training fit does
-not single them out: 2.83% and 2.50% on 51 and 52, against 2.80% on 48
-(forecast 4.78%) and 3.42% on 53 (forecast 8.33%).
+On every acquisition it under-predicts the day-110 burden (on 48 by 0.1%),
+most on 51 and 52. Between the day-80 and day-100 pulses, the rise of the
+burden from its post-pulse minimum to just before day 100, it recovers only
+45% and 67% of the true regrowth there, against 76-94% on the other five
+acquisitions. The training fit does not single them out: 2.84% and 2.51% on
+51 and 52, against 2.88% on 48 (forecast 4.99%) and 4.09% on 53 (forecast
+4.90%).
 
 Post hoc diagnostics on 51 and 52:
 
 - Starting the fitted ROMs from the noise-free reduced initial state changes
-  every unchanged-regimen error by at most 0.09 points (51: 16.93%, 52:
-  11.44%), so the noisy first scan is not the cause.
-- On 51 and 52 the GP settles at a longer second-mode length-scale (6.2 and
-  5.9 days, against 4.3-4.7 on the other five acquisitions) and the largest
-  fitted noise in the first two modes. Their first-mode length-scales
-  (2.0-2.1 days) do not stand out: 49 and 53 have 2.0 and 2.3 days, with errors
-  of 6.02% and 8.33%.
+  every unchanged-regimen error by at most 0.15 points (51: 17.08%, 52:
+  11.27%), so the noisy first scan is not the cause.
+- Under the earlier prior, 51 and 52 had the longest second-mode GP
+  length-scales (6.2 and 5.9 days, against 4.3-4.7). Under the current prior
+  that no longer holds (51: 6.5 days, 52: 3.3, the others 2.8-5.0). Both have
+  the largest fitted first-mode noise (4.1 and 4.2, against 0.07-3.3), but
+  49 is close (3.3) with an error of 5.60%.
 
 With seven acquisitions this is a post hoc association, not a validated
 predictor, and no setting was changed because of it.
@@ -227,21 +254,21 @@ Production scores 64 posterior draws per arm. These are empirical draw
 bands, not calibrated uncertainty.
 
 - **Completion:** every draw completes for every arm and acquisition.
-- **Field error:** every growth draw is at most 9.88% and every multi-dose
-  draw at most 24.94%. On single-dose, 59, 63, and 64 of 64 draws are at most
-  25% (worst 36.14%).
-- **Growth burden coverage:** the 90% band contains the true burden at 11, 12,
-  and 13 of 105 forecast queries.
-- **Single-dose burden coverage:** 4, 0, and 0 of 152 queries.
+- **Field error:** every growth draw is at most 10.34%. Every multi-dose draw
+  is at most 25.09%, and one (on 49 at 1x) exceeds 25%. On single-dose, 59,
+  62, and 64 of 64 draws are at most 25% (worst 33.76%).
+- **Growth burden coverage:** the 90% band contains the true burden at all
+  105 forecast queries on every acquisition.
+- **Single-dose burden coverage:** 3, 0, and 36 of 152 queries.
 - **Multi-dose burden coverage** (0.25x / 0.5x / 0.75x / 1x, out of 152):
   - 48: 152 / 152 / 152 / 152;
-  - 49: 152 / 71 / 122 / 151;
-  - 50: 0 / 0 / 35 / 79.
+  - 49: 152 / 152 / 151 / 152;
+  - 50: 0 / 0 / 13 / 46.
 - **Treatment-effect direction:** on every multi-dose acquisition and changed
   strength, every draw has the correct sign at all 114 meaningful queries
   after day 80.
-- **Treatment-effect gains:** 0.68-1.20 per draw.
-- **Effect-band coverage** (out of 114): 113 on 48, 109-111 on 49, and 1-11
+- **Treatment-effect gains:** 0.69-1.29 per draw.
+- **Effect-band coverage** (out of 114): 98-114 on 48, 112 on 49, and 2-58
   on 50.
 
 ## Interpretation and limitations
@@ -250,7 +277,7 @@ bands, not calibrated uncertainty.
   mostly on the unchanged regimen. With a clean nominal basis, production's
   single-dose error was 5.31-5.51% on 45-47, against NODE 9.90-10.04%. With
   segmented scans and each acquisition's own basis, the same task spans
-  4.78-16.96% for production and 9.75-14.15% for the NODE.
+  4.90-17.11% for production and 9.75-14.15% for the NODE.
 - Production is more accurate on every acquisition for untreated growth and
   for each of the three changed doses. The NODE, trained on one input
   history, carries almost no dose dependence.
@@ -264,7 +291,9 @@ bands, not calibrated uncertainty.
   - the chemo basis was chosen by production's accuracy on development
     acquisition 45;
   - the growth rank cap was introduced after rank 4 failed on reported
-    acquisition 42, although the cap itself is a noise criterion.
+    acquisition 42, although the cap itself is a noise criterion;
+  - the operator prior and GP nugget were replaced after an ablation that
+    included the reported acquisitions.
 - The NODE shares the basis but was not tuned for it. Input-structured or
   multi-dose-trained NODE variants were not evaluated.
 - Production draw bands are not calibrated uncertainty (see above).

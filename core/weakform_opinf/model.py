@@ -37,6 +37,54 @@ def _block_id_from_rom(rom):
     return block_id, m_total, len(rom.model.operators)
 
 
+def _column_degrees(rom, num_modes, num_inputs):
+    """State and input polynomial degree of every operator column, read off by
+    doubling the states (inputs) in the ROM's own data-matrix assembly."""
+    rng = np.random.default_rng(0)
+    q = rng.uniform(0.5, 1.5, size=(num_modes, 4))
+    u = None if num_inputs == 0 else rng.uniform(0.5, 1.5, size=(num_inputs, 4))
+
+    def feats(qq, uu):
+        return np.asarray(rom.model._assemble_data_matrix(
+            jnp.asarray(qq), inputs=None if uu is None else jnp.asarray(uu)), dtype=float)
+
+    base = feats(q, u)
+    dq = np.log2(feats(2 * q, u) / base)
+    du = np.zeros_like(dq) if u is None else np.log2(feats(q, 2 * u) / base)
+    pq, pu = np.round(np.median(dq, axis=0)), np.round(np.median(du, axis=0))
+    if not (np.allclose(dq, pq[None], atol=1e-3) and np.allclose(du, pu[None], atol=1e-3)):
+        raise ValueError("The nondimensional operator prior needs monomial operator columns")
+    return pq.astype(int), pu.astype(int)
+
+
+def nondimensional_column_scale(rom, trajectories, num_modes):
+    """Operator prior scale s_j = S^(1-p_j) U^(-q_j) / T of every column.
+
+    With time measured in units of the training window T, the reduced state in
+    units of its RMS size S and the input in units of its RMS size U, every
+    operator entry is O(1); s_j converts that unit scale back to the data's
+    units (p_j, q_j = state/input degree of column j). Returns (s, info).
+    """
+    T = float(np.mean([float(tr["t_sampled"][-1] - tr["t_sampled"][0]) for tr in trajectories]))
+    Y = np.concatenate([np.asarray(tr["snapshots_comp"], dtype=float) for tr in trajectories], axis=1)
+    S = float(np.sqrt(np.mean(Y ** 2)))
+    inputs = [tr.get("inputs_eval") for tr in trajectories]
+    if all(u is None for u in inputs):
+        p, U = 0, 1.0
+    elif any(u is None for u in inputs):
+        raise ValueError("Either every trajectory or none must supply inputs_eval")
+    else:
+        stacked = np.concatenate([np.atleast_2d(np.asarray(u, dtype=float)) for u in inputs], axis=1)
+        p, U = stacked.shape[0], float(np.sqrt(np.mean(stacked ** 2)))
+    if not all(np.isfinite(x) and x > 0 for x in (T, S, U)):
+        raise ValueError(f"The nondimensional operator prior needs positive scales (T={T}, S={S}, U={U})")
+    pq, pu = _column_degrees(rom, num_modes, p)
+    scale = S ** (1.0 - pq) * U ** (-pu.astype(float)) / T
+    info = dict(rule="nondimensional", T=T, S=S, U=U,
+                state_degree=pq.tolist(), input_degree=pu.tolist())
+    return scale, info
+
+
 def build_model(rom, trajectories, cfg):
     """Build the marginalised-O + weak-form NumPyro model.
 
@@ -60,7 +108,10 @@ def build_model(rom, trajectories, cfg):
     -------
     model : numpyro model over GP hyperparameters θ only.
     posterior_O_fn : jitted closure (theta_stacked, gamma2, sigma_O, tau_block)
-        → (μ_O, C_O) with C_O C_Oᵀ = Σ_O, stacked over modes.
+        → (μ_O, C_O) with C_O C_Oᵀ = Σ_O, stacked over modes. Under the
+        nondimensional prior (cfg.sigma_O None) ``tau_block`` holds the block
+        multipliers κ_b (latent ``log_tau_block`` = log κ_b) and ``sigma_O`` is
+        unused; ``tau_block=None`` means the prior centre.
     time_evals : list of np.ndarray, per-trajectory eval grids.
     prior_info : dict of representative prior locations (diagnostics).
     """
@@ -75,8 +126,22 @@ def build_model(rom, trajectories, cfg):
 
     block_id, m_total, n_blocks = _block_id_from_rom(rom)
     block_id_jnp = jnp.asarray(block_id)
-    prior_prec_from_tau = _ev.make_prior_prec_from_tau(block_id_jnp)
-    inv_prec_vec = jnp.full(m_total, 1.0 / (cfg.sigma_O ** 2))
+    nondim = cfg.sigma_O is None
+    if nondim:
+        col_scale, operator_prior = nondimensional_column_scale(rom, trajectories, num_modes)
+        operator_prior["block_scale"] = [float(col_scale[block_id == b][0]) for b in range(n_blocks)]
+        col_scale_jnp = jnp.asarray(col_scale)
+
+        def prior_prec_from_tau(kappa_block):
+            var = kappa_block[block_id_jnp] ** 2 * col_scale_jnp ** 2
+            return 1.0 / var, jnp.sum(jnp.log(var))
+
+        log_tau_center = 0.0
+    else:
+        operator_prior = dict(rule="sigma_O", sigma_O=float(cfg.sigma_O))
+        prior_prec_from_tau = _ev.make_prior_prec_from_tau(block_id_jnp)
+        log_tau_center = jnp.log(cfg.sigma_O)
+        inv_prec_vec = jnp.full(m_total, 1.0 / (cfg.sigma_O ** 2))
 
     # ── Per-trajectory precompute: eval grid, GP conditional, test funcs ──
     traj_ctx = []
@@ -172,9 +237,11 @@ def build_model(rom, trajectories, cfg):
         if cfg.op_prior_mode == "block_hier":
             log_tau = numpyro.sample(
                 "log_tau_block",
-                dist.Normal(jnp.log(cfg.sigma_O) * jnp.ones(n_blocks),
+                dist.Normal(log_tau_center * jnp.ones(n_blocks),
                             cfg.hier_tau_scale))
             prior_prec, log_prior_cov = prior_prec_from_tau(jnp.exp(log_tau))
+        elif nondim:
+            prior_prec, log_prior_cov = prior_prec_from_tau(jnp.ones(n_blocks))
         else:
             prior_prec = inv_prec_vec
             log_prior_cov = -jnp.sum(jnp.log(inv_prec_vec))
@@ -205,8 +272,11 @@ def build_model(rom, trajectories, cfg):
     def posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None):
         """Closed-form O posterior given θ. ``theta_stacked`` is
         (ells, sig2s, nus) each shaped (num_traj, num_modes)."""
-        inv_sO2 = 1.0 / (sigma_O_val ** 2 + 1e-12)
-        if tau_block is None:
+        if nondim:
+            prior_prec_vec, _ = prior_prec_from_tau(
+                jnp.ones(n_blocks) if tau_block is None else tau_block)
+        elif tau_block is None:
+            inv_sO2 = 1.0 / (sigma_O_val ** 2 + 1e-12)
             prior_prec_vec = inv_sO2 * jnp.ones(m_total)
         else:
             prior_prec_vec, _ = prior_prec_from_tau(tau_block)
@@ -234,5 +304,6 @@ def build_model(rom, trajectories, cfg):
         nu=[float(np.exp(traj_ctx[0]["locs"]["log_nu_locs"][i]))
             for i in range(num_modes)],
         num_traj=num_traj, m_total=m_total, n_blocks=n_blocks,
+        operator_prior=operator_prior,
     )
     return model, posterior_O_fn, time_evals, prior_info

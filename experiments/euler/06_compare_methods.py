@@ -4,6 +4,8 @@
 Loads .npz predictions from each method and creates comparison plots:
   - Overlaid full-order error curves (ROM error, projection error, excess)
   - Summary bar charts (train error, pred error, stability)
+  - Decoded velocity, pressure and specific-volume fields at training and
+    forecast times (field_comparison.png; the paper figure for sparse_low_noise)
 
 Usage:
     python 06_compare_methods.py                    # all regimes
@@ -99,7 +101,7 @@ def load_method_data(schema_name, method):
 
 
 def generate_shared_data(schema):
-    """Re-generate deterministic data to obtain basis and true_states."""
+    """Re-generate the deterministic training data, basis and true states."""
     np.random.seed(SEED)
     num_samples = schema["NUM_SAMPLES"]
     noise_level = schema["NOISE_LEVEL"]
@@ -109,7 +111,64 @@ def generate_shared_data(schema):
     )
     basis = Basis(num_vectors=NUM_MODES)
     basis.fit(snaps_samp)
-    return t_full, true_states, basis
+    return t_full, true_states, basis, t_samp, snaps_samp
+
+
+FIELD_TIMES = (0.0, 0.03, 0.06, 0.09, 0.12, 0.15)
+FIELD_LABELS = (r"Velocity $v$", r"Pressure $p$", r"Specific volume $1/\rho$")
+
+
+def _field_bands(rom_solves, basis, index):
+    """Median and 5-95% band of the decoded fields at one prediction time."""
+    fields = basis.decompress(np.asarray(rom_solves[:, :, index], dtype=float).T).T
+    return np.nanpercentile(fields, [50, 5, 95], axis=0)
+
+
+def plot_field_comparison(methods_data, basis, t_full, true_states, t_samp, snaps_samp,
+                          title_suffix, save_path):
+    """Truth, both methods' decoded median and 5-95% band, and the noisy data, at FIELD_TIMES."""
+    x = config.spatial_domain
+    nx = len(x)
+    spacing = float(np.mean(np.diff(t_samp)))
+    fig, axes = plt.subplots(3, len(FIELD_TIMES), figsize=(2.6 * len(FIELD_TIMES), 7.2), sharex=True)
+    for col, t_snap in enumerate(FIELD_TIMES):
+        truth = true_states[:, int(np.argmin(np.abs(t_full - t_snap)))]
+        j = int(np.argmin(np.abs(t_samp - t_snap)))
+        noisy = snaps_samp[:, j] if abs(t_samp[j] - t_snap) <= spacing else None
+        bands = [(md, _field_bands(md["rom_solves"], basis, int(np.argmin(np.abs(md["t_pred"] - t_snap)))))
+                 for md in methods_data]
+        for row in range(3):
+            ax, block = axes[row, col], slice(row * nx, (row + 1) * nx)
+            shown = [truth[block]] + [median[block] for _, (median, _, _) in bands]
+            if noisy is not None:
+                shown.append(noisy[block])
+                ax.plot(x, noisy[block], ls="none", marker=".", ms=2.5, color="0.55", alpha=0.5,
+                        label="Noisy training data")
+            for md, (median, low, high) in bands:
+                ax.fill_between(x, low[block], high[block], color=md["color"], alpha=0.2, lw=0,
+                                label=f"{md['label']} 5–95%")
+                ax.plot(x, median[block], color=md["color"], ls=md["linestyle"], lw=1.3,
+                        label=f"{md['label']} median")
+            ax.plot(x, truth[block], color="black", lw=1.5, label="Truth")
+            # Limits follow the truth, data and medians; wider bands are clipped at the frame.
+            low_y, high_y = np.nanmin(np.concatenate(shown)), np.nanmax(np.concatenate(shown))
+            pad = 0.15 * (high_y - low_y)
+            ax.set_ylim(low_y - pad, high_y + pad)
+            if col == 0:
+                ax.set_ylabel(FIELD_LABELS[row])
+            if row == 2:
+                ax.set_xlabel("$x$")
+        phase = "forecast" if t_snap > TRAINING_SPAN[1] else "training window"
+        axes[0, col].set_title(f"$t = {t_snap:.2f}$ ({phase})", fontsize=10)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    fig.legend(unique.values(), unique.keys(), loc="lower center", ncol=len(unique), fontsize=9,
+               bbox_to_anchor=(0.5, -0.01), frameon=False)
+    fig.suptitle(f"Compressible Euler — {title_suffix}", fontsize=12)
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {save_path}")
 
 
 def compute_errors(rom_solves, t_pred, basis, t_full, true_states):
@@ -145,7 +204,12 @@ def compare_regime(schema):
 
     # Re-generate shared data (deterministic)
     print("  Regenerating shared data (basis + true states)…")
-    t_full, true_states, basis = generate_shared_data(schema)
+    t_full, true_states, basis, t_samp, snaps_samp = generate_shared_data(schema)
+    saved_path = os.path.join(SCRIPT_DIR, "results", "comparison", name, "04_unified.npz")
+    if os.path.exists(saved_path):
+        saved = np.load(saved_path)
+        if "snaps_comp" in saved and not np.allclose(basis.compress(snaps_samp), saved["snaps_comp"]):
+            raise RuntimeError(f"Regenerated training data for {name} differ from the saved 04_unified run.")
 
     # Compute full-order errors for each method
     t_pred = methods_data[0]["t_pred"]
@@ -180,6 +244,13 @@ def compare_regime(schema):
         methods_data,
         title=f"Method Comparison — {label}",
         png_path=os.path.join(out_dir, "metrics_table.png"),
+    )
+
+    # Plot 4: decoded fields at training and forecast times (paper figure for sparse_low_noise)
+    plot_field_comparison(
+        methods_data, basis, t_full, true_states, t_samp, snaps_samp,
+        title_suffix=label,
+        save_path=os.path.join(out_dir, "field_comparison.png"),
     )
 
     return methods_data

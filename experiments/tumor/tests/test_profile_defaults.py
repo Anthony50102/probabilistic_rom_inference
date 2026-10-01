@@ -22,7 +22,8 @@ class ProfileDefaultTests(unittest.TestCase):
         cfg = module.make_config(SCHEMAS[0])
         self.assertFalse(cfg.gp_input_trend)
         self.assertEqual(cfg.gp_noise_prior, "spectrum")
-        self.assertEqual(cfg.gp_jitter_rel, .001)
+        self.assertIsNone(cfg.gp_jitter_rel)
+        self.assertIsNone(cfg.sigma_O)
         self.assertEqual(cfg.mll_weight, .1)
         self.assertEqual(cfg.operator_solver, "normal")
         self.assertEqual(cfg.precision, "default")
@@ -31,6 +32,7 @@ class ProfileDefaultTests(unittest.TestCase):
         self.assertTrue(experimental.gp_input_trend)
         self.assertEqual(experimental.gp_noise_prior, "measurement")
         self.assertEqual(experimental.operator_solver, "qr")
+        self.assertEqual(experimental.sigma_O, 5.)
 
     def test_report_defaults_and_explicit_experimental_directory(self):
         module = load_script("profile_defaults_compare", "06_compare_chemo.py")

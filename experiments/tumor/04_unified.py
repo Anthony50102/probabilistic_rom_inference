@@ -53,7 +53,6 @@ def make_config(schema):
         deriv_weight=1.0,
         weakform_weight=8.0,
         mll_weight=0.1,
-        sigma_O=5.0,
         window_size=20,
         bump_p=6,
         weakform_mode="ibp",
@@ -67,7 +66,6 @@ def make_config(schema):
         ic_uncertainty=True,
         ic_scale=1.0,
         num_pred_points=400,
-        gp_jitter_rel=1e-3,
         seed=42,
     )
 

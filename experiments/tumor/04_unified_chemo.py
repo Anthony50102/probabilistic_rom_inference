@@ -54,7 +54,8 @@ CHEMO_FOM_PATH = FOM_DATA_PATH
 
 
 def make_config(schema, profile="historical"):
-    """Original chemo model by default; the input-aware model is experimental."""
+    """Reported (production) chemo model by default; the input-aware model is
+    experimental and keeps the dimensional operator prior it was studied with."""
     cfg = WeakFormConfig(
         operators="cABN",
         num_modes=4,
@@ -63,7 +64,6 @@ def make_config(schema, profile="historical"):
         deriv_weight=1.0,
         weakform_weight=8.0,
         mll_weight=0.1,
-        sigma_O=5.0,
         window_size=20,
         bump_p=6,
         weakform_mode="ibp",
@@ -77,7 +77,6 @@ def make_config(schema, profile="historical"):
         ic_uncertainty=True,
         ic_scale=1.0,
         num_pred_points=400,
-        gp_jitter_rel=1e-3,
         seed=42,
     )
     if profile == "historical":
@@ -85,7 +84,7 @@ def make_config(schema, profile="historical"):
     if profile == "input-aware":
         return replace(
             cfg, mll_weight=1., operator_solver="qr", precision="float64",
-            gp_input_trend=True, gp_noise_prior="measurement", gp_jitter_rel=None)
+            gp_input_trend=True, gp_noise_prior="measurement", sigma_O=5.0)
     raise ValueError(f"Unknown chemo inference profile: {profile}")
 
 

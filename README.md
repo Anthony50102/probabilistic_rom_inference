@@ -99,6 +99,18 @@ NUTS is also supported. GP priors are spectrum-anchored, not MLE-fitted; operato
 priors are zero-mean, including heat (no least-squares prior center or stability
 shift).
 
+The operator prior is nondimensional and the same in every experiment: entry
+`(i, j)` has prior standard deviation `kappa_b * s_j`, with `log kappa_b ~ N(0, 3^2)`
+per operator block and `s_j = S^(1 - p_j) U^(-q_j) / T`, where `p_j`, `q_j` are the
+state and input degrees of column `j`, `T` the training window, and `S`, `U` the RMS
+sizes of the reduced training coordinates and the input
+(`nondimensional_column_scale`). The GP kernels use the round-off nugget
+`n * eps * sigma^2` (`n` training times, `eps` machine epsilon), also for the
+initial-condition GP. Both are the `WeakFormConfig` defaults (`sigma_O=None`,
+`gp_jitter_rel=None`); a float restores the earlier hand-set dimensional prior
+centre or relative jitter `max(1e-5, rel * sigma^2)`, which only the earlier
+oracle-masked tumor design and the experimental input-aware chemo profile pin.
+
 Pointwise derivative constraints are combined with state-based weak-form
 constraints via integration by parts. The default derivative and weak-form
 covariance blocks are diagonal, with additive model-error slack; full blocks
@@ -121,7 +133,7 @@ input operators or introduce additional observations.
 
 `gp_noise_prior="measurement"` anchors noise priors to supplied projected
 measurement variances rather than a fraction of signal energy.
-`gp_jitter_rel=None` selects a roundoff-scale nugget; `precision="float64"`
+`precision="float64"`
 applies double precision locally to inference/prediction without changing the
 Neural ODE's precision. These choices are explicit configuration options.
 Saved Bayesian fits now retain GP hyperparameter draws for diagnosis.
@@ -312,9 +324,9 @@ acquisitions: 0.3% of the field energy missed, three false-positive voxels in
 
 | Case | Seeds | POD (result tag) | How it was fixed |
 |---|---|---|---|
-| `untreated-growth` | 42-44 | mean-centered rank 3 (`segmented_observed_mean_r3`) | The threshold admits three modes. The earlier rank 4 added a noise mode and diverged on acquisition 42 (operator eigenvalue +0.76/day). |
-| `single-dose-chemo` | 51-53 | uncentered rank 4 (`segmented_observed_none_r4`) | The multi-dose basis; the unchanged regimen is the multi-dose 0.5x arm. The declared mean-centered rank 4 failed on 45-47 (30-121% error), so the task moved to fresh acquisitions. |
-| `multi-dose-chemo` | 48-50 | uncentered rank 4 (`segmented_observed_none_r4`) | Chosen among ranks 3 and 4, centered or not, by production's multi-dose error on development acquisition 45, then frozen before 48-50 were fitted. |
+| `untreated-growth` | 42-44 | mean-centered rank 3 (`segmented_observed_mean_r3`) | The threshold admits three modes. The earlier rank 4 added a noise mode and diverged on acquisition 42 (operator eigenvalue +1.0/day). |
+| `single-dose-chemo` | 51-53 | uncentered rank 4 (`segmented_observed_none_r4`) | The multi-dose basis; the unchanged regimen is the multi-dose 0.5x arm. The declared mean-centered rank 4 failed on 45-47 (27-104% error), so the task moved to fresh acquisitions. |
+| `multi-dose-chemo` | 48-50 | uncentered rank 4 (`segmented_observed_none_r4`) | Chosen among ranks 3 and 4, centered or not, by production's multi-dose error on development acquisition 45, then frozen before 48-50 were fitted. The choice was made under the earlier hand-set prior; the same rule picks it again under the current one. |
 
 Each runner accepts a case (`untreated-growth`, `single-dose-chemo`,
 `multi-dose-chemo`), `--seeds`, `--observation`, the `--pod-*` overrides of
@@ -341,16 +353,16 @@ runners apply them before importing NumPy.
 
 | Benchmark (seeds) | Production | Neural ODE |
 |---|---|---|
-| Untreated growth, days 60-90 (42-44) | 7.11% | 12.33% (all-member median) |
-| Single-dose chemo, days 70-110 (51-53) | 11.38% | 11.15% (loss-filtered median) |
-| Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 7.04/6.02/6.48/6.32% | 26.65/13.87/11.36/23.97% (loss-filtered median) |
+| Untreated growth, days 60-90 (42-44) | 7.45% | 12.33% (all-member median) |
+| Single-dose chemo, days 70-110 (51-53) | 11.20% | 11.15% (loss-filtered median) |
+| Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 6.66/5.60/6.48/7.08% | 26.65/13.87/11.36/23.97% (loss-filtered median) |
 
 Values are medians over seeds of the relative full-field forecast error,
 including the POD residual. Production is lower on every acquisition for
 untreated growth and at every multi-dose strength, but not for the
 single-dose continuation, where the NODE is lower on two of three
 acquisitions. That forecast is also the multi-dose 0.5x arm; over all six
-reported chemo acquisitions production gives 4.78-16.96% (median 7.55%) and
+reported chemo acquisitions production gives 4.90-17.11% (median 6.16%) and
 the NODE 9.75-14.15% (median 12.62%). Figure bands are empirical
 posterior-draw bands, not calibrated uncertainty. The
 [segmented benchmark record](experiments/TUMOR_SEGMENTED_BENCHMARKS.md) has
@@ -363,7 +375,8 @@ its own seeds (45-47 for single-dose), untagged output names
 (`comparison.json`, `figures/benchmarks/<case>/`), and results. With it the
 runners reproduce the sealed studies: all nine acquisitions bitwise, and the
 production fits, 20 growth Neural-ODE members, and every evaluation score for
-seeds 43, 46, and 48; chemo Neural-ODE training matches the sealed members
+seeds 43, 46, and 48 (it pins the earlier hand-set prior `sigma_O=5.0` and
+`gp_jitter_rel=1e-3` for this); chemo Neural-ODE training matches the sealed members
 bitwise through all 6000 updates (checked for member 0 of seeds 46 and 48).
 The locally reported chemo ensembles reuse those sealed members rather than
 retraining them. Its idealized results were:

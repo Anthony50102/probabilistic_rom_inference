@@ -30,13 +30,14 @@ def make_gp_conditional(time_sampled, jitter_rel=1e-4, *,
     vmapped batch version, with kernel distance matrices baked in for the
     given training/eval grids.
 
-    ``jitter_rel`` sets the relative kernel nugget
-    ``max(1e-5, σ²·jitter_rel)`` added to the training-kernel diagonal.
+    ``jitter_rel=None`` adds the round-off nugget ``n·ε·max diag K`` (ε the
+    machine epsilon of the working dtype) to the training-kernel diagonal; a
+    float selects the historical relative nugget ``max(1e-5, σ²·jitter_rel)``.
 
-    ``jitter_rel=None`` uses a dtype-aware roundoff nugget. ``feature_map``,
-    when supplied, maps evaluation times to training/evaluation trend features
-    and their evaluation derivatives. Their zero-mean Gaussian coefficients
-    have per-mode variances ``feature_variances`` and are marginalized exactly.
+    ``feature_map``, when supplied, maps evaluation times to training/evaluation
+    trend features and their evaluation derivatives. Their zero-mean Gaussian
+    coefficients have per-mode variances ``feature_variances`` and are
+    marginalized exactly.
     """
     t_train = jnp.asarray(time_sampled)
     n_train = len(t_train)
@@ -82,8 +83,9 @@ def make_gp_conditional(time_sampled, jitter_rel=1e-4, *,
                 if trend_variance is None:
                     raise ValueError("Single-mode trend conditionals require a coefficient variance")
                 prior_tt = prior_tt + trend_variance * feature_tt
-            jitter = (jnp.finfo(prior_tt.dtype).eps * n_train
-                      * jnp.maximum(jnp.max(jnp.diag(prior_tt)), 1.)
+            # Round-off level of K_tt: max diag K_tt is σ² for the stationary RBF kernel.
+            kernel_scale = sig2 if feature_map is None else jnp.max(jnp.diag(prior_tt))
+            jitter = (jnp.finfo(prior_tt.dtype).eps * n_train * kernel_scale
                       if jitter_rel is None else jnp.maximum(1e-5, sig2 * jitter_rel))
             K_tt = prior_tt + (nu + jitter) * I_train
             L = jnp.linalg.cholesky(K_tt)
