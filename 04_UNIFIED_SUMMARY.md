@@ -1,11 +1,11 @@
 # 04 Unified — Marginalised-O × Weak-Form Bayesian OpInf
 
-> Historical snapshot of the full-covariance implementation and its results.
-> The active method now lives in `core/weakform_opinf/`, uses integration by
-> parts and diagonal covariance blocks by default, and no longer uses
-> MLE-anchored priors or adaptive SNR mode selection. See `README.md` for the
-> current architecture. The metrics below predate the centralization and must
-> not be presented as current results.
+> The method lives in `core/weakform_opinf/` (see `README.md` for the
+> architecture and the shared `WeakFormConfig` defaults). The results below are
+> from the standardized-settings rerun (shared settings, QR operator solve,
+> per-experiment closure constant). The pre-standardization outputs are kept in
+> the `results_pre_standard_settings` folders and under the git tag
+> `pre-standard-settings`.
 
 `04_unified.py` is the active Bayesian OpInf method used across the PDE
 experiments. It combines Gaussian-process smoothing, weak-form constraints, and
@@ -81,25 +81,33 @@ structure, the data and the closure constant `gamma2_nd` differ.
 | Euler | `experiments/euler/04_unified.py` | `cAH` | Single-trajectory autonomous quadratic ROM, `r = 6`. |
 | Burgers 2D | `experiments/burgers_2d/04_unified.py` | `cAH` | Single-trajectory diffusion-reaction case, `r = 3`; modal variances spread over orders of magnitude. |
 | Heat | `experiments/heat/04_unified.py` | `cAHBN` | Multi-trajectory shared operator; input-dependent ROM; lifted/shifted basis, `r = 5`. |
-| Tumor | `experiments/tumor/04_unified.py` | `cA` | TumorTwin cached FOM data; autonomous growth; fixed number of modes. |
+| Tumor | `experiments/tumor/04_unified_benchmark.py` | `cA` / `cAN` | Three segmented TumorTwin tasks: untreated growth (acquisitions 42–44; `cA`, mean-centred `r = 3`) and single- and multi-dose chemotherapy (51–53 and 48–50; `cABN` requested; the uncentred `r = 4` basis gives `cAN` by the Galerkin rule in `benchmark_cases.galerkin_operators`). See `experiments/TUMOR_SEGMENTED_BENCHMARKS.md`. |
 
-## Verified 04 results
+## Current results
 
-These metrics are from the current saved `results/comparison/<schema>/04_unified.npz`
-files after rerunning the full-covariance derivative/weak-form implementation.
+Reduced-coordinate metrics recomputed from the saved
+`results/comparison/<schema>/04_unified.npz` and `05_neural_ode.npz` files by
+`experiments/aggregate_table.py` (`experiments/results/aggregate/`). Errors are
+relative errors of the median forecast against the reduced truth, excluding the
+POD residual; coverage is that of the 5–95% band over the forecast window
+(nominal 90%). Each regime is one noise realisation. Heat rows average the five
+training forcings; the held-out rows score the test forcing `(a, b) = (1.5, 0.5)`.
 
-| Experiment | Regime | Stability | Train error | Prediction error | CI coverage | Runtime |
-|---|---|---:|---:|---:|---:|---:|
-| Euler | dense low noise | 100.0% | 1.20% | 10.13% | 99.9% | 303s |
-| Euler | sparse low noise | 96.0% | 73.32% | 70.48% | 52.0% | 61s |
-| Euler | dense high noise | 100.0% | 40.28% | 72.26% | 53.0% | 323s |
-| Burgers 2D | dense medium noise | 39.5% | 0.90% | 2.93% | 95.9% | 31s |
-| Heat | sparse low noise | 100.0% | 3.83% | 6.01% | 68.2% | 134s |
-| Heat | sparse medium noise | 100.0% | 3.90% | 5.99% | 63.8% | 129s |
-| Heat | sparse high noise | 100.0% | 4.32% | 6.34% | 63.0% | 129s |
-| Tumor | dense low noise | 100.0% | 2.85% | 7.35% | 93.8% | 42s |
-| Tumor | dense medium noise | 100.0% | 3.42% | 4.60% | 65.0% | 33s |
-| Tumor | dense high noise | 100.0% | 6.89% | 15.81% | 51.9% | 28s |
+| Experiment | Regime | Stable | Train | Forecast | Coverage | NODE forecast | NODE coverage |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Euler | dense low noise | 100% | 1.21% | 7.89% | 98.0% | 55.85% | 41.3% |
+| Euler | sparse low noise | 100% | 3.77% | 22.26% | 80.3% | 22.39% | 94.9% |
+| Euler | dense high noise | 100% | 7.14% | 18.49% | 98.6% | 32.84% | 46.9% |
+| Heat | sparse low noise | 100% | 1.02% | 2.13% | 99.7% | 16.94% | 34.9% |
+| Heat | sparse medium noise | 100% | 1.42% | 2.69% | 100.0% | 17.10% | 42.8% |
+| Heat | sparse high noise | 100% | 2.30% | 3.52% | 99.1% | 19.28% | 36.8% |
+| Heat (held-out) | sparse low noise | 100% | 0.96% | 2.55% | 100.0% | 30.82% | 48.8% |
+| Heat (held-out) | sparse medium noise | 100% | 1.10% | 3.28% | 100.0% | 30.64% | 54.4% |
+| Heat (held-out) | sparse high noise | 100% | 1.62% | 3.88% | 100.0% | 32.25% | 58.6% |
+| Burgers 2D | dense medium noise | 99.5% | 0.36% | 2.83% | 100.0% | 25.13% | 12.0% |
+
+The tumor tasks are scored in the full-order field; their results are in
+`experiments/TUMOR_SEGMENTED_BENCHMARKS.md`.
 
 ## Plot regeneration
 
@@ -127,12 +135,12 @@ and uses the IC-by-mode trajectory grid instead.
 
 ## Notes and limitations
 
-- **Euler sparse/high-noise regimes** currently have high prediction error and
-  under-coverage despite stable solves.
-- **Burgers 2D** has low median error but low stable-solve fraction, indicating
-  heavy-tailed operator samples.
-- **Heat** is stable across all tested regimes but under-covers relative to the
-  nominal 90% interval.
-- **Tumor** performs well at low noise but under-covers at higher noise after
-  adaptive SNR-based mode truncation.
+- **Euler sparse low noise** is the weakest PDE regime: the forecast error is
+  level with the Neural ODE ensemble's and the band under-covers (80%). It is
+  also where the standardized settings lost most against the earlier hand-set
+  ones (16.7% before).
+- **Coverage** is mostly conservative (98–100%) on the PDE regimes; on the
+  tumor tasks the bands can under-cover badly (see the tumor document).
+- **Burgers 2D**: one of the 200 posterior draws is non-finite; the median and
+  band use the stable draws.
 - **FitzHugh-Nagumo** is not part of the active experiment set.

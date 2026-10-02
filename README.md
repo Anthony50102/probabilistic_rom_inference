@@ -149,11 +149,12 @@ PDE sampling times and noise, tumor acquisitions 45-47).
 The closure constant `c_γ` is the one per-experiment setting. It acts like the
 regularization parameter of deterministic OpInf: a larger `c_γ` loosens the
 dynamics constraints, widens the operator posterior and lets the evidence prune
-weakly supported blocks. It cannot be inferred. With the GPs free, the joint
+weakly supported blocks. It is not inferred. With the GPs free, the joint
 target is a pseudo-likelihood (the dynamics "observations" are functions of the
-GP hyperparameters) and increases without bound as `γ → 0`. With the GPs held
-at their marginal-likelihood fit, the operator evidence still prefers `γ → 0`
-on every PDE regime, heat included, although heat forecasts are worst at small
+GP hyperparameters) and on development data increased monotonically as `γ`
+decreased, down to the smallest value tried. With the GPs held
+at their marginal-likelihood fit, the operator evidence still prefers the
+smallest `γ` tried on every PDE regime, heat included, although heat forecasts are worst at small
 `γ`. No single value suited every benchmark either. On development data
 (geometric-mean forecast error, %) heat needs `c_γ ≈ 1` and 2D diffusion-reaction
 `c_γ ≈ 0.03`:
@@ -381,9 +382,9 @@ acquisitions: 0.3% of the field energy missed, three false-positive voxels in
 
 | Case | Seeds | POD (result tag) | How it was fixed |
 |---|---|---|---|
-| `untreated-growth` | 42-44 | mean-centered rank 3 (`segmented_observed_mean_r3`) | The threshold admits three modes. The earlier rank 4 added a noise mode and diverged on acquisition 42 (operator eigenvalue +1.0/day). |
-| `single-dose-chemo` | 51-53 | uncentered rank 4 (`segmented_observed_none_r4`) | The multi-dose basis; the unchanged regimen is the multi-dose 0.5x arm. The declared mean-centered rank 4 failed on 45-47 (27-104% error), so the task moved to fresh acquisitions. |
-| `multi-dose-chemo` | 48-50 | uncentered rank 4 (`segmented_observed_none_r4`) | Chosen among ranks 3 and 4, centered or not, by production's multi-dose error on development acquisition 45, then frozen before 48-50 were fitted. The choice was made under the earlier hand-set prior; the same rule picks it again under the current one. |
+| `untreated-growth` | 42-44 | mean-centered rank 3 (`segmented_observed_mean_r3`) | The threshold admits three modes. The earlier rank 4 added a noise mode and diverged on acquisition 42 (operator eigenvalue about +1/day); it still does under the current settings. |
+| `single-dose-chemo` | 51-53 | uncentered rank 4 (`segmented_observed_none_r4`) | The multi-dose basis; the unchanged regimen is the multi-dose 0.5x arm. The declared mean-centered rank 4 failed on 45-47 (27-104% error under the earlier hand-set settings, 10-40% under the current ones), so the task moved to fresh acquisitions. |
+| `multi-dose-chemo` | 48-50 | uncentered rank 4 (`segmented_observed_none_r4`) | Chosen among ranks 3 and 4, centered or not, by production's multi-dose error on development acquisition 45, then frozen before 48-50 were fitted. The choice was made under the earlier hand-set prior; the same rule picks it again under the nondimensional prior and under the standardized settings. |
 
 The chemo ROM keeps only the input blocks that Galerkin projection of the kill
 term `-α(t) u` produces (`benchmark_cases.galerkin_operators`): `N α q` with
@@ -420,18 +421,20 @@ runners apply them before importing NumPy.
 
 | Benchmark (seeds) | Production | Neural ODE |
 |---|---|---|
-| Untreated growth, days 60-90 (42-44) | 7.45% | 12.33% (all-member median) |
-| Single-dose chemo, days 70-110 (51-53) | 11.20% | 11.15% (loss-filtered median) |
-| Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 6.66/5.60/6.48/7.08% | 26.65/13.87/11.36/23.97% (loss-filtered median) |
+| Untreated growth, days 60-90 (42-44) | 7.32% | 12.33% (all-member median) |
+| Single-dose chemo, days 70-110 (51-53) | 18.99% | 11.15% (loss-filtered median) |
+| Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 8.84/8.53/8.43/8.23% | 26.65/13.87/11.36/23.97% (loss-filtered median) |
 
 Values are medians over seeds of the relative full-field forecast error,
 including the POD residual. Production is lower on every acquisition for
 untreated growth and at every multi-dose strength, but not for the
 single-dose continuation, where the NODE is lower on two of three
 acquisitions. That forecast is also the multi-dose 0.5x arm; over all six
-reported chemo acquisitions production gives 4.90-17.11% (median 6.16%) and
-the NODE 9.75-14.15% (median 12.62%). Figure bands are empirical
-posterior-draw bands, not calibrated uncertainty. The
+reported chemo acquisitions production gives 6.25-19.00% (median 10.84%,
+lower on four of six) and the NODE 9.75-14.15% (median 12.62%). These are
+the standardized-settings results; the earlier hand-set settings gave
+7.45%, 11.20%, and 6.66/5.60/6.48/7.08% (the `pre-standard-settings` tag).
+Figure bands are empirical posterior-draw bands, not calibrated uncertainty. The
 [segmented benchmark record](experiments/TUMOR_SEGMENTED_BENCHMARKS.md) has
 per-seed results, the development selection, and the limitations.
 
