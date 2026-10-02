@@ -28,11 +28,12 @@ class ClosureSlackTests(unittest.TestCase):
 
     def test_production_defaults(self):
         cfg = WeakFormConfig()
-        self.assertEqual((cfg.gamma2, cfg.weak_slack, cfg.operator_solver), (None, "grid", "qr"))
+        self.assertEqual((cfg.closure, cfg.gamma2, cfg.weak_slack, cfg.operator_solver),
+                         ("tempered", None, "grid", "qr"))
         self.assertEqual((cfg.mll_weight, cfg.deriv_weight, cfg.weakform_weight), (1., 1., 1.))
 
     def test_rule_scales_with_the_reference_rate(self):
-        cfg = WeakFormConfig(num_modes=2, gamma2_nd=.3)
+        cfg = WeakFormConfig(num_modes=2, gamma2_nd=.3, closure="slack")
         gamma2, info = closure_slack([dict(t_sampled=self.t, snapshots_comp=self.y)], cfg)
         S = np.sqrt(np.mean(self.y ** 2))
         self.assertAlmostEqual(gamma2, .3 * (S / 4.) ** 2)
@@ -43,7 +44,7 @@ class ClosureSlackTests(unittest.TestCase):
     def test_slack_settings_are_validated(self):
         for kwargs in (dict(gamma2=0.), dict(gamma2_nd=0.), dict(gamma2_nd=-1.), dict(weak_slack="radius")):
             with self.subTest(**kwargs), self.assertRaises(ValueError):
-                WeakFormConfig(**kwargs)
+                WeakFormConfig(closure="slack", **kwargs)
 
     def test_grid_slack_is_the_quadrature_variance(self):
         tf = build_test_functions(np.linspace(0., 3., 61), WeakFormConfig(window_size=5))
@@ -53,7 +54,7 @@ class ClosureSlackTests(unittest.TestCase):
         # Bumps vanish at the grid ends, so the quadrature variance is Δt ∫ψ².
         np.testing.assert_allclose(tf["quad_psi_sq"], .05 * np.asarray(tf["int_psi_sq"]), rtol=1e-5)
 
-    def test_default_operator_posterior_is_unit_invariant(self):
+    def test_slack_operator_posterior_is_unit_invariant(self):
         """Grid and support slack with the default QR solve are invariant; the legacy slack and the
         ridge of the normal-equation solver are not."""
         theta = (np.array([[.7, .9]]), np.array([[1.5, .8]]), np.array([[1e-4, 2e-4]]))
@@ -61,7 +62,7 @@ class ClosureSlackTests(unittest.TestCase):
 
         def nondimensional_mean(slack, solver, a, b):
             """Posterior operator mean in units of the rescaled data, mapped back to the original units."""
-            cfg = WeakFormConfig(num_modes=2, num_eval_points=40, window_size=5, weak_slack=slack,
+            cfg = WeakFormConfig(num_modes=2, num_eval_points=40, window_size=5, closure="slack", weak_slack=slack,
                                  precision="float64", **({} if solver is None else {"operator_solver": solver}))
             with pipeline.precision_context(cfg):
                 trajectory = dict(t_sampled=a * self.t, snapshots_comp=b * self.y)

@@ -8,9 +8,18 @@ Because the chemo input α(t) enters only as fixed data in the design matrix,
 the reduced dynamics stay linear in O whether or not inputs are present, so the
 closed-form operator marginalisation is identical for autonomous and
 input-driven ROMs.
+
+The derivative and weak-form rows are correlated functionals of one GP fit per
+mode, so treating them as independent observations overcounts their
+information. The default (``cfg.closure='tempered'``) enters each mode's rows
+as a power likelihood with exponent α_i = min(1, df_i / (n_e + K)), df_i the
+effective degrees of freedom of the mode's data-only GP smoother: no constant is
+selected per experiment and the cost is one extra GP-only fit.
 """
 
 from __future__ import annotations
+
+import time
 
 import numpy as np
 import jax
@@ -108,6 +117,110 @@ def nondimensional_column_scale(rom, trajectories, num_modes):
     return scale, info
 
 
+def _prior_locs(trajectory, cfg):
+    """Spectrum-anchored GP-hyperparameter prior locations of one trajectory."""
+    kwargs = {}
+    if cfg.gp_noise_prior == "measurement":
+        if "noise_variances" not in trajectory:
+            raise ValueError("Measurement-noise priors require trajectory noise_variances")
+        kwargs["noise_variances"] = trajectory["noise_variances"]
+    return _gp.spectrum_anchored_prior_locs(
+        trajectory["snapshots_comp"], np.asarray(trajectory["t_sampled"]), cfg.num_modes, cfg, **kwargs)
+
+
+def _sample_gp_hypers(locs, cfg):
+    """Per-trajectory, per-mode GP hyperparameters (ℓ, σ², ν) drawn from their
+    priors; a list over trajectories of (ells, sig2s, nus) stacks."""
+    theta = []
+    for ic, loc in enumerate(locs):
+        ells = jnp.stack([
+            numpyro.sample(f"lengthscale_{ic}_{i}",
+                           dist.LogNormal(loc["log_ell_loc"], loc["log_ell_scale"]))
+            for i in range(cfg.num_modes)])
+        sig2s = jnp.stack([
+            numpyro.sample(f"variance_{ic}_{i}",
+                           dist.LogNormal(loc["log_sig2_locs"][i], cfg.sig2_prior_scale))
+            for i in range(cfg.num_modes)])
+        nus = jnp.stack([
+            numpyro.sample(f"noise_{ic}_{i}",
+                           dist.LogNormal(loc["log_nu_locs"][i], cfg.nu_prior_scale))
+            for i in range(cfg.num_modes)])
+        theta.append((ells, sig2s, nus))
+    return theta
+
+
+def data_only_gp_fit(trajectories, time_evals, cfg):
+    """GP hyperparameters fitted to the data alone (float64): the MAP of their
+    priors times the GP marginal likelihood, without the operator evidence.
+    Returns a list over trajectories of (ells, sig2s, nus) arrays and the
+    optimiser's convergence record."""
+    from jax.flatten_util import ravel_pytree
+    from numpyro.infer import init_to_median
+    from numpyro.infer.util import initialize_model
+    from scipy.optimize import minimize
+
+    with jax.experimental.enable_x64():
+        locs = [_prior_locs(tr, cfg) for tr in trajectories]
+        batches = [_gp.trajectory_gp_conditional(tr, cfg)(te)[1]
+                   for tr, te in zip(trajectories, time_evals)]
+        observations = [jnp.asarray(tr["snapshots_comp"]) for tr in trajectories]
+
+        def gp_model():
+            total = 0.0
+            for (ells, sig2s, nus), batch, y in zip(_sample_gp_hypers(locs, cfg), batches, observations):
+                total = total + jnp.sum(batch(ells, sig2s, nus, y)[4])
+            if cfg.mll_weight > 0:
+                numpyro.factor("gp_mll", cfg.mll_weight * total)
+
+        init = initialize_model(jax.random.PRNGKey(0), gp_model,
+                                init_strategy=init_to_median(num_samples=15))
+        z0, unravel = ravel_pytree(init.param_info.z)
+        value_and_grad = jax.jit(jax.value_and_grad(lambda z: init.potential_fn(unravel(z))))
+
+        def objective(x):
+            value, grad = value_and_grad(jnp.asarray(x))
+            return float(value), np.asarray(grad, dtype=float)
+
+        fit = minimize(objective, np.asarray(z0, dtype=float), jac=True, method="L-BFGS-B",
+                       options={"maxiter": 5000})
+        # Positive hyperparameters are optimised as logarithms.
+        hyp = {k: np.exp(np.asarray(v, dtype=float)) for k, v in unravel(jnp.asarray(fit.x)).items()}
+    theta = [tuple(np.array([hyp[f"{kind}_{ic}_{i}"] for i in range(cfg.num_modes)])
+                   for kind in ("lengthscale", "variance", "noise"))
+             for ic in range(len(trajectories))]
+    return theta, dict(converged=bool(fit.success), iterations=int(fit.nit))
+
+
+def tempering_exponents(trajectories, time_evals, num_rows, cfg):
+    """Power-likelihood exponents α_i = min(1, df_i / (n_e + K)) per trajectory
+    and mode, and their provenance.
+
+    The n_e derivative and K weak-form rows of mode i are linear functionals of
+    one GP posterior mean, which carries df_i = tr K (K + νI)⁻¹ independent
+    pieces of information; weighting each row by α_i makes the rows count as
+    df_i observations instead of n_e + K. Uses the data-only GP fit, so the
+    exponents are fixed before the joint inference."""
+    started = time.time()
+    theta, fit = data_only_gp_fit(trajectories, time_evals, cfg)
+    df = [_gp.effective_dof(tr, cfg, *th) for tr, th in zip(trajectories, theta)]
+    alpha = [np.minimum(1.0, d / n) for d, n in zip(df, num_rows)]
+    info = dict(rule="tempered", gamma2=0.0, alpha=[a.tolist() for a in alpha],
+                df=[d.tolist() for d in df], rows=[int(n) for n in num_rows],
+                data_only_gp=dict(fit, seconds=round(time.time() - started, 2),
+                                  **{k: [th[j].tolist() for th in theta]
+                                     for j, k in enumerate(("ell", "sig2", "nu"))}))
+    return alpha, info
+
+
+def power_likelihood_correction(u, alpha):
+    """log of L^α / N(r; 0, u/α) for Gaussian rows of variance u (summed over
+    the trailing axis and modes): −½ Σ [(α − 1) log 2πu + log α]. Added to the
+    Gaussian evidence of the tempered rows it gives the power likelihood's
+    evidence exactly; the residual r cancels."""
+    alpha = jnp.broadcast_to(alpha, u.shape)
+    return -0.5 * jnp.sum((alpha - 1.0) * jnp.log(2 * jnp.pi * u) + jnp.log(alpha))
+
+
 def build_model(rom, trajectories, cfg):
     """Build the marginalised-O + weak-form NumPyro model.
 
@@ -138,7 +251,9 @@ def build_model(rom, trajectories, cfg):
         for the model) means the resolved slack ``prior_info["gamma2"]``.
     time_evals : list of np.ndarray, per-trajectory eval grids.
     prior_info : dict of representative prior locations (diagnostics), the
-        resolved closure slack ``gamma2`` and its provenance ``closure_slack``.
+        closure variance ``gamma2`` (0 under the tempered rule) and the rule's
+        record ``closure`` (tempering exponents, effective degrees of freedom
+        and data-only GP fit, or the slack's provenance).
     """
     num_modes = cfg.num_modes
     num_traj = len(trajectories)
@@ -168,7 +283,11 @@ def build_model(rom, trajectories, cfg):
         log_tau_center = jnp.log(cfg.sigma_O)
         inv_prec_vec = jnp.full(m_total, 1.0 / (cfg.sigma_O ** 2))
 
-    gamma2_resolved, slack_info = closure_slack(trajectories, cfg)
+    tempered = cfg.closure == "tempered"
+    if tempered:
+        gamma2_resolved, closure_info = 0.0, None
+    else:
+        gamma2_resolved, closure_info = closure_slack(trajectories, cfg)
     # The historical dimensional slack kept an absolute floor on the derivative variance.
     deriv_floor = 1e-4 if cfg.gamma2 is not None else 0.0
 
@@ -187,26 +306,51 @@ def build_model(rom, trajectories, cfg):
         tf = _wf.build_test_functions(time_eval, cfg)
         weak_slack = {"grid": tf["quad_psi_sq"], "support": tf["int_psi"] ** 2,
                       "legacy": tf["int_psi_sq"]}[cfg.weak_slack]
-        noise_kwargs = {}
-        if cfg.gp_noise_prior == "measurement":
-            if "noise_variances" not in tr:
-                raise ValueError("Measurement-noise priors require trajectory noise_variances")
-            noise_kwargs["noise_variances"] = tr["noise_variances"]
-        locs = _gp.spectrum_anchored_prior_locs(
-            tr["snapshots_comp"], t_samp, num_modes, cfg, **noise_kwargs)
+        locs = _prior_locs(tr, cfg)
 
         inputs_eval = tr.get("inputs_eval", None)
         inputs_eval = None if inputs_eval is None else jnp.asarray(inputs_eval)
 
         traj_ctx.append(dict(
             y_obs=y_obs, batch_gp=_batch, tf=tf, locs=locs, weak_slack=weak_slack,
-            inputs_eval=inputs_eval, n_eval=num_eval))
+            inputs_eval=inputs_eval, n_eval=num_eval, n_train=len(t_samp)))
+
+    if tempered:
+        alphas, closure_info = tempering_exponents(
+            trajectories, time_evals, [ctx["n_eval"] + ctx["tf"]["wpsi"].shape[0] for ctx in traj_ctx], cfg)
+        for ctx, alpha in zip(traj_ctx, alphas):
+            ctx["alpha"] = jnp.asarray(alpha)[:, None]
+
+    def _tempered_blocks(ctx, Xs, f_X, mu_zs, K_posts_Z, K_posts_X, sig2s, ells):
+        """Diagonal derivative and IBP weak rows with GP variances v, each a
+        power likelihood N(r; 0, v)^α: Gaussian rows of variance v/α plus the
+        normaliser correction. v carries a round-off floor (n ε σ²/ℓ² for
+        derivatives, n ε σ² ‖w ψ̇_k‖₁² for weak rows; ε of the working dtype)."""
+        eps = jnp.finfo(Xs.dtype).eps
+        alpha = ctx["alpha"]
+        wpsi, wpsi_dot = ctx["tf"]["wpsi"], ctx["tf"]["wpsi_dot"]
+        var_D = (jnp.maximum(jax.vmap(jnp.diagonal)(K_posts_Z), 0.0)
+                 + (ctx["n_train"] * eps * sig2s / ells ** 2)[:, None])
+        var_W = (jnp.maximum(jnp.einsum("kj,ijl,kl->ik", wpsi_dot, K_posts_X, wpsi_dot), 0.0)
+                 + ctx["n_train"] * eps * sig2s[:, None] * jnp.sum(jnp.abs(wpsi_dot), axis=1)[None] ** 2)
+        weak_weight = cfg.weakform_weight + 1e-30
+        Sigma_D = cfg.deriv_weight * alpha / var_D
+        Sigma_W = jax.vmap(jnp.diag)(var_W / (alpha * weak_weight))
+        # The evidence whitens the weak block with an added 1e-8 I (evidence._whiten_block).
+        correction = (power_likelihood_correction(var_D / cfg.deriv_weight, alpha)
+                      + power_likelihood_correction(var_W / weak_weight + 1e-8 * alpha, alpha))
+        blocks = (f_X, mu_zs, Sigma_D, wpsi @ f_X, -(Xs @ wpsi_dot.T), Sigma_W)
+        return blocks, correction
 
     def _build_blocks(ctx, ells, sig2s, nus, gamma2):
-        """Per-trajectory (A_D, y_D, Sigma_D, A_W, y_W, Sigma_W) + mll."""
+        """Per-trajectory (A_D, y_D, Sigma_D, A_W, y_W, Sigma_W), states, mll
+        and the power-likelihood correction (0 for the slack rule)."""
         Xs, mu_zs, K_posts_Z, K_posts_X, mlls = ctx["batch_gp"](
             ells, sig2s, nus, ctx["y_obs"])
         f_X = rom.model._assemble_data_matrix(Xs, inputs=ctx["inputs_eval"])
+        if tempered:
+            blocks, correction = _tempered_blocks(ctx, Xs, f_X, mu_zs, K_posts_Z, K_posts_X, sig2s, ells)
+            return blocks, Xs, jnp.sum(mlls), correction
         n_eval = f_X.shape[0]
         I_eval = jnp.eye(n_eval)
 
@@ -236,31 +380,11 @@ def build_model(rom, trajectories, cfg):
         if weakform_is_diag:
             Sigma_W = jax.vmap(lambda S: jnp.diag(jnp.diag(S)))(Sigma_W)
 
-        return (f_X, mu_zs, Sigma_D, A_weak, weak_obs, Sigma_W), Xs, jnp.sum(mlls)
+        return (f_X, mu_zs, Sigma_D, A_weak, weak_obs, Sigma_W), Xs, jnp.sum(mlls), 0.0
 
     def _sample_hypers():
-        """Sample per-trajectory, per-mode GP hypers. Returns list per traj of
-        (ells, sig2s, nus) stacks and the deterministic Xs bookkeeping keys."""
-        theta = []
-        for ic, ctx in enumerate(traj_ctx):
-            locs = ctx["locs"]
-            ells = jnp.stack([
-                numpyro.sample(f"lengthscale_{ic}_{i}",
-                               dist.LogNormal(locs["log_ell_loc"],
-                                              locs["log_ell_scale"]))
-                for i in range(num_modes)])
-            sig2s = jnp.stack([
-                numpyro.sample(f"variance_{ic}_{i}",
-                               dist.LogNormal(locs["log_sig2_locs"][i],
-                                              cfg.sig2_prior_scale))
-                for i in range(num_modes)])
-            nus = jnp.stack([
-                numpyro.sample(f"noise_{ic}_{i}",
-                               dist.LogNormal(locs["log_nu_locs"][i],
-                                              cfg.nu_prior_scale))
-                for i in range(num_modes)])
-            theta.append((ells, sig2s, nus))
-        return theta
+        """Sample per-trajectory, per-mode GP hypers (list per traj of (ells, sig2s, nus))."""
+        return _sample_gp_hypers([ctx["locs"] for ctx in traj_ctx], cfg)
 
     def model(gamma2=None):
         gamma2 = gamma2_resolved if gamma2 is None else gamma2
@@ -280,12 +404,13 @@ def build_model(rom, trajectories, cfg):
 
         traj_blocks = []
         mll_total = 0.0
+        correction = 0.0
         for ic, ctx in enumerate(traj_ctx):
             ells, sig2s, nus = theta[ic]
-            blocks, Xs, mll = _build_blocks(ctx, ells, sig2s, nus, gamma2)
-            f_X, mu_zs, Sigma_D, A_W, weak_obs, Sigma_W = blocks
-            traj_blocks.append((f_X, mu_zs, Sigma_D, A_W, weak_obs, Sigma_W))
+            blocks, Xs, mll, corr = _build_blocks(ctx, ells, sig2s, nus, gamma2)
+            traj_blocks.append(blocks)
             mll_total = mll_total + mll
+            correction = correction + corr
             for i in range(num_modes):
                 numpyro.deterministic(f"X_{ic}_{i}", Xs[i])
 
@@ -298,7 +423,7 @@ def build_model(rom, trajectories, cfg):
                 traj_blocks, i, m_total, prior_prec, log_prior_cov,
                 deriv_is_diag)
             total_evidence = total_evidence + log_p_i
-        numpyro.factor("marg_O_evidence", total_evidence)
+        numpyro.factor("marg_O_evidence", total_evidence + correction)
 
     @jax.jit
     def posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None):
@@ -317,10 +442,9 @@ def build_model(rom, trajectories, cfg):
         ells_all, sig2s_all, nus_all = theta_stacked
         traj_blocks = []
         for ic, ctx in enumerate(traj_ctx):
-            blocks, _, _ = _build_blocks(
+            blocks, _, _, _ = _build_blocks(
                 ctx, ells_all[ic], sig2s_all[ic], nus_all[ic], gamma2)
-            f_X, mu_zs, Sigma_D, A_W, weak_obs, Sigma_W = blocks
-            traj_blocks.append((f_X, mu_zs, Sigma_D, A_W, weak_obs, Sigma_W))
+            traj_blocks.append(blocks)
 
         mu_all, C_all = [], []
         for i in range(num_modes):
@@ -337,6 +461,6 @@ def build_model(rom, trajectories, cfg):
         nu=[float(np.exp(traj_ctx[0]["locs"]["log_nu_locs"][i]))
             for i in range(num_modes)],
         num_traj=num_traj, m_total=m_total, n_blocks=n_blocks,
-        operator_prior=operator_prior, gamma2=gamma2_resolved, closure_slack=slack_info,
+        operator_prior=operator_prior, gamma2=gamma2_resolved, closure=closure_info,
     )
     return model, posterior_O_fn, time_evals, prior_info

@@ -145,6 +145,30 @@ def trajectory_gp_conditional(trajectory, cfg):
         trajectory["t_sampled"], jitter_rel=cfg.gp_jitter_rel, **kwargs)
 
 
+def effective_dof(trajectory, cfg, ells, sig2s, nus):
+    """Effective degrees of freedom df_i = tr K_i (K_i + ν_i I)⁻¹ of each mode's
+    GP smoother at the training times: the number of independent pieces of
+    information its posterior mean (and every derivative or weak-form row built
+    from it) carries. K_i is the prior covariance of the observations, input
+    trend included. Unit free: invariant to rescaling time and state."""
+    t = np.asarray(trajectory["t_sampled"], dtype=float)
+    sq = (t[:, None] - t[None, :]) ** 2
+    trend = None
+    if cfg.gp_input_trend:
+        from .features import input_trend_features
+        table = trajectory["input_table"]
+        H = input_trend_features(t, t, table["times"], table["values"])["train"]
+        trend = H @ H.T, np.var(trajectory["snapshots_comp"], axis=1) + 1e-12
+    out = []
+    for i, (ell, sig2, nu) in enumerate(zip(*(np.asarray(x, dtype=float) for x in (ells, sig2s, nus)))):
+        K = sig2 * np.exp(-sq / (2.0 * ell ** 2))
+        if trend is not None:
+            K = K + trend[1][i] * trend[0]
+        lam = np.clip(np.linalg.eigvalsh(K), 0.0, None)
+        out.append(float(np.sum(lam / (lam + nu))))
+    return np.array(out)
+
+
 def spectrum_anchored_prior_locs(snapshots_comp, time_sampled, num_modes, cfg,
                                 noise_variances=None):
     """Compute spectrum-anchored LogNormal prior locations for (ℓ, σ², ν).

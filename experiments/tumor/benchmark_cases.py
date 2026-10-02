@@ -180,7 +180,7 @@ def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
     if case.observation == LEGACY_OBSERVATION:
         # The earlier design was fitted with the dimensional operator prior, relative GP nugget,
         # dimensional slack, its hand-set weights and the ridge-regularised normal equations.
-        cfg = replace(cfg, sigma_O=5.0, gp_jitter_rel=1e-3, gamma2=0.035, weak_slack="legacy",
+        cfg = replace(cfg, sigma_O=5.0, gp_jitter_rel=1e-3, closure="slack", gamma2=0.035, weak_slack="legacy",
                       mll_weight=0.1, weakform_weight=8.0, operator_solver="normal")
         return replace(cfg, num_modes=settings.rank)
     return replace(cfg, num_modes=settings.rank, operators=galerkin_operators(case, settings))
@@ -194,7 +194,7 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")
-        for later in ("gamma2_nd", "weak_slack"):
+        for later in ("gamma2_nd", "weak_slack", "closure"):
             config.pop(later)
     recipe = {**fields, "pod": asdict(settings), "production_config": config}
     fingerprint = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()

@@ -54,10 +54,9 @@ CHEMO_FOM_PATH = FOM_DATA_PATH
 
 
 def make_config(schema, profile="historical"):
-    """Reported (production) chemo model by default (shared core defaults and the
-    tumour closure constant c_gamma = 0.1, selected on development data, README); the
-    input-aware model is experimental and keeps the dimensional operator prior,
-    slack and weights it was studied with."""
+    """Reported (production) chemo model by default (shared core defaults, no
+    per-experiment constant); the input-aware model is experimental and keeps the
+    dimensional operator prior, slack and weights it was studied with."""
     cfg = WeakFormConfig(
         operators="cABN",
         num_modes=4,
@@ -66,7 +65,6 @@ def make_config(schema, profile="historical"):
         deriv_cov="diag",
         weakform_cov="diag",
         op_prior_mode="block_hier",
-        gamma2_nd=0.1,
         num_posterior_samples=500,
         regularizer=0.1,
         ic_uncertainty=True,
@@ -80,7 +78,7 @@ def make_config(schema, profile="historical"):
         return replace(
             cfg, mll_weight=1., operator_solver="qr", precision="float64",
             gp_input_trend=True, gp_noise_prior="measurement", sigma_O=5.0,
-            gamma2=0.035, weak_slack="legacy", weakform_weight=8.0)
+            closure="slack", gamma2=0.035, weak_slack="legacy", weakform_weight=8.0)
     raise ValueError(f"Unknown chemo inference profile: {profile}")
 
 
@@ -183,7 +181,9 @@ def run_matched(schema, data=None, out_dir=None, profile="historical"):
                               ("gp_noise_prior", "spectrum"), ("precision", "default"),
                               ("weak_slack", "legacy"),
                               # Checkpoints without the field fixed gamma2, so gamma2_nd was unused.
-                              ("gamma2_nd", cfg.gamma2_nd)):
+                              ("gamma2_nd", cfg.gamma2_nd),
+                              # Checkpoints without the field used the closure slack.
+                              ("closure", "slack")):
             stored_config.setdefault(name, default)
         if (stored.get("data_fingerprint") != metadata["data_fingerprint"]
                 or stored_config != metadata["config"]

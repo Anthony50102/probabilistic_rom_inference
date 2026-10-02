@@ -90,6 +90,8 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
         print(f"\n{'=' * 78}\n  {schema.get('label', schema['name'])}"
               f"  ({num_traj} traj, {num_modes} modes, {cfg.operators})\n{'=' * 78}")
 
+    # The runtime includes the model build (and the tempered rule's data-only GP fit).
+    t0 = time.time()
     model, posterior_O_fn, time_evals, prior_info = build_model(
         rom, prepared.trajectories, cfg)
 
@@ -97,7 +99,6 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
     gamma2 = prior_info["gamma2"]
     model_kwargs = dict(gamma2=gamma2)
     rng_key, ik = random.split(rng_key)
-    t0 = time.time()
     if cfg.infer == "nuts":
         kernel = NUTS(model, init_strategy=init_to_median, target_accept_prob=0.9)
         mcmc = MCMC(kernel, num_warmup=cfg.nuts_warmup,

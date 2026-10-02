@@ -5,9 +5,10 @@ There are deliberately **no environment-variable toggles and no MLE anywhere**:
 GP-hyperparameter priors are spectrum-anchored (derived from the observation
 window and the POD singular-value spectrum), the operator prior is
 nondimensionalised by the training window and the state/input scales, the
-closure-error slack is set in the same units, the GP nugget sits at
-floating-point round-off, and SVI/NUTS explores the hyperparameters. This makes
-every case study run the identical algorithm.
+pseudo-likelihood of the physics rows is tempered by the GP's effective degrees
+of freedom, the GP nugget sits at floating-point round-off, and SVI/NUTS
+explores the hyperparameters. This makes every case study run the identical
+algorithm, with no per-experiment constant.
 """
 
 from __future__ import annotations
@@ -83,20 +84,29 @@ class WeakFormConfig:
     ridge 1e-6 max(tr(M)/m, 1) I, which is not unit invariant and can move
     weakly identified coefficients substantially."""
 
-    # ── Constraint slack + GP marginal-likelihood weight ─────────────────
+    # ── Pseudo-likelihood calibration + GP marginal-likelihood weight ────
+    closure: str = "tempered"
+    """How the derivative and weak-form rows, which are correlated functionals
+    of one GP fit, are weighted. 'tempered' (default, every reported experiment):
+    each mode's rows enter as a power likelihood with exponent
+    α_i = min(1, df_i / (n_e + K)), df_i = tr K(K + νI)⁻¹ the effective degrees
+    of freedom of the mode's GP smoother at a data-only GP fit (n_e derivative
+    rows, K weak rows), and no closure variance (γ² = 0); no constant to set.
+    Needs the diagonal derivative and weak blocks of the IBP weak form.
+    'slack': untempered rows with the closure-error variance γ² below (the
+    earlier rule; its constant c_γ had to be selected per experiment)."""
     gamma2: float | None = None
-    """Closure-error (derivative-slack) variance γ². None (default, every reported
-    experiment): γ² = gamma2_nd (S/T)², with S/T the reference rate of the
-    nondimensional operator prior (S RMS training POD coefficient, T training
-    window), so the slack is unit invariant. A float fixes γ² in the data's units
-    (historical; keeps its 1e-4 absolute floor on the derivative variance)."""
+    """closure='slack' only. Closure-error (derivative-slack) variance γ². None:
+    γ² = gamma2_nd (S/T)², with S/T the reference rate of the nondimensional
+    operator prior (S RMS training POD coefficient, T training window), so the
+    slack is unit invariant. A float fixes γ² in the data's units (historical;
+    keeps its 1e-4 absolute floor on the derivative variance)."""
     gamma2_nd: float = 0.1
-    """Closure constant c_γ: closure-error variance in units of (S/T)², used when
-    gamma2 is None. The one per-experiment setting: each runner sets the value
-    selected on development data (README). 0.1 is the best single value of that
-    study, but no single value suited every benchmark."""
+    """closure='slack' only. Closure constant c_γ: closure-error variance in
+    units of (S/T)², used when gamma2 is None. No single value suited every
+    benchmark, which is why the tempered rule replaced it."""
     weak_slack: str = "grid"
-    """Weak-form closure variance. 'grid' (default): the derivative block's
+    """closure='slack' only. Weak-form closure variance. 'grid' (default): the derivative block's
     closure error (independent, variance γ², at every grid point) carried through
     the weak-form quadrature, γ² Σ_j (w_j ψ_k(t_j))²; 'support': one closure error
     shared over each test-function support, γ² (∫ψ_k)²; 'legacy': γ² ∫ψ_k², an
@@ -136,6 +146,13 @@ class WeakFormConfig:
         _one_of("precision", self.precision, {"default", "float32", "float64"})
         _one_of("infer", self.infer, {"svi", "nuts"})
         _one_of("weak_slack", self.weak_slack, {"grid", "support", "legacy"})
+        _one_of("closure", self.closure, {"tempered", "slack"})
+        if self.closure == "tempered":
+            if self.gamma2 is not None:
+                raise ValueError("WeakFormConfig.gamma2 fixes a closure slack: set closure='slack'")
+            if (self.deriv_cov, self.weakform_cov, self.weakform_mode) != ("diag", "diag", "ibp"):
+                raise ValueError("closure='tempered' needs deriv_cov='diag', weakform_cov='diag' and "
+                                 "weakform_mode='ibp'; use closure='slack' otherwise")
         for name in ("sigma_O", "gp_jitter_rel", "gamma2"):
             value = getattr(self, name)
             if value is not None and not value > 0:

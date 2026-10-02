@@ -41,13 +41,14 @@ class BenchmarkCaseTests(unittest.TestCase):
                 self.assertEqual(cfg.num_steps, 12000)
                 self.assertEqual(cfg.num_posterior_samples, 500)
                 shared = WeakFormConfig()
-                for field in ("gamma2", "gamma2_nd", "weak_slack", "mll_weight", "weakform_weight",
+                for field in ("closure", "gamma2", "mll_weight", "weakform_weight",
                               "deriv_weight", "num_eval_points", "window_size", "learning_rate",
                               "operator_solver"):
                     self.assertEqual(getattr(cfg, field), getattr(shared, field), field)
                 legacy = production_config(get_case(name, "oracle_masked"))
-                self.assertEqual((legacy.gamma2, legacy.weak_slack, legacy.mll_weight, legacy.weakform_weight,
-                                  legacy.operator_solver), (.035, "legacy", .1, 8., "normal"))
+                self.assertEqual((legacy.closure, legacy.gamma2, legacy.weak_slack, legacy.mll_weight,
+                                  legacy.weakform_weight, legacy.operator_solver),
+                                 ("slack", .035, "legacy", .1, 8., "normal"))
                 modified = production_config(case, PODSettings(6, "matched_training"))
                 expected = asdict(cfg)
                 expected.update(num_modes=6, operators=case.operators)
