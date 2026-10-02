@@ -2,10 +2,12 @@
 
 > The method lives in `core/weakform_opinf/` (see `README.md` for the
 > architecture and the shared `WeakFormConfig` defaults). The results below are
-> from the standardized-settings rerun (shared settings, QR operator solve,
-> per-experiment closure constant). The pre-standardization outputs are kept in
-> the `results_pre_standard_settings` folders and under the git tag
-> `pre-standard-settings`.
+> from the tempered-closure rerun (shared settings, QR operator solve,
+> dynamics rows tempered by the GP's effective degrees of freedom, no
+> per-experiment constant). The outputs with the earlier per-experiment closure
+> constant are kept in the `results_pre_closure_tempering` folders and under the
+> git tag `pre-closure-tempering`; the pre-standardization outputs in the
+> `results_pre_standard_settings` folders and under `pre-standard-settings`.
 
 `04_unified.py` is the active Bayesian OpInf method used across the PDE
 experiments. It combines Gaussian-process smoothing, weak-form constraints, and
@@ -25,14 +27,11 @@ The operator row `O_i` is constrained by two linear-in-`O_i` blocks.
 
 ```text
 μ_{z,i} ≈ f(X) O_i^T,
-Σ_D,i = diag(Σ_{z,i}) + γ² I,   γ² = c (S/T)².
+Σ_D,i = diag(Σ_{z,i}) / α_i.
 ```
 
-`S/T` is the reference rate of the nondimensional operator prior (RMS training
-POD coefficient over the training window), so `c` (`gamma2_nd`) is a
-dimensionless closure constant. It is the one per-experiment setting, selected
-on development data (README): `c = 1` for Euler and heat, `0.03` for Burgers 2D
-(diffusion-reaction) and `0.1` for the tumor tasks.
+`α_i` is the tempering exponent below; each variance is floored at the
+round-off level of the kernel nugget.
 
 ### Weak-form block
 
@@ -45,20 +44,32 @@ w_i = -Ψ̇_w μ_{x,i},
 Ψ(X)[k, :] = ∫ ψ_k(t) d(X(t), u(t))^T dt,
 ```
 
-and the covariance propagates the GP state uncertainty plus the closure slack,
-kept diagonal by default (`weakform_cov="diag"`):
+and the covariance propagates the GP state uncertainty, kept diagonal by
+default (`weakform_cov="diag"`):
 
 ```text
-Σ_W,i = diag(Ψ̇_w Σ_{x,i} Ψ̇_w^T) + γ² diag(Σ_j (w_j ψ_k(t_j))²).
+Σ_W,i = diag(Ψ̇_w Σ_{x,i} Ψ̇_w^T) / α_i.
 ```
 
-The slack term is the variance that the derivative block's independent
-`N(0, γ²)` closure errors induce on the weak functionals through the
-quadrature. (`weakform_mode="deriv"` uses `w_i = Ψ_w μ_{z,i}` and
-`Ψ_w Σ_{z,i} Ψ_w^T` instead.)
+(`weakform_mode="deriv"` uses `w_i = Ψ_w μ_{z,i}` and `Ψ_w Σ_{z,i} Ψ_w^T`
+instead; it requires `closure="slack"`.)
 
-Thus both likelihood blocks are "GP covariance + closure slack" in their
-respective spaces. The resulting per-mode Gaussian linear model is
+### Tempering
+
+The `n_e + K` rows of a mode are correlated functionals of one GP fit, and the
+diagonal blocks treat them as independent. Each mode's dynamics likelihood is
+therefore raised to the power
+
+```text
+α_i = min(1, df_i / (n_e + K)),   df_i = tr K (K + ν_i I)⁻¹,
+```
+
+the effective degrees of freedom of the mode's GP smoother at the training
+times, computed once from a data-only GP fit and then fixed. Dividing the row
+variances by `α_i`, as above, plus the normaliser
+`−½ Σ [(α_i − 1) log 2πu + log α_i]` in the evidence, gives the power
+likelihood exactly. There is no closure variance and no per-experiment
+constant (README). The resulting per-mode Gaussian linear model is
 
 ```text
 y_i = A(X) O_i^T + η_i,
@@ -74,7 +85,7 @@ the block multipliers `log κ_b`.
 ## Active experiments
 
 Every script runs the shared `WeakFormConfig` defaults (README); only the ROM
-structure, the data and the closure constant `gamma2_nd` differ.
+structure and the data differ.
 
 | Experiment | Script | Operators | Distinguishing features |
 |---|---|---|---|
@@ -95,16 +106,16 @@ training forcings; the held-out rows score the test forcing `(a, b) = (1.5, 0.5)
 
 | Experiment | Regime | Stable | Train | Forecast | Coverage | NODE forecast | NODE coverage |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Euler | dense low noise | 100% | 1.21% | 7.89% | 98.0% | 55.85% | 41.3% |
-| Euler | sparse low noise | 100% | 3.77% | 22.26% | 80.3% | 22.39% | 94.9% |
-| Euler | dense high noise | 100% | 7.14% | 18.49% | 98.6% | 32.84% | 46.9% |
-| Heat | sparse low noise | 100% | 1.02% | 2.13% | 99.7% | 16.94% | 34.9% |
-| Heat | sparse medium noise | 100% | 1.42% | 2.69% | 100.0% | 17.10% | 42.8% |
-| Heat | sparse high noise | 100% | 2.30% | 3.52% | 99.1% | 19.28% | 36.8% |
-| Heat (held-out) | sparse low noise | 100% | 0.96% | 2.55% | 100.0% | 30.82% | 48.8% |
-| Heat (held-out) | sparse medium noise | 100% | 1.10% | 3.28% | 100.0% | 30.64% | 54.4% |
-| Heat (held-out) | sparse high noise | 100% | 1.62% | 3.88% | 100.0% | 32.25% | 58.6% |
-| Burgers 2D | dense medium noise | 99.5% | 0.36% | 2.83% | 100.0% | 25.13% | 12.0% |
+| Euler | dense low noise | 100% | 1.28% | 7.05% | 95.6% | 55.85% | 41.3% |
+| Euler | sparse low noise | 100% | 7.57% | 27.92% | 99.8% | 22.39% | 94.9% |
+| Euler | dense high noise | 100% | 8.25% | 12.57% | 100.0% | 32.84% | 46.9% |
+| Heat | sparse low noise | 100% | 0.60% | 1.87% | 89.7% | 16.94% | 34.9% |
+| Heat | sparse medium noise | 100% | 1.19% | 2.27% | 96.5% | 17.10% | 42.8% |
+| Heat | sparse high noise | 100% | 2.18% | 2.83% | 98.4% | 19.28% | 36.8% |
+| Heat (held-out) | sparse low noise | 100% | 0.56% | 2.30% | 75.4% | 30.82% | 48.8% |
+| Heat (held-out) | sparse medium noise | 100% | 1.04% | 2.48% | 94.1% | 30.64% | 54.4% |
+| Heat (held-out) | sparse high noise | 100% | 2.25% | 2.80% | 100.0% | 32.25% | 58.6% |
+| Burgers 2D | dense medium noise | 100% | 0.35% | 2.36% | 100.0% | 25.13% | 12.0% |
 
 The tumor tasks are scored in the full-order field; their results are in
 `experiments/TUMOR_SEGMENTED_BENCHMARKS.md`.
@@ -135,12 +146,21 @@ and uses the IC-by-mode trajectory grid instead.
 
 ## Notes and limitations
 
-- **Euler sparse low noise** is the weakest PDE regime: the forecast error is
-  level with the Neural ODE ensemble's and the band under-covers (80%). It is
-  also where the standardized settings lost most against the earlier hand-set
-  ones (16.7% before).
-- **Coverage** is mostly conservative (98–100%) on the PDE regimes; on the
-  tumor tasks the bands can under-cover badly (see the tumor document).
-- **Burgers 2D**: one of the 200 posterior draws is non-finite; the median and
-  band use the stable draws.
+- **Tempered dynamics rows.** These are the results of the dof-tempered
+  likelihood (`closure="tempered"`, the default after the
+  `pre-closure-tempering` tag). Against the per-experiment closure constant
+  that it replaced, the forecast error is lower in nine of the ten rows and
+  higher for Euler sparse low noise (22.26% before); the old rows were Euler
+  7.89/22.26/18.49%, heat 2.13/2.69/3.52%, held-out heat 2.55/3.28/3.88%, and
+  Burgers 2D 2.83%.
+- **Euler sparse low noise** is the weakest PDE regime and the only one where
+  the Neural ODE ensemble's forecast is more accurate (22.39% against
+  27.92%). It is also where the standardized settings lost most against the
+  earlier hand-set ones (16.7% before).
+- **Coverage** is conservative (94–100%) on the PDE regimes except heat at 1%
+  noise (89.7% on the training forcings, 75.4% at the held-out forcing). On
+  the tumor tasks the burden bands contain the truth at every forecast time
+  for multi-dose, at 74–99% of times for single-dose, and at none for
+  untreated growth (see the tumor document).
+- **All posterior draws are finite** in every regime.
 - **FitzHugh-Nagumo** is not part of the active experiment set.

@@ -113,19 +113,33 @@ oracle-masked tumor design and the experimental input-aware chemo profile pin.
 
 Pointwise derivative constraints are combined with state-based weak-form
 constraints via integration by parts. The default derivative and weak-form
-covariance blocks are diagonal, with additive closure-error slack; full blocks
-are optional configuration choices. The cross-block covariance is omitted.
+covariance blocks are diagonal, each variance floored at the round-off level
+of the kernel nugget; full blocks are optional configuration choices. The
+cross-block covariance is omitted.
 
-The closure error (what the polynomial ROM cannot represent) is modelled as
-independent `N(0, γ²)` errors at the estimation times, with
-`γ² = gamma2_nd (S/T)²` measured against the same reference rate `S/T` as the
-operator prior (`gamma2_nd` is the closure constant `c_γ`, below). The weak-form block receives the
-variance those errors induce through its quadrature,
-`γ² Σ_j (w_j ψ_k(t_j))²` (`weak_slack="grid"`), so the slack is unit invariant.
-A float `gamma2` restores a fixed slack in the data's units and
-`weak_slack="legacy"` the historical `γ² ∫ψ_k² dt`, which implies a closure
-correlation time of one time unit; only the earlier oracle-masked tumor design
-and the experimental input-aware chemo profile pin them.
+The `n_e + K` dynamics rows of a mode are correlated functionals of one GP fit,
+so the diagonal blocks, which treat them as independent, overcount their
+information. The default `closure="tempered"` raises each mode's dynamics
+likelihood to the power `α_i = min(1, df_i / (n_e + K))`, where
+`df_i = tr K (K + ν I)⁻¹ = Σ λ / (λ + ν)` is the effective degrees of freedom
+of the mode's GP smoother at the training times (`gp.effective_dof`), so the
+rows count as `df_i` observations. For Gaussian rows this multiplies the row
+precisions by `α_i` and adds `−½ Σ [(α_i − 1) log 2πu + log α_i]` to the
+evidence (`power_likelihood_correction`). The exponents come from a data-only
+GP fit (MAP of the snapshot marginal likelihood under the hyperpriors, L-BFGS
+in float64, a few seconds; `data_only_gp_fit`) and are fixed before inference;
+each trajectory has its own. There is no closure variance (`γ² = 0`) and no
+constant, and `α_i` is unit invariant. `prior_info["closure"]` records `α`,
+`df`, the row counts and the data-only fit.
+
+`closure="slack"` keeps the earlier rule: independent `N(0, γ²)` closure
+errors at the estimation times, `γ² = gamma2_nd (S/T)²` measured against the
+reference rate `S/T` of the operator prior (`gamma2_nd` was the per-experiment
+closure constant `c_γ`), plus the variance they induce on the weak rows through
+the quadrature, `γ² Σ_j (w_j ψ_k(t_j))²` (`weak_slack="grid"`). A float
+`gamma2` gives a fixed slack in the data's units and `weak_slack="legacy"` the
+historical `γ² ∫ψ_k² dt`; only the earlier oracle-masked tumor design and the
+experimental input-aware chemo profile use the slack rule.
 
 `operator_solver="qr"` (default) factors the whitened likelihood and declared
 Gaussian prior as one augmented least-squares system. It avoids normal-equation
@@ -138,49 +152,46 @@ implementation for the earlier oracle-masked tumor design. Switching solvers
 requires a new checkpoint/output directory.
 
 Every reported experiment runs these `WeakFormConfig` defaults: unit likelihood
-weights (`mll_weight = deriv_weight = weakform_weight = 1`, the exact joint
-likelihood of GP and operator evidence), `num_eval_points=200`,
-`window_size=20` (ten test functions), 12000 SVI steps at learning rate 3e-3,
-and 500 posterior draws. The `04_unified*.py` runners set only the ROM
-structure (operators, `num_modes`), data options and the closure constant
-`gamma2_nd`. The shared settings were chosen on development data only (redrawn
-PDE sampling times and noise, tumor acquisitions 45-47).
+weights (`mll_weight = deriv_weight = weakform_weight = 1`; the dynamics rows
+are then tempered as above), `num_eval_points=200`, `window_size=20` (ten test
+functions), 12000 SVI steps at learning rate 3e-3, and 500 posterior draws. The
+`04_unified*.py` runners set only the ROM structure (operators, `num_modes`)
+and data options. The shared settings were chosen on development data only
+(redrawn PDE sampling times and noise, tumor acquisitions 45-47).
 
-The closure constant `c_γ` is the one per-experiment setting. It acts like the
-regularization parameter of deterministic OpInf: a larger `c_γ` loosens the
-dynamics constraints, widens the operator posterior and lets the evidence prune
-weakly supported blocks. It is not inferred. With the GPs free, the joint
-target is a pseudo-likelihood (the dynamics "observations" are functions of the
-GP hyperparameters) and on development data increased monotonically as `γ`
-decreased, down to the smallest value tried. With the GPs held
-at their marginal-likelihood fit, the operator evidence still prefers the
-smallest `γ` tried on every PDE regime, heat included, although heat forecasts are worst at small
-`γ`. No single value suited every benchmark either. On development data
-(geometric-mean forecast error, %) heat needs `c_γ ≈ 1` and 2D diffusion-reaction
-`c_γ ≈ 0.03`:
+The tempered rule replaced the per-experiment closure constant `c_γ` (Euler 1,
+heat 1, 2D 0.03, tumor 0.1), which had to be chosen on development forecasts by
+a fit per grid value and did not transfer: `c_γ = 1` raised the 2D development
+error 4.8-fold and `c_γ = 0.03` broke heat (253% at high noise). Constant-free
+candidates were compared under criteria fixed before their development fits:
+among rules whose fits are all stable, the smallest worst-case ratio of the
+development forecast error to that of the tuned constants over all 25
+development errors. Geometric-mean development forecast error (%):
 
-| `c_γ` | 0.01 | 0.03 | 0.1 | 0.3 | 1 | 3 | earlier hand-set |
-|---|---|---|---|---|---|---|---|
-| Euler (3 regimes) | | 15.69 | 15.97 | 15.73 | **15.84** | 16.46 | 15.25 |
-| Heat (3 regimes, future and held-out forcing) | | 20.30 | 6.82 | 4.60 | **3.66** | 4.10 | 3.98 |
-| 2D diffusion-reaction | 2.73 | **2.20** | 3.65 | 7.80 | 10.54 | | 4.36 |
-| Tumor, untreated (45-47) | 6.92 | 6.93 | **7.00** | 7.19 | 7.58 | | 7.12 |
-| Tumor, single-dose arm (45-47) | | 4.57 | **4.57** | 5.31 | 5.83 | | 5.26 |
-| Tumor, changed-dose arms (45-47) | | 5.27 | **5.07** | 5.62 | 6.24 | | 6.47 |
+| | tuned `c_γ` | **tempered** | fixed variances | + closure variance | magnitude adjustment |
+|---|---|---|---|---|---|
+| Euler (3 regimes) | 15.75 | **18.81** | 18.43 | 19.17 | 19.07 |
+| Heat (3 regimes, future and held-out forcing) | 3.66 | **3.30** | 3.61 | 3.28 | 3.68 |
+| 2D diffusion-reaction | 2.20 | **2.21** | 2.25 | 2.21 | 5.15 |
+| Tumor, untreated (45-47) | 7.00 | **7.02** | 6.96 | 7.00 | 7.04 |
+| Tumor, single-dose arm (45-47) | 4.57 | **6.33** | 6.53 | 8.26 | 5.03 |
+| Tumor, changed-dose arms (45-47) | 5.07 | **6.40** | 6.26 | 7.32 | 5.60 |
+| worst ratio to tuned `c_γ` | | **1.58** | 2.20 | 2.56 | 2.34 |
 
-The pre-registered rule took a single value from {0.03, 0.1, 0.3, 1} only if
-every experiment stayed within 25% of its earlier hand-set error; none did.
-Its fallback picks per experiment the lowest development error, with ties
-within 3% going to the larger (more conservative) value, on the grid widened to
-0.01 and 3 where a minimum lay on its edge (bold): `c_γ = 1` for Euler and heat,
-`0.03` for 2D and `0.1` for all three tumor tasks (one value: the chemo tasks
-share their training data). The heat error at small `c_γ` is dominated by
-the noisier regimes (253% at high noise for `c_γ = 0.03`); with the GPs at their
-marginal-likelihood fit, the evidence keeps the quadratic block of heat's lifted
-ROM at small `c_γ` and prunes it at `c_γ ≥ 1`. 2D, whose quadratic reaction the
-ROM represents exactly, is most accurate with little slack. Training-window
-rollout error does not recover these choices (it picks 0.03 and 0.1 for heat at
-low and medium noise).
+"Fixed variances" holds the row variances at the data-only fit, "+ closure
+variance" adds a per-mode `γ²` maximizing the tempered evidence at that fit,
+and "magnitude adjustment" uses the composite-likelihood exponent of Pauli et
+al. (2011) and Ribatet et al. (2012) (curvature of the independence likelihood
+against the variance of its score). The tempered rule is more accurate than the
+tuned constants for heat, as accurate for 2D and untreated growth, and less
+accurate for Euler and the chemotherapy tasks. It was then run once on the
+reported data: against the tuned constants it lowers the forecast error in nine
+of the ten PDE rows of `04_UNIFIED_SUMMARY.md`, raises it for Euler sparse low
+noise (22.3% to 27.9%, now behind the Neural ODE's 22.4%) and for multi-dose
+chemo (8.2-8.8% to 9.6-12.7%), and widens the chemo bands. A closure variance is not
+inferred: with the GPs free the joint target is a pseudo-likelihood (the
+dynamics "observations" are functions of the GP hyperparameters) and on
+development data it increased monotonically as `γ` decreased.
 
 As an **experimental model extension**, `gp_input_trend=True` adds Gaussian trend coefficients
 for a constant, time, and cumulative input exposure. The coefficients are
@@ -382,9 +393,9 @@ acquisitions: 0.3% of the field energy missed, three false-positive voxels in
 
 | Case | Seeds | POD (result tag) | How it was fixed |
 |---|---|---|---|
-| `untreated-growth` | 42-44 | mean-centered rank 3 (`segmented_observed_mean_r3`) | The threshold admits three modes. The earlier rank 4 added a noise mode and diverged on acquisition 42 (operator eigenvalue about +1/day); it still does under the current settings. |
-| `single-dose-chemo` | 51-53 | uncentered rank 4 (`segmented_observed_none_r4`) | The multi-dose basis; the unchanged regimen is the multi-dose 0.5x arm. The declared mean-centered rank 4 failed on 45-47 (27-104% error under the earlier hand-set settings, 10-40% under the current ones), so the task moved to fresh acquisitions. |
-| `multi-dose-chemo` | 48-50 | uncentered rank 4 (`segmented_observed_none_r4`) | Chosen among ranks 3 and 4, centered or not, by production's multi-dose error on development acquisition 45, then frozen before 48-50 were fitted. The choice was made under the earlier hand-set prior; the same rule picks it again under the nondimensional prior and under the standardized settings. |
+| `untreated-growth` | 42-44 | mean-centered rank 3 (`segmented_observed_mean_r3`) | The threshold admits three modes. The earlier rank 4 added a noise mode and diverged on acquisition 42 under the earlier settings (operator eigenvalue about +1/day); with the tempered dynamics rows it no longer diverges (largest eigenvalue +0.005/day, 7.85% over days 60-90 against 6.99% with three modes). |
+| `single-dose-chemo` | 51-53 | uncentered rank 4 (`segmented_observed_none_r4`) | The multi-dose basis; the unchanged regimen is the multi-dose 0.5x arm. The declared mean-centered rank 4 failed on 45-47 (27-104% error under the earlier hand-set settings, 3.5-17% under the current ones), so the task moved to fresh acquisitions. |
+| `multi-dose-chemo` | 48-50 | uncentered rank 4 (`segmented_observed_none_r4`) | Chosen among ranks 3 and 4, centered or not, by production's multi-dose error on development acquisition 45, then frozen before 48-50 were fitted. The choice was made under the earlier hand-set prior; the same rule picks it again under the nondimensional prior and under the standardized settings with the closure constant. With the tempered rows the rule prefers uncentered rank 3 by 2% (mean 5.06% against 5.18%; both pass the NODE checks); the frozen rank 4 is kept. |
 
 The chemo ROM keeps only the input blocks that Galerkin projection of the kill
 term `-α(t) u` produces (`benchmark_cases.galerkin_operators`): `N α q` with
@@ -421,20 +432,26 @@ runners apply them before importing NumPy.
 
 | Benchmark (seeds) | Production | Neural ODE |
 |---|---|---|
-| Untreated growth, days 60-90 (42-44) | 7.32% | 12.33% (all-member median) |
-| Single-dose chemo, days 70-110 (51-53) | 18.99% | 11.15% (loss-filtered median) |
-| Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 8.84/8.53/8.43/8.23% | 26.65/13.87/11.36/23.97% (loss-filtered median) |
+| Untreated growth, days 60-90 (42-44) | 7.33% | 12.33% (all-member median) |
+| Single-dose chemo, days 70-110 (51-53) | 18.90% | 11.15% (loss-filtered median) |
+| Multi-dose chemo, future 0.25x/0.5x/0.75x/1x (48-50) | 12.69/11.70/10.63/9.63% | 26.65/13.87/11.36/23.97% (loss-filtered median) |
 
 Values are medians over seeds of the relative full-field forecast error,
 including the POD residual. Production is lower on every acquisition for
-untreated growth and at every multi-dose strength, but not for the
-single-dose continuation, where the NODE is lower on two of three
-acquisitions. That forecast is also the multi-dose 0.5x arm; over all six
-reported chemo acquisitions production gives 6.25-19.00% (median 10.84%,
-lower on four of six) and the NODE 9.75-14.15% (median 12.62%). These are
-the standardized-settings results; the earlier hand-set settings gave
-7.45%, 11.20%, and 6.66/5.60/6.48/7.08% (the `pre-standard-settings` tag).
-Figure bands are empirical posterior-draw bands, not calibrated uncertainty. The
+untreated growth and at every multi-dose strength on every acquisition
+except the unchanged 0.5x arm on acquisition 50 (13.02% against 11.64%),
+but not for the single-dose continuation, where the NODE is lower on two of
+three acquisitions. That forecast is also the multi-dose 0.5x arm; over all
+six reported chemo acquisitions production gives 4.10-19.69% (median 12.36%,
+lower on three of six) and the NODE 9.75-14.15% (median 12.62%). These are
+the results with the tempered dynamics rows, the default after the
+`pre-closure-tempering` tag; the per-experiment closure constant that they
+replaced gave 7.32%, 18.99%, and 8.84/8.53/8.43/8.23%, and the earlier
+hand-set settings 7.45%, 11.20%, and 6.66/5.60/6.48/7.08% (the
+`pre-standard-settings` tag). Figure bands are empirical posterior-draw
+bands, not calibrated uncertainty: the burden band contains the true tumor
+burden at every forecast time for the multi-dose task, at 74-99% of them for
+the single-dose task, and at none for untreated growth. The
 [segmented benchmark record](experiments/TUMOR_SEGMENTED_BENCHMARKS.md) has
 per-seed results, the development selection, and the limitations.
 
