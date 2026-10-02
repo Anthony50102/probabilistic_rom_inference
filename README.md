@@ -12,6 +12,9 @@ The active experiment pipeline compares:
 3. **Comparison plots** (`06_compare_methods.py`): method-level metrics and
    full-order error comparisons from saved `.npz` outputs.
 
+[PAPER_CODE_MAP.md](PAPER_CODE_MAP.md) maps each section and equation of the
+manuscript to the function that implements it.
+
 ## Active PDE experiments
 
 | Experiment | Active system | ROM operators | Notes |
