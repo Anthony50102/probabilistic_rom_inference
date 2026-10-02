@@ -24,8 +24,11 @@ class ProfileDefaultTests(unittest.TestCase):
         self.assertEqual(cfg.gp_noise_prior, "spectrum")
         self.assertIsNone(cfg.gp_jitter_rel)
         self.assertIsNone(cfg.sigma_O)
-        self.assertEqual(cfg.mll_weight, .1)
-        self.assertEqual(cfg.operator_solver, "normal")
+        self.assertIsNone(cfg.gamma2)
+        self.assertEqual(cfg.gamma2_nd, .1)
+        self.assertEqual(cfg.weak_slack, "grid")
+        self.assertEqual((cfg.mll_weight, cfg.weakform_weight, cfg.deriv_weight), (1., 1., 1.))
+        self.assertEqual(cfg.operator_solver, "qr")
         self.assertEqual(cfg.precision, "default")
         self.assertEqual(OUTPUT_ROOT, HISTORICAL_OUTPUT_ROOT)
         experimental = module.make_config(SCHEMAS[0], profile="input-aware")
@@ -33,6 +36,8 @@ class ProfileDefaultTests(unittest.TestCase):
         self.assertEqual(experimental.gp_noise_prior, "measurement")
         self.assertEqual(experimental.operator_solver, "qr")
         self.assertEqual(experimental.sigma_O, 5.)
+        self.assertEqual((experimental.gamma2, experimental.weak_slack, experimental.weakform_weight),
+                         (.035, "legacy", 8.))
 
     def test_report_defaults_and_explicit_experimental_directory(self):
         module = load_script("profile_defaults_compare", "06_compare_chemo.py")

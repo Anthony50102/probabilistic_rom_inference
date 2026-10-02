@@ -25,26 +25,39 @@ The operator row `O_i` is constrained by two linear-in-`O_i` blocks.
 
 ```text
 μ_{z,i} ≈ f(X) O_i^T,
-Σ_D,i = Σ_{z,i} + γ² I.
+Σ_D,i = diag(Σ_{z,i}) + γ² I,   γ² = c (S/T)².
 ```
+
+`S/T` is the reference rate of the nondimensional operator prior (RMS training
+POD coefficient over the training window), so `c` (`gamma2_nd`) is a
+dimensionless closure constant. It is the one per-experiment setting, selected
+on development data (README): `c = 1` for Euler and heat, `0.03` for Burgers 2D
+(diffusion-reaction) and `0.1` for the tumor tasks.
 
 ### Weak-form block
 
-Let `Ψ_w[k, j] = w_j ψ_k(t_j)` be the quadrature-weighted test-function matrix.
-The weak-form data use the derivative representation
+Let `Ψ_w[k, j] = w_j ψ_k(t_j)` and `Ψ̇_w[k, j] = w_j ψ̇_k(t_j)` be the
+quadrature-weighted test functions and their derivatives. By integration by
+parts (the default, `weakform_mode="ibp"`) the weak-form data use the GP state
 
 ```text
-w_i = Ψ_w μ_{z,i},
-Ψ(X)[k, :] = ∫ ψ_k(t) d(X(t), u(t))^T dt.
+w_i = -Ψ̇_w μ_{x,i},
+Ψ(X)[k, :] = ∫ ψ_k(t) d(X(t), u(t))^T dt,
 ```
 
-The weak-form covariance propagates the same GP derivative uncertainty:
+and the covariance propagates the GP state uncertainty plus the closure slack,
+kept diagonal by default (`weakform_cov="diag"`):
 
 ```text
-Σ_W,i = Ψ_w Σ_{z,i} Ψ_w^T + γ² diag(∫ ψ_k(t)^2 dt).
+Σ_W,i = diag(Ψ̇_w Σ_{x,i} Ψ̇_w^T) + γ² diag(Σ_j (w_j ψ_k(t_j))²).
 ```
 
-Thus both likelihood blocks are "GP derivative covariance + slack" in their
+The slack term is the variance that the derivative block's independent
+`N(0, γ²)` closure errors induce on the weak functionals through the
+quadrature. (`weakform_mode="deriv"` uses `w_i = Ψ_w μ_{z,i}` and
+`Ψ_w Σ_{z,i} Ψ_w^T` instead.)
+
+Thus both likelihood blocks are "GP covariance + closure slack" in their
 respective spaces. The resulting per-mode Gaussian linear model is
 
 ```text
@@ -60,12 +73,15 @@ the block multipliers `log κ_b`.
 
 ## Active experiments
 
+Every script runs the shared `WeakFormConfig` defaults (README); only the ROM
+structure, the data and the closure constant `gamma2_nd` differ.
+
 | Experiment | Script | Operators | Distinguishing features |
 |---|---|---|---|
-| Euler | `experiments/euler/04_unified.py` | `cAH` | Single-trajectory autonomous quadratic ROM; broad GP priors. |
-| Burgers 2D | `experiments/burgers_2d/04_unified.py` | `cAH` | Single-trajectory diffusion-reaction case; MLE-anchored GP priors and trace-based ridge. |
-| Heat | `experiments/heat/04_unified.py` | `cAHBN` | Multi-IC shared operator; input-dependent ROM; lifted/shifted basis; deterministic OpInf prior center with stability shift. |
-| Tumor | `experiments/tumor/04_unified.py` | `cA` | TumorTwin cached FOM data; autonomous growth; adaptive POD via GP SNR threshold. |
+| Euler | `experiments/euler/04_unified.py` | `cAH` | Single-trajectory autonomous quadratic ROM, `r = 6`. |
+| Burgers 2D | `experiments/burgers_2d/04_unified.py` | `cAH` | Single-trajectory diffusion-reaction case, `r = 3`; modal variances spread over orders of magnitude. |
+| Heat | `experiments/heat/04_unified.py` | `cAHBN` | Multi-trajectory shared operator; input-dependent ROM; lifted/shifted basis, `r = 5`. |
+| Tumor | `experiments/tumor/04_unified.py` | `cA` | TumorTwin cached FOM data; autonomous growth; fixed number of modes. |
 
 ## Verified 04 results
 

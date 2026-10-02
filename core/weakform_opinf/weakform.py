@@ -30,6 +30,10 @@ def build_test_functions(time_eval, cfg):
         wpsi        (K, T_eval)  trapezoid-weighted ψ_k(t)
         wpsi_dot    (K, T_eval)  trapezoid-weighted ψ'_k(t)
         int_psi_sq  (K,)         ∫ ψ_k(t)² dt   (trapezoid)
+        int_psi     (K,)         ∫ ψ_k(t) dt    (trapezoid)
+        quad_psi_sq (K,)         Σ_j (w_j ψ_k(t_j))², the variance of the
+                                 quadrature of unit-variance independent
+                                 grid-point errors against ψ_k
         trap_w      (T_eval,)    trapezoid weights
         n_test      int          number of test functions K
     """
@@ -51,7 +55,8 @@ def build_test_functions(time_eval, cfg):
                           num_test_funcs)
     bump_p = cfg.bump_p
 
-    psi_list, psi_dot_list, int_psi_sq_list = [], [], []
+    psi_list, psi_dot_list = [], []
+    int_psi_sq_list, int_psi_list, quad_psi_sq_list = [], [], []
     for tc in centres:
         tau = (time_eval - tc) / radius
         in_supp = np.abs(tau) < 1.0
@@ -68,10 +73,14 @@ def build_test_functions(time_eval, cfg):
         w[0] *= 0.5
         w[-1] *= 0.5
         int_psi_sq_list.append(float(np.sum(w * psi_vals ** 2)))
+        int_psi_list.append(float(np.sum(w * psi_vals)))
+        quad_psi_sq_list.append(float(np.sum((w * psi_vals) ** 2)))
 
     psi_arr = jnp.asarray(np.stack(psi_list))
     psi_dot_arr = jnp.asarray(np.stack(psi_dot_list))
     int_psi_sq_arr = jnp.asarray(np.array(int_psi_sq_list, dtype=np.float32))
+    int_psi_arr = jnp.asarray(np.array(int_psi_list, dtype=np.float32))
+    quad_psi_sq_arr = jnp.asarray(np.array(quad_psi_sq_list, dtype=np.float32))
 
     trap_w = np.ones_like(time_eval) * dt_eval
     trap_w[0] *= 0.5
@@ -85,6 +94,8 @@ def build_test_functions(time_eval, cfg):
         wpsi=wpsi,
         wpsi_dot=wpsi_dot,
         int_psi_sq=int_psi_sq_arr,
+        int_psi=int_psi_arr,
+        quad_psi_sq=quad_psi_sq_arr,
         trap_w=trap_w_jnp,
         n_test=int(wpsi.shape[0]),
     )

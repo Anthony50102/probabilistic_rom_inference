@@ -27,28 +27,22 @@ TRAINING_SPAN = (0, 1.0)
 PREDICTION_SPAN = (0, 3.0)
 
 SCHEMAS = [
-    {"name": "dense_medium_noise", "NUM_SAMPLES": 60, "NOISE_LEVEL": 0.03,
-     "NUM_EVAL_POINTS": 200, "label": "Dense data, medium noise"},
+    {"name": "dense_medium_noise", "NUM_SAMPLES": 60, "NOISE_LEVEL": 0.03, "label": "Dense data, medium noise"},
 ]
 
 
 def make_config(schema):
+    """Shared production algorithm (core defaults); only the ROM structure and the
+    closure constant c_gamma (gamma2_nd, selected on development data, README) are set here."""
     return WeakFormConfig(
         operators="cAH",
         num_modes=3,
-        num_eval_points=schema["NUM_EVAL_POINTS"],
-        gamma2=10.0,
-        deriv_weight=1.0,
-        weakform_weight=1.0,
-        mll_weight=1.0,
-        window_size=10,
         bump_p=6,
         weakform_mode="ibp",
         deriv_cov="diag",
         weakform_cov="diag",
         op_prior_mode="block_hier",
-        num_steps=8000,
-        learning_rate=3e-3,
+        gamma2_nd=0.03,
         num_posterior_samples=500,
         regularizer=1.0,
         ic_uncertainty=True,

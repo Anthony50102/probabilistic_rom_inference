@@ -37,31 +37,26 @@ NUM_ICS = 5
 
 SCHEMAS = [
     {"name": "sparse_low_noise",    "label": "Sparse data, low noise",
-     "NUM_SAMPLES": 20, "NOISE_LEVEL": 0.01, "NUM_EVAL_POINTS": 100},
+     "NUM_SAMPLES": 20, "NOISE_LEVEL": 0.01},
     {"name": "sparse_medium_noise", "label": "Sparse data, medium noise",
-     "NUM_SAMPLES": 20, "NOISE_LEVEL": 0.03, "NUM_EVAL_POINTS": 100},
+     "NUM_SAMPLES": 20, "NOISE_LEVEL": 0.03},
     {"name": "sparse_high_noise",   "label": "Sparse data, high noise",
-     "NUM_SAMPLES": 20, "NOISE_LEVEL": 0.05, "NUM_EVAL_POINTS": 100},
+     "NUM_SAMPLES": 20, "NOISE_LEVEL": 0.05},
 ]
 
 
 def make_config(schema):
+    """Shared production algorithm (core defaults); only the ROM structure and the
+    closure constant c_gamma (gamma2_nd, selected on development data, README) are set here."""
     return WeakFormConfig(
         operators="cAHBN",
         num_modes=5,
-        num_eval_points=schema["NUM_EVAL_POINTS"],
-        gamma2=0.5,
-        deriv_weight=1.0,
-        weakform_weight=2.0,
-        mll_weight=0.1,
-        window_size=20,
         bump_p=6,
         weakform_mode="ibp",
         deriv_cov="diag",
         weakform_cov="diag",
         op_prior_mode="block_hier",
-        num_steps=10000,
-        learning_rate=3e-3,
+        gamma2_nd=1.0,
         num_posterior_samples=500,
         regularizer=1.0,
         ic_uncertainty=True,

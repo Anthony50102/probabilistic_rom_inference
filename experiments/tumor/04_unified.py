@@ -45,22 +45,17 @@ SCHEMAS = [
 
 
 def make_config(schema):
+    """Shared production algorithm (core defaults); only the ROM structure and the
+    closure constant c_gamma (gamma2_nd, selected on development data, README) are set here."""
     return WeakFormConfig(
         operators="cA",
         num_modes=4,
-        num_eval_points=schema["NUM_EVAL_POINTS"],
-        gamma2=0.035,
-        deriv_weight=1.0,
-        weakform_weight=8.0,
-        mll_weight=0.1,
-        window_size=20,
         bump_p=6,
         weakform_mode="ibp",
         deriv_cov="diag",
         weakform_cov="diag",
         op_prior_mode="block_hier",
-        num_steps=12000,
-        learning_rate=3e-3,
+        gamma2_nd=0.1,
         num_posterior_samples=500,
         regularizer=1.0,
         ic_uncertainty=True,

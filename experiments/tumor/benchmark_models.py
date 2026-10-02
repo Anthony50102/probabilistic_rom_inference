@@ -134,12 +134,13 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     trajectories = [{"t_sampled": observations["t_sampled"], "snapshots_comp": observations["y"],
                      "inputs_eval": observations["native_inputs_eval"] if case.dose_days else None}]
     model, conditional, _, priors = build_model(rom, trajectories, cfg)
+    gamma2 = priors["gamma2"]
     guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
     svi = SVI(model, guide, ClippedAdam(step_size=cfg.learning_rate), loss=Trace_ELBO())
     remaining, init_key = random.split(random.PRNGKey(cfg.seed))
     remaining, posterior_key = random.split(remaining)
     _, operator_key = random.split(remaining)
-    state = svi.init(init_key, gamma2=cfg.gamma2)
+    state = svi.init(init_key, gamma2=gamma2)
 
     checkpoints = folder / "checkpoints"
     done, losses = 0, np.empty(0, dtype=np.float32)
@@ -159,7 +160,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
 
     @jax.jit
     def step(current, unused):
-        return svi.update(current, gamma2=cfg.gamma2)
+        return svi.update(current, gamma2=gamma2)
 
     for left in range(done, total, PRODUCTION_CHUNK):
         length = min(PRODUCTION_CHUNK, total - left)
@@ -168,7 +169,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         _save_svi(checkpoints / f"step{left + length:05d}.npz", state, losses, left + length)
         log(f"  production SVI {left + length}/{total}: loss {float(losses[-1]):.6g}")
     bd.write_npz(folder / "losses.npz", losses=losses)
-    exported = _export_production(folder, cfg, observations, guide, svi, state, conditional,
+    exported = _export_production(folder, cfg, gamma2, observations, guide, svi, state, conditional,
                                   posterior_key, operator_key)
     complete = bool(np.isfinite(losses).all() and np.isfinite(exported["O_point"]).all())
     result = {
@@ -190,14 +191,30 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     return result
 
 
-def _export_production(folder, cfg, observations, guide, svi, state, conditional, posterior_key, operator_key):
+def canonical_layout(arrays, operators, r):
+    """Operator arrays in the evaluation's column layout (cA, or cABN for chemo); a chemo ROM
+    fitted without the direct input block (cAN, see galerkin_operators) gets a zero B column."""
+    if operators in ("cA", "cABN"):
+        return arrays
+    if operators != "cAN":
+        raise ValueError(f"No canonical operator layout for {operators!r}")
+    out, k = dict(arrays), 1 + r
+    for key in ("O_point", "O_samples"):
+        out[key] = np.insert(np.asarray(arrays[key]), k, 0., axis=-1)
+    root = np.insert(np.asarray(arrays["conditional_root"]), k, 0., axis=-1)
+    out["conditional_root"] = np.insert(root, k, 0., axis=-2)
+    return out
+
+
+def _export_production(folder, cfg, gamma2, observations, guide, svi, state, conditional, posterior_key,
+                       operator_key):
     import jax
     import jax.numpy as jnp
     from jax import random
     from core.weakform_opinf.pipeline import _ic_sigma, _stack_theta
     r = cfg.num_modes
     params = svi.get_params(state)
-    posterior = guide.sample_posterior(posterior_key, params, sample_shape=(PRODUCTION_DRAWS,), gamma2=cfg.gamma2)
+    posterior = guide.sample_posterior(posterior_key, params, sample_shape=(PRODUCTION_DRAWS,), gamma2=gamma2)
     theta = _stack_theta(posterior, 1, r)
     tau = jnp.exp(jnp.asarray(posterior["log_tau_block"]))
     sigma_O = None if cfg.sigma_O is None else jnp.asarray(cfg.sigma_O)
@@ -205,14 +222,14 @@ def _export_production(folder, cfg, observations, guide, svi, state, conditional
 
     @jax.jit
     def draw_operator(theta_s, key, tau_s):
-        mean, root = conditional(theta_s, cfg.gamma2, sigma_O, tau_s)
+        mean, root = conditional(theta_s, gamma2, sigma_O, tau_s)
         return mean + jnp.einsum("ijk,ik->ij", root, random.normal(key, shape=mean.shape))
 
     samples = np.stack([np.asarray(draw_operator(tuple(value[i] for value in theta), keys[i], tau[i]))
                         for i in range(PRODUCTION_DRAWS)])
     mean_hypers = tuple(np.asarray(value).mean(0) for value in theta)
     mean_tau = np.asarray(tau).mean(0)
-    point, root = conditional(tuple(jnp.asarray(value) for value in mean_hypers), cfg.gamma2, sigma_O,
+    point, root = conditional(tuple(jnp.asarray(value) for value in mean_hypers), gamma2, sigma_O,
                               jnp.asarray(mean_tau))
     arrays = {
         "O_point": np.asarray(point), "O_samples": samples, "conditional_root": np.asarray(root),
@@ -222,6 +239,7 @@ def _export_production(folder, cfg, observations, guide, svi, state, conditional
         "mean_tau_block": mean_tau, "posterior_key": np.asarray(posterior_key),
         "operator_root_key": np.asarray(operator_key),
     }
+    arrays = canonical_layout(arrays, cfg.operators, r)
     bd.write_npz(folder / "operators.npz", **arrays)
     # Native initial-state rule: GP posterior sd at t0 from the mean hyperparameters, 500 draws.
     sigma = _ic_sigma(observations["t_sampled"], *(value[0] for value in mean_hypers), r,

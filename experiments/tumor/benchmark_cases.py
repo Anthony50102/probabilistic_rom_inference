@@ -156,6 +156,19 @@ def _adapter(chemo: bool):
             sys.modules["config"] = previous
 
 
+def galerkin_operators(case: BenchmarkCase, pod: PODSettings) -> str:
+    """ROM blocks implied by Galerkin projection of the kill term -alpha(t) u.
+
+    The term projects to N alpha q with N = -I and, for a mean-centred basis u = ubar + V q,
+    to a direct input term B alpha with B = -V^T ubar. B vanishes for an uncentred basis and
+    is omitted there: a learned B could only absorb misfit that is correlated with the training
+    regimen and would carry it to the changed doses.
+    """
+    if not case.dose_days or pod.centering == "mean":
+        return case.operators
+    return case.operators.replace("B", "")
+
+
 def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
     settings = case.pod if pod is None else pod
     schema = {
@@ -165,19 +178,25 @@ def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
     adapter = _adapter(bool(case.dose_days))
     cfg = adapter.make_config(schema, profile="historical") if case.dose_days else adapter.make_config(schema)
     if case.observation == LEGACY_OBSERVATION:
-        # The earlier design was fitted with the dimensional operator prior and relative GP nugget.
-        cfg = replace(cfg, sigma_O=5.0, gp_jitter_rel=1e-3)
-    return replace(cfg, num_modes=settings.rank)
+        # The earlier design was fitted with the dimensional operator prior, relative GP nugget,
+        # dimensional slack, its hand-set weights and the ridge-regularised normal equations.
+        cfg = replace(cfg, sigma_O=5.0, gp_jitter_rel=1e-3, gamma2=0.035, weak_slack="legacy",
+                      mll_weight=0.1, weakform_weight=8.0, operator_solver="normal")
+        return replace(cfg, num_modes=settings.rank)
+    return replace(cfg, num_modes=settings.rank, operators=galerkin_operators(case, settings))
 
 
 def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
     settings = case.pod if pod is None else pod
     legacy = case.observation == LEGACY_OBSERVATION
     fields = asdict(case)
+    config = asdict(production_config(case, settings))
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")
-    recipe = {**fields, "pod": asdict(settings), "production_config": asdict(production_config(case, settings))}
+        for later in ("gamma2_nd", "weak_slack"):
+            config.pop(later)
+    recipe = {**fields, "pod": asdict(settings), "production_config": config}
     fingerprint = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()
     default = LEGACY_PODS[case.name] if legacy else CASES[case.name].pod
     return {

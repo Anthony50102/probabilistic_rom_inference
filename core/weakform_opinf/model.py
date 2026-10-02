@@ -57,6 +57,31 @@ def _column_degrees(rom, num_modes, num_inputs):
     return pq.astype(int), pu.astype(int)
 
 
+def data_scales(trajectories):
+    """Reference time T (mean training window) and state size S (RMS training
+    POD coefficient) that nondimensionalise the operator prior and the slack."""
+    T = float(np.mean([float(tr["t_sampled"][-1] - tr["t_sampled"][0]) for tr in trajectories]))
+    Y = np.concatenate([np.asarray(tr["snapshots_comp"], dtype=float) for tr in trajectories], axis=1)
+    return T, float(np.sqrt(np.mean(Y ** 2)))
+
+
+def closure_slack(trajectories, cfg):
+    """Closure-error variance γ² and its provenance.
+
+    cfg.gamma2 None: γ² = gamma2_nd (S/T)², i.e. a closure error of a fixed
+    fraction of the reference rate S/T at which the reduced state changes, so the
+    slack is invariant to the units of time and state. A float is used as given.
+    """
+    if cfg.gamma2 is not None:
+        return float(cfg.gamma2), dict(rule="fixed", gamma2=float(cfg.gamma2), weak_slack=cfg.weak_slack)
+    T, S = data_scales(trajectories)
+    if not all(np.isfinite(x) and x > 0 for x in (T, S)):
+        raise ValueError(f"The nondimensional slack needs positive scales (T={T}, S={S})")
+    gamma2 = float(cfg.gamma2_nd) * (S / T) ** 2
+    return gamma2, dict(rule="nondimensional", gamma2=gamma2, gamma2_nd=float(cfg.gamma2_nd),
+                        S=S, T=T, weak_slack=cfg.weak_slack)
+
+
 def nondimensional_column_scale(rom, trajectories, num_modes):
     """Operator prior scale s_j = S^(1-p_j) U^(-q_j) / T of every column.
 
@@ -65,9 +90,7 @@ def nondimensional_column_scale(rom, trajectories, num_modes):
     operator entry is O(1); s_j converts that unit scale back to the data's
     units (p_j, q_j = state/input degree of column j). Returns (s, info).
     """
-    T = float(np.mean([float(tr["t_sampled"][-1] - tr["t_sampled"][0]) for tr in trajectories]))
-    Y = np.concatenate([np.asarray(tr["snapshots_comp"], dtype=float) for tr in trajectories], axis=1)
-    S = float(np.sqrt(np.mean(Y ** 2)))
+    T, S = data_scales(trajectories)
     inputs = [tr.get("inputs_eval") for tr in trajectories]
     if all(u is None for u in inputs):
         p, U = 0, 1.0
@@ -111,9 +134,11 @@ def build_model(rom, trajectories, cfg):
         → (μ_O, C_O) with C_O C_Oᵀ = Σ_O, stacked over modes. Under the
         nondimensional prior (cfg.sigma_O None) ``tau_block`` holds the block
         multipliers κ_b (latent ``log_tau_block`` = log κ_b) and ``sigma_O`` is
-        unused; ``tau_block=None`` means the prior centre.
+        unused; ``tau_block=None`` means the prior centre. ``gamma2=None`` (as
+        for the model) means the resolved slack ``prior_info["gamma2"]``.
     time_evals : list of np.ndarray, per-trajectory eval grids.
-    prior_info : dict of representative prior locations (diagnostics).
+    prior_info : dict of representative prior locations (diagnostics), the
+        resolved closure slack ``gamma2`` and its provenance ``closure_slack``.
     """
     num_modes = cfg.num_modes
     num_traj = len(trajectories)
@@ -143,6 +168,10 @@ def build_model(rom, trajectories, cfg):
         log_tau_center = jnp.log(cfg.sigma_O)
         inv_prec_vec = jnp.full(m_total, 1.0 / (cfg.sigma_O ** 2))
 
+    gamma2_resolved, slack_info = closure_slack(trajectories, cfg)
+    # The historical dimensional slack kept an absolute floor on the derivative variance.
+    deriv_floor = 1e-4 if cfg.gamma2 is not None else 0.0
+
     # ── Per-trajectory precompute: eval grid, GP conditional, test funcs ──
     traj_ctx = []
     time_evals = []
@@ -156,6 +185,8 @@ def build_model(rom, trajectories, cfg):
         make = _gp.trajectory_gp_conditional(tr, cfg)
         _single, _batch = make(time_eval)
         tf = _wf.build_test_functions(time_eval, cfg)
+        weak_slack = {"grid": tf["quad_psi_sq"], "support": tf["int_psi"] ** 2,
+                      "legacy": tf["int_psi_sq"]}[cfg.weak_slack]
         noise_kwargs = {}
         if cfg.gp_noise_prior == "measurement":
             if "noise_variances" not in tr:
@@ -168,7 +199,7 @@ def build_model(rom, trajectories, cfg):
         inputs_eval = None if inputs_eval is None else jnp.asarray(inputs_eval)
 
         traj_ctx.append(dict(
-            y_obs=y_obs, batch_gp=_batch, tf=tf, locs=locs,
+            y_obs=y_obs, batch_gp=_batch, tf=tf, locs=locs, weak_slack=weak_slack,
             inputs_eval=inputs_eval, n_eval=num_eval))
 
     def _build_blocks(ctx, ells, sig2s, nus, gamma2):
@@ -183,7 +214,7 @@ def build_model(rom, trajectories, cfg):
         if deriv_is_diag:
             deriv_var = jnp.maximum(jax.vmap(jnp.diagonal)(K_posts_Z), 0.0)
             # precision vector per mode: weight / (Σ_z,ii + γ²)
-            Sigma_D = cfg.deriv_weight / (deriv_var + gamma2 + 1e-4)  # (r, n)
+            Sigma_D = cfg.deriv_weight / (deriv_var + gamma2 + deriv_floor)  # (r, n)
         else:
             Sigma_D = (K_posts_Z + gamma2 * I_eval[None]) / (cfg.deriv_weight + 1e-30)
 
@@ -191,7 +222,7 @@ def build_model(rom, trajectories, cfg):
         tf = ctx["tf"]
         wpsi, wpsi_dot = tf["wpsi"], tf["wpsi_dot"]
         A_weak = wpsi @ f_X
-        diag_slack = gamma2 * jnp.diag(tf["int_psi_sq"])
+        diag_slack = gamma2 * jnp.diag(ctx["weak_slack"])
         if cfg.weakform_mode == "ibp":
             weak_obs = -(Xs @ wpsi_dot.T)
             def _sig_w(Kx):
@@ -231,7 +262,8 @@ def build_model(rom, trajectories, cfg):
             theta.append((ells, sig2s, nus))
         return theta
 
-    def model(gamma2=cfg.gamma2):
+    def model(gamma2=None):
+        gamma2 = gamma2_resolved if gamma2 is None else gamma2
         theta = _sample_hypers()
 
         if cfg.op_prior_mode == "block_hier":
@@ -272,6 +304,7 @@ def build_model(rom, trajectories, cfg):
     def posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None):
         """Closed-form O posterior given θ. ``theta_stacked`` is
         (ells, sig2s, nus) each shaped (num_traj, num_modes)."""
+        gamma2 = gamma2_resolved if gamma2 is None else gamma2
         if nondim:
             prior_prec_vec, _ = prior_prec_from_tau(
                 jnp.ones(n_blocks) if tau_block is None else tau_block)
@@ -304,6 +337,6 @@ def build_model(rom, trajectories, cfg):
         nu=[float(np.exp(traj_ctx[0]["locs"]["log_nu_locs"][i]))
             for i in range(num_modes)],
         num_traj=num_traj, m_total=m_total, n_blocks=n_blocks,
-        operator_prior=operator_prior,
+        operator_prior=operator_prior, gamma2=gamma2_resolved, closure_slack=slack_info,
     )
     return model, posterior_O_fn, time_evals, prior_info

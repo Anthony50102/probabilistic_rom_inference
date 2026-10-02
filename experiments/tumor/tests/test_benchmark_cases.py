@@ -6,7 +6,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 
-from benchmark_cases import CASES, PODSettings, describe, get_case, production_config, _adapter
+from benchmark_cases import CASES, PODSettings, describe, galerkin_operators, get_case, production_config, _adapter
+from core.weakform_opinf import WeakFormConfig
 
 
 class BenchmarkCaseTests(unittest.TestCase):
@@ -35,18 +36,61 @@ class BenchmarkCaseTests(unittest.TestCase):
                 cfg = production_config(case)
                 self.assertFalse(cfg.gp_input_trend)
                 self.assertEqual(cfg.gp_noise_prior, "spectrum")
-                self.assertEqual(cfg.operator_solver, "normal")
+                self.assertEqual(cfg.operator_solver, "qr")
                 self.assertEqual(cfg.precision, "default")
                 self.assertEqual(cfg.num_steps, 12000)
                 self.assertEqual(cfg.num_posterior_samples, 500)
+                shared = WeakFormConfig()
+                for field in ("gamma2", "gamma2_nd", "weak_slack", "mll_weight", "weakform_weight",
+                              "deriv_weight", "num_eval_points", "window_size", "learning_rate",
+                              "operator_solver"):
+                    self.assertEqual(getattr(cfg, field), getattr(shared, field), field)
+                legacy = production_config(get_case(name, "oracle_masked"))
+                self.assertEqual((legacy.gamma2, legacy.weak_slack, legacy.mll_weight, legacy.weakform_weight,
+                                  legacy.operator_solver), (.035, "legacy", .1, 8., "normal"))
                 modified = production_config(case, PODSettings(6, "matched_training"))
                 expected = asdict(cfg)
-                expected["num_modes"] = 6
+                expected.update(num_modes=6, operators=case.operators)
                 self.assertEqual(asdict(modified), expected)
         schema = {"NUM_EVAL_POINTS": 200}
         self.assertEqual(
             asdict(production_config(CASES["single-dose-chemo"])),
-            asdict(_adapter(True).make_config(schema, profile="historical")))
+            asdict(replace(_adapter(True).make_config(schema, profile="historical"), operators="cAN")))
+
+    def test_direct_input_block_only_with_a_centred_basis(self):
+        for name in ("single-dose-chemo", "multi-dose-chemo"):
+            case = CASES[name]
+            with self.subTest(case=name):
+                self.assertEqual(case.pod.centering, "none")
+                self.assertEqual(galerkin_operators(case, case.pod), "cAN")
+                self.assertEqual(production_config(case).operators, "cAN")
+                centred = PODSettings(4, "observed_training", "mean")
+                self.assertEqual(production_config(case, centred).operators, "cABN")
+                self.assertEqual(production_config(get_case(name, "oracle_masked")).operators, "cABN")
+        untreated = CASES["untreated-growth"]
+        self.assertEqual(production_config(untreated).operators, "cA")
+        self.assertEqual(galerkin_operators(untreated, PODSettings(3, "observed_training", "none")), "cA")
+
+    def test_omitted_input_block_is_a_zero_column_of_the_canonical_layout(self):
+        import numpy as np
+        from benchmark_models import canonical_layout
+        r, rng = 3, np.random.default_rng(0)
+        fitted = {"O_point": rng.normal(size=(r, 2 * r + 1)), "O_samples": rng.normal(size=(5, r, 2 * r + 1)),
+                  "conditional_root": rng.normal(size=(r, 2 * r + 1, 2 * r + 1)), "mean_tau_block": np.ones(3)}
+        out = canonical_layout(fitted, "cAN", r)
+        self.assertEqual(out["O_point"].shape, (r, 2 * r + 2))
+        self.assertEqual(out["O_samples"].shape, (5, r, 2 * r + 2))
+        self.assertEqual(out["conditional_root"].shape, (r, 2 * r + 2, 2 * r + 2))
+        keep = np.r_[0:r + 1, r + 2:2 * r + 2]
+        np.testing.assert_array_equal(out["O_point"][:, r + 1], 0.)
+        np.testing.assert_array_equal(out["O_point"][:, keep], fitted["O_point"])
+        np.testing.assert_array_equal(out["O_samples"][..., keep], fitted["O_samples"])
+        np.testing.assert_array_equal(out["conditional_root"][:, keep][:, :, keep], fitted["conditional_root"])
+        np.testing.assert_array_equal(out["conditional_root"][:, r + 1], 0.)
+        np.testing.assert_array_equal(out["conditional_root"][:, :, r + 1], 0.)
+        self.assertIs(canonical_layout(fitted, "cABN", r), fitted)
+        with self.assertRaises(ValueError):
+            canonical_layout(fitted, "cAHN", r)
 
     def test_POD_identity_is_not_a_checkpoint_alias(self):
         case = get_case("multi-dose-chemo", "oracle_masked")

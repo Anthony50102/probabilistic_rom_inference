@@ -94,7 +94,8 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
         rom, prepared.trajectories, cfg)
 
     # ── Inference over GP hyperparameters ────────────────────────────────
-    model_kwargs = dict(gamma2=cfg.gamma2)
+    gamma2 = prior_info["gamma2"]
+    model_kwargs = dict(gamma2=gamma2)
     rng_key, ik = random.split(rng_key)
     t0 = time.time()
     if cfg.infer == "nuts":
@@ -139,7 +140,7 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
 
     @jax.jit
     def _draw_O(theta_s, key, tau_s):
-        mu_O, C_O = posterior_O_fn(theta_s, cfg.gamma2, sigma_O_j, tau_s)
+        mu_O, C_O = posterior_O_fn(theta_s, gamma2, sigma_O_j, tau_s)
         eps = jax.random.normal(key, shape=mu_O.shape)
         return mu_O + jnp.einsum("ijk,ik->ij", C_O, eps)
 
@@ -308,7 +309,7 @@ def _save_npz(result, spec, schema, script_dir):
         t_pred=targets[0].t_pred, t_full=targets[0].t_full,
         runtime=result["runtime"],
         op_norm_median=result["op_norm_median"], losses=result["losses"],
-        num_modes=result["num_modes"],
+        num_modes=result["num_modes"], gamma2=result["gp_prior_info"]["gamma2"],
         training_span=np.array(result["training_span"]),
         O_samples=result["O_samples"],
         basis_entries=np.asarray(result["basis"].entries),

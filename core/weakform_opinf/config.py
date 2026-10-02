@@ -4,9 +4,10 @@ All per-experiment behaviour is expressed as fields on :class:`WeakFormConfig`.
 There are deliberately **no environment-variable toggles and no MLE anywhere**:
 GP-hyperparameter priors are spectrum-anchored (derived from the observation
 window and the POD singular-value spectrum), the operator prior is
-nondimensionalised by the training window and the state/input scales, the GP
-nugget sits at floating-point round-off, and SVI/NUTS explores the
-hyperparameters. This makes every case study run the identical algorithm.
+nondimensionalised by the training window and the state/input scales, the
+closure-error slack is set in the same units, the GP nugget sits at
+floating-point round-off, and SVI/NUTS explores the hyperparameters. This makes
+every case study run the identical algorithm.
 """
 
 from __future__ import annotations
@@ -18,8 +19,9 @@ from dataclasses import dataclass
 class WeakFormConfig:
     """Configuration for :func:`core.weakform_opinf.model.build_model`.
 
-    The defaults reproduce the single-trajectory autonomous behaviour
-    (euler-style). Per-experiment scripts override the relevant fields.
+    The defaults are the production algorithm shared by every reported
+    experiment; experiment scripts set only the model structure (operators,
+    num_modes) and their data-specific options.
     """
 
     # ── Reduced-model structure ──────────────────────────────────────────
@@ -74,18 +76,37 @@ class WeakFormConfig:
     state/input degree of column j; log κ_b ~ N(0, hier_tau_scale²). A float
     selects the historical dimensional prior log τ_b ~ N(log σ_O, hier_tau_scale²)."""
     hier_tau_scale: float = 3.0
-    operator_solver: str = "normal"
-    """'normal' retains the historical jittered normal equations; 'qr' factors
-    the whitened augmented system without adding an undeclared operator prior."""
+    operator_solver: str = "qr"
+    """'qr' (default) factors the whitened likelihood and the declared Gaussian
+    prior as one augmented least-squares system: exact and unit invariant.
+    'normal' retains the historical normal equations with the trace-scaled
+    ridge 1e-6 max(tr(M)/m, 1) I, which is not unit invariant and can move
+    weakly identified coefficients substantially."""
 
     # ── Constraint slack + GP marginal-likelihood weight ─────────────────
-    gamma2: float = 10.0
+    gamma2: float | None = None
+    """Closure-error (derivative-slack) variance γ². None (default, every reported
+    experiment): γ² = gamma2_nd (S/T)², with S/T the reference rate of the
+    nondimensional operator prior (S RMS training POD coefficient, T training
+    window), so the slack is unit invariant. A float fixes γ² in the data's units
+    (historical; keeps its 1e-4 absolute floor on the derivative variance)."""
+    gamma2_nd: float = 0.1
+    """Closure constant c_γ: closure-error variance in units of (S/T)², used when
+    gamma2 is None. The one per-experiment setting: each runner sets the value
+    selected on development data (README). 0.1 is the best single value of that
+    study, but no single value suited every benchmark."""
+    weak_slack: str = "grid"
+    """Weak-form closure variance. 'grid' (default): the derivative block's
+    closure error (independent, variance γ², at every grid point) carried through
+    the weak-form quadrature, γ² Σ_j (w_j ψ_k(t_j))²; 'support': one closure error
+    shared over each test-function support, γ² (∫ψ_k)²; 'legacy': γ² ∫ψ_k², an
+    implicit correlation time of one time unit (historical)."""
     mll_weight: float = 1.0
 
     # ── Inference ────────────────────────────────────────────────────────
     infer: str = "svi"
     """'svi' (AutoNormal) or 'nuts'."""
-    num_steps: int = 8000
+    num_steps: int = 12000
     learning_rate: float = 3e-3
     num_posterior_samples: int = 500
     nuts_warmup: int = 500
@@ -114,10 +135,13 @@ class WeakFormConfig:
         _one_of("gp_noise_prior", self.gp_noise_prior, {"spectrum", "measurement"})
         _one_of("precision", self.precision, {"default", "float32", "float64"})
         _one_of("infer", self.infer, {"svi", "nuts"})
-        for name in ("sigma_O", "gp_jitter_rel"):
+        _one_of("weak_slack", self.weak_slack, {"grid", "support", "legacy"})
+        for name in ("sigma_O", "gp_jitter_rel", "gamma2"):
             value = getattr(self, name)
             if value is not None and not value > 0:
                 raise ValueError(f"WeakFormConfig.{name}={value!r} must be None or positive")
+        if not self.gamma2_nd > 0:
+            raise ValueError(f"WeakFormConfig.gamma2_nd={self.gamma2_nd!r} must be positive")
 
 
 def _one_of(name, value, allowed):

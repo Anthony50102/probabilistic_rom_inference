@@ -21,7 +21,7 @@ The active experiment pipeline compares:
 | `burgers_2d` | 2D diffusion-reaction / Burgers-style system | `cAH` | Single trajectory plus optional parametric extension scripts. |
 | `tumor` | TumorTwin tumor-growth data | `cA` | Cached FOM data, fixed POD mode count. |
 | `tumor` (chemo) | Tumor growth with chemotherapy | `cABN` | Input-driven ROM via `04_unified_chemo.py`. |
-| `tumor` (reported benchmarks) | Untreated growth, single-dose and multi-dose chemo | `cA` / `cABN` | `04/05/06_*_benchmark.py`; see [Running the three reported tumor benchmarks](#running-the-three-reported-tumor-benchmarks). |
+| `tumor` (reported benchmarks) | Untreated growth, single-dose and multi-dose chemo | `cA` / `cAN` | `04/05/06_*_benchmark.py`; see [Running the three reported tumor benchmarks](#running-the-three-reported-tumor-benchmarks). |
 
 ## Repository structure
 
@@ -113,16 +113,73 @@ oracle-masked tumor design and the experimental input-aware chemo profile pin.
 
 Pointwise derivative constraints are combined with state-based weak-form
 constraints via integration by parts. The default derivative and weak-form
-covariance blocks are diagonal, with additive model-error slack; full blocks
+covariance blocks are diagonal, with additive closure-error slack; full blocks
 are optional configuration choices. The cross-block covariance is omitted.
 
-`operator_solver="qr"` factors the whitened likelihood and declared Gaussian
-prior as one augmented least-squares system. It avoids normal-equation
+The closure error (what the polynomial ROM cannot represent) is modelled as
+independent `N(0, γ²)` errors at the estimation times, with
+`γ² = gamma2_nd (S/T)²` measured against the same reference rate `S/T` as the
+operator prior (`gamma2_nd` is the closure constant `c_γ`, below). The weak-form block receives the
+variance those errors induce through its quadrature,
+`γ² Σ_j (w_j ψ_k(t_j))²` (`weak_slack="grid"`), so the slack is unit invariant.
+A float `gamma2` restores a fixed slack in the data's units and
+`weak_slack="legacy"` the historical `γ² ∫ψ_k² dt`, which implies a closure
+correlation time of one time unit; only the earlier oracle-masked tumor design
+and the experimental input-aware chemo profile pin them.
+
+`operator_solver="qr"` (default) factors the whitened likelihood and declared
+Gaussian prior as one augmented least-squares system. It avoids normal-equation
 conditioning, cancellation between large quadratic forms, and the historical
-trace-scaled precision ridge, which can substantially alter weakly identified
-input coefficients. The generic compatibility default `"normal"` retains the
-old numerical implementation; the input-aware chemotherapy profile selects
-`"qr"`. Switching solvers requires a new checkpoint/output directory.
+trace-scaled precision ridge `1e-6 max(tr(M)/m, 1) I`. That ridge is not unit
+invariant: on development data it moved the nondimensional posterior-mean
+operator by 21% (2D diffusion-reaction) and 64% (multi-dose chemo), whose
+input coefficients are weakly identified. `"normal"` retains the old numerical
+implementation for the earlier oracle-masked tumor design. Switching solvers
+requires a new checkpoint/output directory.
+
+Every reported experiment runs these `WeakFormConfig` defaults: unit likelihood
+weights (`mll_weight = deriv_weight = weakform_weight = 1`, the exact joint
+likelihood of GP and operator evidence), `num_eval_points=200`,
+`window_size=20` (ten test functions), 12000 SVI steps at learning rate 3e-3,
+and 500 posterior draws. The `04_unified*.py` runners set only the ROM
+structure (operators, `num_modes`), data options and the closure constant
+`gamma2_nd`. The shared settings were chosen on development data only (redrawn
+PDE sampling times and noise, tumor acquisitions 45-47).
+
+The closure constant `c_γ` is the one per-experiment setting. It acts like the
+regularization parameter of deterministic OpInf: a larger `c_γ` loosens the
+dynamics constraints, widens the operator posterior and lets the evidence prune
+weakly supported blocks. It cannot be inferred. With the GPs free, the joint
+target is a pseudo-likelihood (the dynamics "observations" are functions of the
+GP hyperparameters) and increases without bound as `γ → 0`. With the GPs held
+at their marginal-likelihood fit, the operator evidence still prefers `γ → 0`
+on every PDE regime, heat included, although heat forecasts are worst at small
+`γ`. No single value suited every benchmark either. On development data
+(geometric-mean forecast error, %) heat needs `c_γ ≈ 1` and 2D diffusion-reaction
+`c_γ ≈ 0.03`:
+
+| `c_γ` | 0.01 | 0.03 | 0.1 | 0.3 | 1 | 3 | earlier hand-set |
+|---|---|---|---|---|---|---|---|
+| Euler (3 regimes) | | 15.69 | 15.97 | 15.73 | **15.84** | 16.46 | 15.25 |
+| Heat (3 regimes, future and held-out forcing) | | 20.30 | 6.82 | 4.60 | **3.66** | 4.10 | 3.98 |
+| 2D diffusion-reaction | 2.73 | **2.20** | 3.65 | 7.80 | 10.54 | | 4.36 |
+| Tumor, untreated (45-47) | 6.92 | 6.93 | **7.00** | 7.19 | 7.58 | | 7.12 |
+| Tumor, single-dose arm (45-47) | | 4.57 | **4.57** | 5.31 | 5.83 | | 5.26 |
+| Tumor, changed-dose arms (45-47) | | 5.27 | **5.07** | 5.62 | 6.24 | | 6.47 |
+
+The pre-registered rule took a single value from {0.03, 0.1, 0.3, 1} only if
+every experiment stayed within 25% of its earlier hand-set error; none did.
+Its fallback picks per experiment the lowest development error, with ties
+within 3% going to the larger (more conservative) value, on the grid widened to
+0.01 and 3 where a minimum lay on its edge (bold): `c_γ = 1` for Euler and heat,
+`0.03` for 2D and `0.1` for all three tumor tasks (one value: the chemo tasks
+share their training data). The heat error at small `c_γ` is dominated by
+the noisier regimes (253% at high noise for `c_γ = 0.03`); with the GPs at their
+marginal-likelihood fit, the evidence keeps the quadratic block of heat's lifted
+ROM at small `c_γ` and prunes it at `c_γ ≥ 1`. 2D, whose quadratic reaction the
+ROM represents exactly, is most accurate with little slack. Training-window
+rollout error does not recover these choices (it picks 0.03 and 0.1 for heat at
+low and medium noise).
 
 As an **experimental model extension**, `gp_input_trend=True` adds Gaussian trend coefficients
 for a constant, time, and cumulative input exposure. The coefficients are
@@ -327,6 +384,16 @@ acquisitions: 0.3% of the field energy missed, three false-positive voxels in
 | `untreated-growth` | 42-44 | mean-centered rank 3 (`segmented_observed_mean_r3`) | The threshold admits three modes. The earlier rank 4 added a noise mode and diverged on acquisition 42 (operator eigenvalue +1.0/day). |
 | `single-dose-chemo` | 51-53 | uncentered rank 4 (`segmented_observed_none_r4`) | The multi-dose basis; the unchanged regimen is the multi-dose 0.5x arm. The declared mean-centered rank 4 failed on 45-47 (27-104% error), so the task moved to fresh acquisitions. |
 | `multi-dose-chemo` | 48-50 | uncentered rank 4 (`segmented_observed_none_r4`) | Chosen among ranks 3 and 4, centered or not, by production's multi-dose error on development acquisition 45, then frozen before 48-50 were fitted. The choice was made under the earlier hand-set prior; the same rule picks it again under the current one. |
+
+The chemo ROM keeps only the input blocks that Galerkin projection of the kill
+term `-α(t) u` produces (`benchmark_cases.galerkin_operators`): `N α q` with
+`N = -I` and, for a basis centred on `ū`, a direct input term `B α` with
+`B = -Vᵀ ū`. The reported chemo bases are uncentred, so their ROM is `cAN`;
+centred bases keep `cABN`. On an uncentred basis a free `B` is not removed by
+the evidence (only the old normal-equation ridge suppressed it); it absorbs
+training-regimen misfit and carries it to the changed doses. `operators.npz`
+stores every chemo fit in the `cABN` column layout, with a zero `B` column for
+`cAN`.
 
 Each runner accepts a case (`untreated-growth`, `single-dose-chemo`,
 `multi-dose-chemo`), `--seeds`, `--observation`, the `--pod-*` overrides of
