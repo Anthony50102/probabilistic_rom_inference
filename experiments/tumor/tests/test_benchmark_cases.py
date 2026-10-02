@@ -6,13 +6,15 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 
-from benchmark_cases import CASES, PODSettings, describe, galerkin_operators, get_case, production_config, _adapter
+from benchmark_cases import (CASES, LEGACY_PODS, PATIENT_DOSE_DAYS, REPORTED_CASES, PODSettings, describe,
+                             galerkin_operators, get_case, production_config, _adapter)
 from core.weakform_opinf import WeakFormConfig
 
 
 class BenchmarkCaseTests(unittest.TestCase):
     def test_three_explicit_cases(self):
-        self.assertEqual(set(CASES), {"untreated-growth", "single-dose-chemo", "multi-dose-chemo"})
+        self.assertEqual(REPORTED_CASES, ("untreated-growth", "single-dose-chemo", "multi-dose-chemo"))
+        self.assertEqual(set(CASES), set(REPORTED_CASES) | {"standard-regimen-chemo", "alternative-regimen-chemo"})
         self.assertEqual(CASES["untreated-growth"].dose_days, ())
         self.assertEqual(CASES["untreated-growth"].prediction_end, 90.)
         single, multi = CASES["single-dose-chemo"], CASES["multi-dose-chemo"]
@@ -20,6 +22,21 @@ class BenchmarkCaseTests(unittest.TestCase):
         self.assertEqual(len(single.dose_days), 5)
         self.assertEqual(single.future_strengths, (.5,))
         self.assertEqual(multi.future_strengths, (.25, .5, .75, 1.))
+
+    def test_tutorial_schedule_cases(self):
+        standard, alternative = CASES["standard-regimen-chemo"], CASES["alternative-regimen-chemo"]
+        self.assertEqual(PATIENT_DOSE_DAYS, (35., 42., 49., 56., 63., 70., 77., 84., 91., 98., 105., 112.))
+        for case in (standard, alternative):
+            self.assertEqual((case.training_span, case.prediction_end), ((5., 57.), 119.))
+            self.assertEqual((case.growth_rate, case.diffusion, case.sensitivity), (.0521, .0965, .23))
+            self.assertEqual((case.dose_days, case.training_strength), (PATIENT_DOSE_DAYS, 1.))
+        self.assertEqual(standard.future_strengths, (1.,))
+        self.assertEqual(alternative.future_strengths, (.5, 1., 1.5, 2.))
+        coefficients = alternative.pulse_coefficients(2.)
+        self.assertEqual(coefficients[:4], (.23,) * 4)
+        self.assertEqual(coefficients[4:], (.46,) * 8)
+        with self.assertRaises(ValueError):
+            get_case("standard-regimen-chemo", "oracle_masked")
 
     def test_only_future_pulses_change(self):
         case = CASES["multi-dose-chemo"]
@@ -45,10 +62,11 @@ class BenchmarkCaseTests(unittest.TestCase):
                               "deriv_weight", "num_eval_points", "window_size", "learning_rate",
                               "operator_solver"):
                     self.assertEqual(getattr(cfg, field), getattr(shared, field), field)
-                legacy = production_config(get_case(name, "oracle_masked"))
-                self.assertEqual((legacy.closure, legacy.gamma2, legacy.weak_slack, legacy.mll_weight,
-                                  legacy.weakform_weight, legacy.operator_solver),
-                                 ("slack", .035, "legacy", .1, 8., "normal"))
+                if name in LEGACY_PODS:
+                    legacy = production_config(get_case(name, "oracle_masked"))
+                    self.assertEqual((legacy.closure, legacy.gamma2, legacy.weak_slack, legacy.mll_weight,
+                                      legacy.weakform_weight, legacy.operator_solver),
+                                     ("slack", .035, "legacy", .1, 8., "normal"))
                 modified = production_config(case, PODSettings(6, "matched_training"))
                 expected = asdict(cfg)
                 expected.update(num_modes=6, operators=case.operators)

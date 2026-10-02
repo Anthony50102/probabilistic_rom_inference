@@ -80,7 +80,7 @@ def main(argv=None):
     if not benchmark_environment.matches_reported():
         print(f"Note: thread settings differ from the reported environment ({benchmark_environment.current()}); "
               "results may differ in the last float digits.")
-    for name in [args.case] if args.case else list(bd.CASES):
+    for name in [args.case] if args.case else list(bd.REPORTED_CASES):
         case, pod, seeds = bd.resolve(args, name)
         print(f"\n=== {case.name} [{bd.acquisition_tag(case, pod)}], seeds {list(seeds)}")
         for seed in seeds:

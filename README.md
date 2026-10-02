@@ -300,6 +300,14 @@ and 100. Untreated growth retains the logistic growth model without treatment.
 | `single-dose-chemo` | Continue the same half-strength regimen. | 120 segmented scans, 1% voxel noise, days 5-70 | Days 70-110 |
 | `multi-dose-chemo` | Keep the same half-strength history; change only future pulse strengths to 0.25x, 0.5x, 0.75x, or 1x of original exposure. | Same chemo acquisition | Days 70-110 |
 
+Two exploratory recipes, `standard-regimen-chemo` and
+`alternative-regimen-chemo`, follow TumorTwin's TNBC tutorial instead: the
+tutorial's calibrated twin on the patient's weekly schedule (untreated until
+day 35), trained on days 5-57 and forecast to day 119 with the remaining doses
+unchanged or rescaled to 0.5x-2x. They are not run by default and are not in
+the manuscript; production results and a clean-data diagnosis are in the
+[tutorial-schedule record](experiments/TUMOR_TUTORIAL_SCHEDULE_CHEMO.md).
+
 Inspect the recipes and their production inference settings:
 
 ```bash
@@ -411,7 +419,9 @@ stores every chemo fit in the `cABN` column layout, with a zero `B` column for
 `cAN`.
 
 Each runner accepts a case (`untreated-growth`, `single-dose-chemo`,
-`multi-dose-chemo`), `--seeds`, `--observation`, the `--pod-*` overrides of
+`multi-dose-chemo`, or one of the two exploratory tutorial-schedule cases;
+without one it runs the three reported cases), `--seeds`, `--observation`,
+the `--pod-*` overrides of
 `benchmark_cases.py`, and `--output-root` for scratch runs; `--help` lists the
 rest (`--steps` and `--members` are for smoke tests only). Outputs go to
 `results/benchmarks/<case>/<tag>/seed<N>/{data,production,neural_ode,evaluation}`

@@ -3,6 +3,13 @@
 Here single-dose means one fixed dose strength, not one administration.
 Both chemotherapy cases use repeated pulses; multi-dose changes future strengths.
 
+The two ``*-regimen-chemo`` cases follow TumorTwin's TNBC tutorial instead: the
+tutorial's calibrated twin of TNBC_demo_001 on the patient's own schedule
+(untreated until day 35, then twelve weekly doses to day 112), trained on days
+5-57 (to the second MRI) and forecast to the third MRI on day 119. The
+standard regimen keeps the remaining eight doses; the alternative regimens
+rescale them, as in the tutorial's total-dose study.
+
 Observation models
 ------------------
 ``segmented`` (reported): every scan, including the baseline, adds Gaussian
@@ -32,6 +39,13 @@ import sys
 
 OBSERVATION_MODELS = ("segmented", "oracle_masked")
 LEGACY_OBSERVATION = "oracle_masked"
+# Drug sensitivity per unit dose and pulse days of the original chemotherapy cases.
+HISTORICAL_SENSITIVITY = .5
+HISTORICAL_DOSE_DAYS = (20., 40., 60., 80., 100.)
+# TNBC_demo_001.json: twelve weekly taxol doses, days 35-112 after the first MRI.
+PATIENT_DOSE_DAYS = tuple(35. + 7. * week for week in range(12))
+# TumorTwin TNBC tutorial, Levenberg-Marquardt fit to MRIs 1-2 ("Best parameters": d, k, sensitivity).
+TUTORIAL_TWIN = {"diffusion": .0965, "growth_rate": .0521, "sensitivity": .23}
 
 
 @dataclass(frozen=True)
@@ -65,6 +79,7 @@ class BenchmarkCase:
     future_strengths: tuple[float, ...]
     pod: PODSettings
     observation: str = "segmented"
+    sensitivity: float = HISTORICAL_SENSITIVITY
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
@@ -76,8 +91,8 @@ class BenchmarkCase:
     def pulse_coefficients(self, future_strength: float) -> tuple[float, ...]:
         if future_strength not in self.future_strengths:
             raise ValueError(f"{future_strength} is not a declared strength for {self.name}.")
-        return tuple(.5 * (self.training_strength if day <= self.training_span[1]
-                           else future_strength) for day in self.dose_days)
+        return tuple(self.sensitivity * (self.training_strength if day <= self.training_span[1]
+                                         else future_strength) for day in self.dose_days)
 
 
 CASES = {
@@ -88,13 +103,25 @@ CASES = {
     "single-dose-chemo": BenchmarkCase(
         "single-dose-chemo", "Fixed half-strength regimen; repeated pulses, one strength.",
         (5., 70.), 110., 120, .01, .025, .05, "cABN",
-        (20., 40., 60., 80., 100.), .5, (.5,), PODSettings(4, "observed_training", "none")),
+        HISTORICAL_DOSE_DAYS, .5, (.5,), PODSettings(4, "observed_training", "none")),
     "multi-dose-chemo": BenchmarkCase(
         "multi-dose-chemo", "Same half-strength past; different strengths of future pulses.",
         (5., 70.), 110., 120, .01, .025, .05, "cABN",
-        (20., 40., 60., 80., 100.), .5, (.25, .5, .75, 1.),
+        HISTORICAL_DOSE_DAYS, .5, (.25, .5, .75, 1.),
         PODSettings(4, "observed_training", "none")),
+    "standard-regimen-chemo": BenchmarkCase(
+        "standard-regimen-chemo", "Tutorial twin, patient's weekly schedule: forecast the remaining planned doses.",
+        (5., 57.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"], "cABN",
+        PATIENT_DOSE_DAYS, 1., (1.,), PODSettings(4, "observed_training", "none"),
+        sensitivity=TUTORIAL_TWIN["sensitivity"]),
+    "alternative-regimen-chemo": BenchmarkCase(
+        "alternative-regimen-chemo", "Same tutorial twin and past doses; remaining weekly doses rescaled.",
+        (5., 57.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"], "cABN",
+        PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
+        sensitivity=TUTORIAL_TWIN["sensitivity"]),
 }
+# The three benchmarks reported in the paper (the default when a runner is given no case).
+REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
 
 _CHEMO_SELECTION = ("chosen on development acquisition 45 among observed mean/none x rank 4/3 by the multi-dose rule "
                     "of experiments/TUMOR_BENCHMARK_POD_COMPARISON.md (lowest mean production error over the four "
@@ -104,6 +131,12 @@ DEFAULT_POD_PROVENANCE = {
                          "lies inside the noise bulk, below the scan-noise threshold, on every acquisition."),
     "single-dose-chemo": f"Uncentred rank-4 POD of the noisy training scans (as multi-dose); {_CHEMO_SELECTION}.",
     "multi-dose-chemo": f"Uncentred rank-4 POD of the noisy training scans; {_CHEMO_SELECTION}.",
+    "standard-regimen-chemo": ("Uncentred rank-4 POD of the noisy training scans (as alternative-regimen), selected on "
+                               "development acquisition 45 of alternative-regimen-chemo."),
+    "alternative-regimen-chemo": ("Uncentred rank-4 POD of the noisy training scans, selected on development acquisition "
+                                  "45 by the lowest mean production forecast_57_119 error over the four future strengths "
+                                  "(none r4 18.2%, none r3 22.5%; centred bases diverged at the higher strengths); "
+                                  "see experiments/TUMOR_TUTORIAL_SCHEDULE_CHEMO.md."),
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -128,6 +161,8 @@ def get_case(name: str, observation: str | None = None) -> BenchmarkCase:
     if observation is None or observation == case.observation:
         return case
     if observation == LEGACY_OBSERVATION:
+        if name not in LEGACY_PODS:
+            raise ValueError(f"The {observation} design predates {name!r}.")
         return replace(case, observation=observation, pod=LEGACY_PODS[name])
     raise ValueError(f"Unknown observation model: {observation}")
 
@@ -191,6 +226,9 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
     legacy = case.observation == LEGACY_OBSERVATION
     fields = asdict(case)
     config = asdict(production_config(case, settings))
+    if fields["sensitivity"] == HISTORICAL_SENSITIVITY:
+        # Recipes from before the per-case drug sensitivity keep their recorded fingerprints.
+        fields.pop("sensitivity")
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")

@@ -167,18 +167,39 @@ class CachedEvaluationTests(unittest.TestCase):
 class CommandLineTests(unittest.TestCase):
     def test_reported_seeds_and_POD_tags(self):
         self.assertEqual(bd.DEFAULT_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (51, 52, 53),
-                                            "multi-dose-chemo": (48, 49, 50)})
+                                            "multi-dose-chemo": (48, 49, 50),
+                                            "standard-regimen-chemo": (51, 52, 53),
+                                            "alternative-regimen-chemo": (48, 49, 50)})
         self.assertEqual(bd.LEGACY_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
                                            "multi-dose-chemo": (48, 49, 50)})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
                          {"untreated-growth": "segmented_observed_mean_r3",
                           "single-dose-chemo": "segmented_observed_none_r4",
-                          "multi-dose-chemo": "segmented_observed_none_r4"})
-        self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.DEFAULT_SEEDS},
+                          "multi-dose-chemo": "segmented_observed_none_r4",
+                          "standard-regimen-chemo": "segmented_observed_none_r4",
+                          "alternative-regimen-chemo": "segmented_observed_none_r4"})
+        self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.REPORTED_CASES},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})
         self.assertEqual(list(bd.arms(bd.get_case("multi-dose-chemo"))),
                          ["strength0p50", "strength0p25", "strength0p75", "strength1p00"])
+        self.assertEqual(list(bd.arms(bd.get_case("alternative-regimen-chemo"))),
+                         ["strength1p00", "strength0p50", "strength1p50", "strength2p00"])
+
+    def test_window_names_follow_the_case_days(self):
+        old, new = bd.grid(bd.get_case("multi-dose-chemo")), bd.grid(bd.get_case("alternative-regimen-chemo"))
+        self.assertEqual(list(old.windows), ["training_5_70", "forecast_70_90", "forecast_90_110", "forecast_70_110"])
+        self.assertEqual((old.headline, old.boundaries), ("forecast_70_110", (70., 90.)))
+        self.assertEqual(list(new.windows), ["training_5_57", "forecast_57_88", "forecast_88_119", "forecast_57_119"])
+        self.assertEqual((new.headline, new.boundaries), ("forecast_57_119", (57., 88.)))
+
+    def test_earlier_chemo_sources_keep_their_cache_names(self):
+        self.assertEqual(bd._history_stem(bd.get_case("multi-dose-chemo")),
+                         "chemo_k0.025_d0.050_T120_strength0.50_dt0.25")
+        standard, alternative = bd.get_case("standard-regimen-chemo"), bd.get_case("alternative-regimen-chemo")
+        self.assertEqual(bd._history_stem(standard), bd._history_stem(alternative))
+        self.assertNotEqual(bd._history_stem(standard), bd._history_stem(bd.get_case("multi-dose-chemo")))
+        self.assertIn("_s0.23_", bd._history_stem(standard))
 
     def test_POD_options_override_only_what_is_given(self):
         parser = bd.add_common_arguments(argparse.ArgumentParser())

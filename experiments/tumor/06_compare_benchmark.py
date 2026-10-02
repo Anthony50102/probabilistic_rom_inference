@@ -383,11 +383,11 @@ def main(argv=None):
     args = parse(argv)
     root = Path(args.output_root or bd.RESULTS)
     figures = bd.FIGURES if args.output_root is None else root / "figures"
-    observation = args.observation or bd.get_case(args.case or next(iter(bd.CASES))).observation
+    observation = args.observation or bd.get_case(args.case or bd.REPORTED_CASES[0]).observation
     tagged = observation != bd.LEGACY_OBSERVATION
     figures = figures / observation if tagged else figures
     tables, rows = [], []
-    for name in [args.case] if args.case else list(bd.CASES):
+    for name in [args.case] if args.case else list(bd.REPORTED_CASES):
         case, pod, seeds = bd.resolve(args, name)
         table, case_rows = summarize(case, pod, seeds, args.output_root)
         tables.append(table)

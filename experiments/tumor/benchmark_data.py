@@ -34,7 +34,8 @@ for _path in (str(ROOT), str(SCRIPT_DIR)):
         sys.path.insert(0, _path)
 
 from benchmark_cases import (  # noqa: E402
-    CASES, LEGACY_OBSERVATION, OBSERVATION_MODELS, BenchmarkCase, PODSettings, describe, get_case)
+    CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION, OBSERVATION_MODELS, REPORTED_CASES,
+    BenchmarkCase, PODSettings, describe, get_case)
 
 TUMORTWIN = ROOT.parent / "TumorTwin"
 PATIENT = "TNBC_demo_001"
@@ -51,8 +52,11 @@ DEFAULT_SEEDS = {
     "untreated-growth": (42, 43, 44),
     "single-dose-chemo": (51, 52, 53),
     "multi-dose-chemo": (48, 49, 50),
+    # Tutorial-schedule cases: same roles (development acquisition 45, then fresh acquisitions).
+    "standard-regimen-chemo": (51, 52, 53),
+    "alternative-regimen-chemo": (48, 49, 50),
 }
-LEGACY_SEEDS = {**DEFAULT_SEEDS, "single-dose-chemo": (45, 46, 47)}
+LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048
 GROWTH_BLOCK = 4096
 SOURCE_KNOTS = np.arange(0., 120.5, .5)
@@ -92,12 +96,14 @@ class Grid:
 def grid(case: BenchmarkCase) -> Grid:
     start, end = case.training_span
     if case.dose_days:
+        middle = (end + case.prediction_end) / 2.
+        a, b, c, d = (f"{day:g}" for day in (start, end, middle, case.prediction_end))
         return Grid(
             np.linspace(start, case.prediction_end, 400),
-            {"training_5_70": (start, end, True), "forecast_70_90": (end, 90., False),
-             "forecast_90_110": (90., case.prediction_end, False),
-             "forecast_70_110": (end, case.prediction_end, False)},
-            "forecast_70_110", (end, 90.))
+            {f"training_{a}_{b}": (start, end, True), f"forecast_{b}_{c}": (end, middle, False),
+             f"forecast_{c}_{d}": (middle, case.prediction_end, False),
+             f"forecast_{b}_{d}": (end, case.prediction_end, False)},
+            f"forecast_{b}_{d}", (end, middle))
     return Grid(
         np.unique(np.r_[np.linspace(start, 120., 400), end, case.prediction_end]),
         {"training_5_60": (start, end, True), "forecast_60_90": (end, case.prediction_end, False),
@@ -269,8 +275,13 @@ def growth_source(case, log=print):
 
 
 def _history_stem(case):
-    return (f"chemo_k{case.growth_rate:.3f}_d{case.diffusion:.3f}_T120_"
+    stem = (f"chemo_k{case.growth_rate:.3f}_d{case.diffusion:.3f}_T120_"
             f"strength{case.training_strength:.2f}_dt{CHEMO_SOLVER_DT:g}")
+    if case.sensitivity == HISTORICAL_SENSITIVITY and case.dose_days == HISTORICAL_DOSE_DAYS:
+        return stem
+    schedule = hashlib.sha256(np.asarray(case.dose_days, dtype=float).tobytes()).hexdigest()[:8]
+    return (f"chemo_k{case.growth_rate:g}_d{case.diffusion:g}_s{case.sensitivity:g}_T120_"
+            f"strength{case.training_strength:.2f}_days{schedule}_dt{CHEMO_SOLVER_DT:g}")
 
 
 def chemo_history_path(case):
@@ -284,7 +295,7 @@ def chemo_history(case, log=print):
         from generate_fom_data_chemo import generate_fom_chemo
         data = generate_fom_chemo(
             patient_id=PATIENT, total_days=120., dt_save=.5, dt_solve=CHEMO_SOLVER_DT,
-            k=case.growth_rate, d=case.diffusion, theta=THETA, sensitivity=BASE_SENSITIVITY,
+            k=case.growth_rate, d=case.diffusion, theta=THETA, sensitivity=case.sensitivity,
             decay_rate=DECAY_RATE, dose_scale=case.training_strength,
             dose_days_override=list(case.dose_days))
         np.testing.assert_array_equal(data["times_days"], SOURCE_KNOTS)
@@ -317,7 +328,8 @@ def chemo_branch(case, strength, log=print):
         specs = [ChemotherapySpecification(
             sensitivity=coefficient, decay_rate=DECAY_RATE,
             times=[origin + timedelta(days=day) for day in days], doses=[1.] * len(days))
-            for coefficient, days in ((.5 * case.training_strength, past), (.5 * strength, future))]
+            for coefficient, days in ((case.sensitivity * case.training_strength, past),
+                                      (case.sensitivity * strength, future))]
         model = ReactionDiffusion3D(
             k=torch.tensor(case.growth_rate), d=torch.tensor(case.diffusion), theta=torch.tensor(THETA),
             patient_data=patient, initial_time=origin, chemotherapy_specifications=specs,
@@ -349,7 +361,7 @@ def _patient():
 
 
 def _training_inputs(case):
-    """Tabulated training-regimen exposure on [5, 110], plus the production fit inputs."""
+    """Tabulated training-regimen exposure from the start of training to the forecast end, plus the fit inputs."""
     path = CACHE / f"inputs_{_history_stem(case)}.npz"
     if not path.exists():
         import config
@@ -359,7 +371,7 @@ def _training_inputs(case):
             raise ValueError("The patient record has no positive chemotherapy dose amounts.")
         days = np.asarray(case.dose_days)
         cycled = np.asarray([amounts[i % len(amounts)] for i in range(len(days))])
-        spec, t0 = config._build_chemo_spec_from_schedule(PATIENT, BASE_SENSITIVITY, DECAY_RATE, days, cycled)
+        spec, t0 = config._build_chemo_spec_from_schedule(PATIENT, case.sensitivity, DECAY_RATE, days, cycled)
         if not np.array_equal(spec.doses, np.ones(len(days))):
             raise ValueError("TumorTwin no longer normalizes dose amounts; the input table would change.")
         table = config.make_jax_input_func(
@@ -379,7 +391,7 @@ def chemo_inputs(case, strength):
     times = base["input_times"]
     future = sum(np.where(times >= day, np.exp(-DECAY_RATE * (times - day)), 0.)
                  for day in case.dose_days if day > case.training_span[1])
-    values = base["input_values"] + .5 * (strength - case.training_strength) * future
+    values = base["input_values"] + case.sensitivity * (strength - case.training_strength) * future
     return {"input_times": times, "input_values": values, "dose_days": base["dose_days"]}
 
 
@@ -818,7 +830,7 @@ def load(case, seed, pod=None, root=None, *, references=True):
 def add_common_arguments(parser, *, case_optional=False):
     if case_optional:
         parser.add_argument("case", nargs="?", choices=tuple(CASES),
-                            help="Benchmark to process (default: all three).")
+                            help="Benchmark to process (default: the three reported ones).")
     else:
         parser.add_argument("case", choices=tuple(CASES))
     parser.add_argument("--seeds", type=int, nargs="+",
