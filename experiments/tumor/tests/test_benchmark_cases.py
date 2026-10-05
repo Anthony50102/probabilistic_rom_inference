@@ -14,7 +14,9 @@ from core.weakform_opinf import WeakFormConfig
 class BenchmarkCaseTests(unittest.TestCase):
     def test_three_explicit_cases(self):
         self.assertEqual(REPORTED_CASES, ("untreated-growth", "single-dose-chemo", "multi-dose-chemo"))
-        self.assertEqual(set(CASES), set(REPORTED_CASES) | {"standard-regimen-chemo", "alternative-regimen-chemo"})
+        self.assertEqual(set(CASES), set(REPORTED_CASES) | {"standard-regimen-chemo", "alternative-regimen-chemo",
+                                                            "midcourse-regimen-chemo", "midcourse-galerkin-chemo",
+                                                            "midcourse-logistic-chemo"})
         self.assertEqual(CASES["untreated-growth"].dose_days, ())
         self.assertEqual(CASES["untreated-growth"].prediction_end, 90.)
         single, multi = CASES["single-dose-chemo"], CASES["multi-dose-chemo"]
@@ -67,9 +69,14 @@ class BenchmarkCaseTests(unittest.TestCase):
                     self.assertEqual((legacy.closure, legacy.gamma2, legacy.weak_slack, legacy.mll_weight,
                                       legacy.weakform_weight, legacy.operator_solver),
                                      ("slack", .035, "legacy", .1, 8., "normal"))
-                modified = production_config(case, PODSettings(6, "matched_training"))
+                modified_pod = PODSettings(6, "matched_training")
+                if case.structure != "free":
+                    with self.assertRaisesRegex(ValueError, "uncentred"):
+                        production_config(case, modified_pod)
+                    modified_pod = replace(modified_pod, centering="none")
+                modified = production_config(case, modified_pod)
                 expected = asdict(cfg)
-                expected.update(num_modes=6, operators=case.operators)
+                expected.update(num_modes=6, operators=cfg.operators if case.structure != "free" else case.operators)
                 self.assertEqual(asdict(modified), expected)
         schema = {"NUM_EVAL_POINTS": 200}
         self.assertEqual(

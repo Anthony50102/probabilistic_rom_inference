@@ -25,6 +25,11 @@ forecasts (3-7% error when fitted with hindsight). The limit is how little the
 it. The 2x arm looks best only because two errors cancel there (see "Why 2x
 looks best").
 
+**Follow-up in progress.** The mid-course re-planning cases
+(`midcourse-*-chemo`) train through day 84 and test a reduced model with the
+projected PDE's form. Their selection rule was declared before the fits; see
+"Mid-course re-planning with the projected PDE's form".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -217,6 +222,108 @@ from the operators. Means over days 57-119 for seeds 48-50, in %/day:
 So the 2x result is not evidence that production extrapolates dose increases
 well. It depends on how the training fit split the net shrinkage between
 regrowth and drug, which the window does not determine.
+
+## Mid-course re-planning with the projected PDE's form (pre-registered)
+
+**Why.** The sections above show two problems. Days 5-57 cannot separate
+regrowth from drug kill, and the free reduced model cannot speed up regrowth
+as the drug thins the tumour. This follow-up changes two things. Both were
+chosen from a noise-free least-squares screen before any production fit of
+the new models.
+
+1. **The question: a mid-course re-plan.** Training sees the first eight
+   weekly doses: days 5-84, still 120 segmented scans at 1% noise. The
+   forecast covers days 84-119, with the last four doses (days 91-112) given
+   at 0.5, 1, 1.5 or 2x. Clinically, this asks whether to change the dose for
+   the rest of the course once the response has been seen. The truth is the
+   same TumorTwin run as above up to day 84, and the four futures branch from
+   day 84.
+2. **The model: the form the PDE projects to.** Take the twin's PDE,
+   du/dt = div(d grad u) + k u (1 - u) - α(t) u, and project it onto an
+   uncentred orthonormal POD basis u ≈ Vq. The result is
+   dq/dt = A q - k T(q, q) - α(t) q, where T_ijk = Σ_x V_xi V_xj V_xk.
+   - **No constant term:** with no tumour, nothing grows.
+   - **No direct drug term:** B = 0 on an uncentred basis.
+   - **Drug acts on each mode separately:** N is diagonal, because VᵀV = I.
+
+   The structured fits impose these zeros and learn the rest:
+   - A, freely.
+   - One drug coefficient per mode, n_i. It would be -1 if the projection
+     were exact.
+   - In the logistic variant only, one crowding rate per mode, h_i, which
+     multiplies the fixed shape T_i(q, q). It would be -k = -0.052 if the
+     projection were exact.
+
+   Every learned coefficient gets the same zero-centred prior as the free
+   model's operator columns, so no true value enters the fit. Implementation:
+   `core.weakform_opinf.structured_rows` and `build_model(row_maps=...)`, with
+   the maps built and checked by `benchmark_models.galerkin_row_maps`.
+
+| Case | Reduced model | Operators fitted |
+|---|---|---|
+| `midcourse-regimen-chemo` | Free, as reported (control) | `cAN` |
+| `midcourse-galerkin-chemo` | Projected form, no crowding | `AN`: A free, N diagonal |
+| `midcourse-logistic-chemo` | Projected form with crowding | `AHN`: A free, N diagonal, H row i = h_i T_i |
+
+Everything else is unchanged:
+- the twin, anatomy, schedule and doses;
+- the segmented observations;
+- the uncentred rank-4 POD, carried over from `alternative-regimen-chemo` and
+  not reselected;
+- the production settings: 12,000 updates, 500 draws, tempered dynamics rows.
+
+**Screen behind the choice.** These numbers are local session artifacts, not
+repository results.
+- Noise-free least squares on the mid-course split, reduced-coordinate errors
+  over days 84-119 across the four doses:
+  - projected form with crowding: 0.6-1.6%;
+  - projected form without crowding: 3.6-16.5%;
+  - with the free constant term kept: 1-17%.
+- With noise, a smoothing-spline stand-in for the Gaussian process biased the
+  learned drug coefficient to about 0.8 of the truth, giving 5-21%.
+- Production's free model, already run on development seed 45, gave these
+  full-field errors over days 84-119: 29.3% at 0.5x, 16.7% at 1x, 10.8% at
+  1.5x and 15.8% at 2x (mean 18.2%). The basis floor is 3.2-5.1%.
+
+How the production Gaussian process handles the noise is the open question.
+
+**Rule, declared before any development fit of the structured models.**
+1. Run all three cases on development seeds 45-47 with the default settings.
+2. **Selection.** Of the two structured variants, choose the one with the
+   lower mean full-field error over days 84-119 (`forecast_84_119`, point
+   forecast), averaged over the four doses and three seeds. The free model is
+   reported alongside as the control and is not a candidate.
+3. **Go/no-go.** Use the evaluation seeds only if the chosen variant's
+   development mean is below the free control's. Otherwise stop and report the
+   development results.
+4. **At most one fix.** If the learned drug coefficients are clearly biased,
+   as the spline stand-in's were, one fix may be tried: the input-aware
+   Gaussian-process trend (`gp_input_trend`). It is tried on development seeds
+   only, judged by the same metric, and recorded here before step 5.
+5. **Evaluation.** Run evaluation seeds 48-50 once, for the chosen variant and
+   the free control, and report them whatever they show.
+6. **Success bar (for reporting, not selection).** At every dose, the median
+   `forecast_84_119` error is no worse than the worst arm of the reported
+   chemo tasks (18.9%).
+7. **Neural ODE.** It stays gated until these results are reviewed. If it is
+   run, it gets the same known drug term (a hybrid), so the comparison is like
+   for like.
+
+```bash
+cd experiments/tumor
+for c in midcourse-regimen-chemo midcourse-galerkin-chemo midcourse-logistic-chemo; do
+  conda run -n prob_rom python 04_unified_benchmark.py $c --seeds 45 46 47      # development
+done
+conda run -n prob_rom python 04_unified_benchmark.py <chosen variant>           # evaluation 48-50, once
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-regimen-chemo    # evaluation 48-50, once
+```
+
+The four futures from day 84 are generated on first use (about 20 s each,
+with names ending `_from84`). The cached exposure table now carries the
+training and forecast spans in its name
+(`inputs_<history>_train5-84_to119.npz`). The mid-course cases share the
+alternative-regimen history but not its fit grid. The existing tables
+regenerate bit-identically under the new names.
 
 ## Open decisions
 

@@ -55,6 +55,10 @@ DEFAULT_SEEDS = {
     # Tutorial-schedule cases: same roles (development acquisition 45, then fresh acquisitions).
     "standard-regimen-chemo": (51, 52, 53),
     "alternative-regimen-chemo": (48, 49, 50),
+    # Mid-course cases: development acquisitions 45-47 settle every choice before 48-50 are run once.
+    "midcourse-regimen-chemo": (48, 49, 50),
+    "midcourse-galerkin-chemo": (48, 49, 50),
+    "midcourse-logistic-chemo": (48, 49, 50),
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048
@@ -360,9 +364,15 @@ def _patient():
                                      crop_settings=CropSettings(crop_to=CropTarget.ROI_ENHANCE, padding=10))
 
 
+def _training_inputs_path(case):
+    # The table spans training start to forecast end and the fit grid spans training, so both are in the name.
+    start, end = case.training_span
+    return CACHE / f"inputs_{_history_stem(case)}_train{start:g}-{end:g}_to{case.prediction_end:g}.npz"
+
+
 def _training_inputs(case):
     """Tabulated training-regimen exposure from the start of training to the forecast end, plus the fit inputs."""
-    path = CACHE / f"inputs_{_history_stem(case)}.npz"
+    path = _training_inputs_path(case)
     if not path.exists():
         import config
         patient = _patient()

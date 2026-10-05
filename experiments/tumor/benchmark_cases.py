@@ -10,6 +10,15 @@ tutorial's calibrated twin of TNBC_demo_001 on the patient's own schedule
 standard regimen keeps the remaining eight doses; the alternative regimens
 rescale them, as in the tutorial's total-dose study.
 
+The three ``midcourse-*-chemo`` cases adapt the dose mid-course on the same twin:
+eight standard doses are observed (training days 5-84) and the last four
+(days 91-112) are given at 0.5, 1, 1.5 or 2 times the standard dose. They differ
+only in the reduced model's structure (``STRUCTURES``): ``free`` learns every
+operator entry as in the other cases; ``galerkin`` imposes the form that the
+projection of the reaction-diffusion PDE onto the uncentred POD basis implies
+(no constant term, a diagonal drug-kill term) and ``galerkin_logistic`` adds the
+projected logistic crowding term, each with learned rates.
+
 Observation models
 ------------------
 ``segmented`` (reported): every scan, including the baseline, adds Gaussian
@@ -46,6 +55,9 @@ HISTORICAL_DOSE_DAYS = (20., 40., 60., 80., 100.)
 PATIENT_DOSE_DAYS = tuple(35. + 7. * week for week in range(12))
 # TumorTwin TNBC tutorial, Levenberg-Marquardt fit to MRIs 1-2 ("Best parameters": d, k, sensitivity).
 TUTORIAL_TWIN = {"diffusion": .0965, "growth_rate": .0521, "sensitivity": .23}
+# Reduced-model structure: the operators a structured chemo ROM is fitted with (see benchmark_models.galerkin_row_maps).
+STRUCTURES = ("free", "galerkin", "galerkin_logistic")
+STRUCTURED_OPERATORS = {"galerkin": "AN", "galerkin_logistic": "AHN"}
 
 
 @dataclass(frozen=True)
@@ -80,6 +92,7 @@ class BenchmarkCase:
     pod: PODSettings
     observation: str = "segmented"
     sensitivity: float = HISTORICAL_SENSITIVITY
+    structure: str = "free"
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
@@ -87,6 +100,10 @@ class BenchmarkCase:
         if self.observation == "segmented" and self.pod.source != "observed_training":
             raise ValueError("Segmented acquisitions fit their POD to the noisy training scans "
                              "(observed_training); simulation bases belong to the oracle_masked design.")
+        if self.structure not in STRUCTURES:
+            raise ValueError(f"Unknown reduced-model structure: {self.structure}")
+        if self.structure != "free" and not (self.dose_days and self.pod.centering == "none"):
+            raise ValueError("The Galerkin structure holds for a chemotherapy ROM on an uncentred POD basis.")
 
     def pulse_coefficients(self, future_strength: float) -> tuple[float, ...]:
         if future_strength not in self.future_strengths:
@@ -119,6 +136,17 @@ CASES = {
         (5., 57.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"], "cABN",
         PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
         sensitivity=TUTORIAL_TWIN["sensitivity"]),
+    **{name: BenchmarkCase(
+        name, description, (5., 84.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"],
+        "cABN", PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
+        sensitivity=TUTORIAL_TWIN["sensitivity"], structure=structure)
+       for name, structure, description in (
+           ("midcourse-regimen-chemo", "free",
+            "Tutorial twin, eight standard weekly doses observed; last four doses rescaled (free ROM)."),
+           ("midcourse-galerkin-chemo", "galerkin",
+            "As midcourse-regimen-chemo; ROM with the projected PDE's form (no source, diagonal drug term)."),
+           ("midcourse-logistic-chemo", "galerkin_logistic",
+            "As midcourse-galerkin-chemo, plus the projected logistic crowding term."))},
 }
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
@@ -137,6 +165,10 @@ DEFAULT_POD_PROVENANCE = {
                                   "45 by the lowest mean production forecast_57_119 error over the four future strengths "
                                   "(none r4 18.2%, none r3 22.5%; centred bases diverged at the higher strengths); "
                                   "see experiments/TUMOR_TUTORIAL_SCHEDULE_CHEMO.md."),
+    **{name: ("Uncentred rank-4 POD of the noisy training scans, carried over from alternative-regimen-chemo (not "
+              "reselected); the Galerkin structure needs an uncentred basis, and preparation checks that rank 4 clears "
+              "the scan-noise threshold.")
+       for name in ("midcourse-regimen-chemo", "midcourse-galerkin-chemo", "midcourse-logistic-chemo")},
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -206,6 +238,8 @@ def galerkin_operators(case: BenchmarkCase, pod: PODSettings) -> str:
 
 def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
     settings = case.pod if pod is None else pod
+    if case.structure != "free" and settings.centering != "none":
+        raise ValueError("The Galerkin structure holds for a chemotherapy ROM on an uncentred POD basis.")
     schema = {
         "name": case.name, "label": case.description, "NUM_SAMPLES": case.observations,
         "NOISE_LEVEL": case.noise_level, "NUM_EVAL_POINTS": 200,
@@ -218,7 +252,8 @@ def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
         cfg = replace(cfg, sigma_O=5.0, gp_jitter_rel=1e-3, closure="slack", gamma2=0.035, weak_slack="legacy",
                       mll_weight=0.1, weakform_weight=8.0, operator_solver="normal")
         return replace(cfg, num_modes=settings.rank)
-    return replace(cfg, num_modes=settings.rank, operators=galerkin_operators(case, settings))
+    operators = STRUCTURED_OPERATORS.get(case.structure) or galerkin_operators(case, settings)
+    return replace(cfg, num_modes=settings.rank, operators=operators)
 
 
 def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
@@ -229,6 +264,9 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
     if fields["sensitivity"] == HISTORICAL_SENSITIVITY:
         # Recipes from before the per-case drug sensitivity keep their recorded fingerprints.
         fields.pop("sensitivity")
+    if fields["structure"] == "free":
+        # Likewise for recipes from before the structured ROMs.
+        fields.pop("structure")
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")

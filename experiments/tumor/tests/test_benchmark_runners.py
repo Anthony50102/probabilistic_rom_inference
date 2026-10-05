@@ -169,7 +169,10 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(bd.DEFAULT_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (51, 52, 53),
                                             "multi-dose-chemo": (48, 49, 50),
                                             "standard-regimen-chemo": (51, 52, 53),
-                                            "alternative-regimen-chemo": (48, 49, 50)})
+                                            "alternative-regimen-chemo": (48, 49, 50),
+                                            "midcourse-regimen-chemo": (48, 49, 50),
+                                            "midcourse-galerkin-chemo": (48, 49, 50),
+                                            "midcourse-logistic-chemo": (48, 49, 50)})
         self.assertEqual(bd.LEGACY_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
                                            "multi-dose-chemo": (48, 49, 50)})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
@@ -177,7 +180,10 @@ class CommandLineTests(unittest.TestCase):
                           "single-dose-chemo": "segmented_observed_none_r4",
                           "multi-dose-chemo": "segmented_observed_none_r4",
                           "standard-regimen-chemo": "segmented_observed_none_r4",
-                          "alternative-regimen-chemo": "segmented_observed_none_r4"})
+                          "alternative-regimen-chemo": "segmented_observed_none_r4",
+                          "midcourse-regimen-chemo": "segmented_observed_none_r4",
+                          "midcourse-galerkin-chemo": "segmented_observed_none_r4",
+                          "midcourse-logistic-chemo": "segmented_observed_none_r4"})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.REPORTED_CASES},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})

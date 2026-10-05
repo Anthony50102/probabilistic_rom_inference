@@ -73,7 +73,8 @@ def _production_structure(case, cfg, observations):
     from core import JaxCompatibleModel
     times = observations["t_sampled"]
     if case.dose_days:
-        columns = {"c": 1, "A": cfg.num_modes, "B": 1, "N": cfg.num_modes}
+        r = cfg.num_modes
+        columns = {"c": 1, "A": r, "H": r * (r + 1) // 2, "B": 1, "N": r}
         ridge = np.concatenate([np.full(columns[key], cfg.regularizer) for key in cfg.operators])
         model = tumor_config.ChemoReducedOrderModel(
             operator_string=cfg.operators, solver=opinf.lstsq.TikhonovSolver(regularizer=np.diag(ridge)))
@@ -85,6 +86,51 @@ def _production_structure(case, cfg, observations):
     rom = opinf.ROM(model=model, ddt_estimator=opinf.ddt.NonuniformFiniteDifferencer(times))
     rom.fit(states=observations["y"], inputs=inputs)
     return rom
+
+
+def galerkin_row_maps(structure, rom, basis, r):
+    """Row maps O_i = P_i theta_i of a Galerkin-structured chemo ROM (core.weakform_opinf.build_model).
+
+    Projecting du/dt = div(d grad u) + k u (1 - u) - alpha(t) u onto an uncentred orthonormal POD basis
+    u = V q gives dq/dt = A q - k T(q, q) - alpha(t) q, T_ijk = sum_x V_xi V_xj V_xk: no constant term
+    (u = 0 is an equilibrium) and a diagonal drug term, because V^T V = I. Row i keeps A_i free and
+    learns its drug coefficient n_i (-1 under exact projection) and, for galerkin_logistic, the rate
+    h_i of the fixed crowding shape T_i(q, q) (-k under exact projection). Truncation and the
+    segmentation make the reduced dynamics inexact, so the rates are learned rather than fixed.
+    theta_i = [A_i1..A_ir, (h_i,) n_i].
+    """
+    import opinf
+    kinds = {opinf.operators.LinearOperator: "A", opinf.operators.QuadraticOperator: "H",
+             opinf.operators.StateInputOperator: "N"}
+    layout = "".join(kinds.get(type(op), "?") for op in rom.model.operators)
+    expected = {"galerkin": "AN", "galerkin_logistic": "AHN"}[structure]
+    if layout != expected:
+        raise ValueError(f"The {structure} structure needs a {expected} ROM, not {layout}")
+    V = np.asarray(basis, dtype=float)
+    if V.shape[1] != r or not np.allclose(V.T @ V, np.eye(r), atol=1e-8):
+        raise ValueError("The Galerkin structure needs the orthonormal rank-r POD decoder")
+    pairs = [(a, b) for a in range(r) for b in range(a + 1)]  # opinf's compressed q (x) q order
+    width = {"A": r, "H": len(pairs), "N": r}
+    offset = dict(zip(layout, np.cumsum([0] + [width[key] for key in layout])))
+    T = np.einsum("xi,xj,xk->ijk", V, V, V)
+    k = r + 1 + (structure == "galerkin_logistic")
+    maps = np.zeros((r, offset[layout[-1]] + width[layout[-1]], k))
+    for i in range(r):
+        maps[i, offset["A"]:offset["A"] + r, :r] = np.eye(r)
+        maps[i, offset["N"] + i, k - 1] = 1.
+        if structure == "galerkin_logistic":
+            maps[i, offset["H"]:offset["H"] + len(pairs), r] = [T[i, a, b] * (1. if a == b else 2.) for a, b in pairs]
+    # The maps must reproduce the intended features in the ROM's own data-matrix assembly.
+    rng = np.random.default_rng(0)
+    q, alpha = rng.uniform(-1., 1., (r, 32)), rng.uniform(.5, 1.5, (1, 32))
+    features = np.asarray(rom.model._assemble_data_matrix(q, inputs=alpha), dtype=float)
+    for i in range(r):
+        intended = np.stack([*q, *([np.einsum("jk,jn,kn->n", T[i], q, q)] if k > r + 1 else []),
+                             alpha[0] * q[i]], axis=1)
+        error = np.abs(features @ maps[i] - intended).max(axis=0) / np.abs(intended).max(axis=0)
+        if not np.all(error < 1e-4):
+            raise RuntimeError("Galerkin row maps do not match the ROM's operator columns")
+    return maps
 
 
 def _save_svi(path, state, losses, steps):
@@ -133,7 +179,13 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     rom = _production_structure(case, cfg, observations)
     trajectories = [{"t_sampled": observations["t_sampled"], "snapshots_comp": observations["y"],
                      "inputs_eval": observations["native_inputs_eval"] if case.dose_days else None}]
-    model, conditional, _, priors = build_model(rom, trajectories, cfg)
+    row_maps = None
+    if case.structure != "free":
+        basis = bd.read_npz(data["folder"] / "basis.npz")
+        if np.any(basis["physical_shift"] != 0.):
+            raise ValueError("The Galerkin structure needs an uncentred POD basis.")
+        row_maps = galerkin_row_maps(case.structure, rom, basis["physical_matrix"], cfg.num_modes)
+    model, conditional, _, priors = build_model(rom, trajectories, cfg, row_maps=row_maps)
     gamma2 = priors["gamma2"]
     guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
     svi = SVI(model, guide, ClippedAdam(step_size=cfg.learning_rate), loss=Trace_ELBO())
@@ -175,6 +227,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     result = {
         "status": "complete" if complete else "nonfinite_production_fit",
         "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
+        "structure": case.structure,
         "steps": total,
         "recipe_steps": cfg.num_steps, "reduced_steps": total != cfg.num_steps,
         "finite_losses": int(np.isfinite(losses).sum()),
@@ -192,17 +245,26 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
 
 
 def canonical_layout(arrays, operators, r):
-    """Operator arrays in the evaluation's column layout (cA, or cABN for chemo); a chemo ROM
-    fitted without the direct input block (cAN, see galerkin_operators) gets a zero B column."""
+    """Operator arrays in the evaluation's column layout: cA, cABN for chemo, or cABNH for a chemo ROM with
+    a quadratic block (opinf's compressed q (x) q order). Blocks a chemo ROM was fitted without (B for an
+    uncentred basis, see galerkin_operators; c and B under the Galerkin structure) are zero columns."""
     if operators in ("cA", "cABN"):
         return arrays
-    if operators != "cAN":
+    target = "cABNH" if "H" in operators else "cABN"
+    if operators not in ("cAN", "AN", "AHN"):
         raise ValueError(f"No canonical operator layout for {operators!r}")
-    out, k = dict(arrays), 1 + r
+    width = {"c": 1, "A": r, "B": 1, "N": r, "H": r * (r + 1) // 2}
+    start = dict(zip(target, np.cumsum([0] + [width[key] for key in target])))
+    columns = np.concatenate([start[key] + np.arange(width[key]) for key in operators])
+    total = sum(width[key] for key in target)
+    out = dict(arrays)
     for key in ("O_point", "O_samples"):
-        out[key] = np.insert(np.asarray(arrays[key]), k, 0., axis=-1)
-    root = np.insert(np.asarray(arrays["conditional_root"]), k, 0., axis=-1)
-    out["conditional_root"] = np.insert(root, k, 0., axis=-2)
+        value = np.asarray(arrays[key])
+        out[key] = np.zeros(value.shape[:-1] + (total,), dtype=value.dtype)
+        out[key][..., columns] = value
+    root = np.asarray(arrays["conditional_root"])
+    out["conditional_root"] = np.zeros(root.shape[:-2] + (total, total), dtype=root.dtype)
+    out["conditional_root"][..., columns[:, None], columns[None, :]] = root
     return out
 
 

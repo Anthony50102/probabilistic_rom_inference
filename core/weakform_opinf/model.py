@@ -117,6 +117,60 @@ def nondimensional_column_scale(rom, trajectories, num_modes):
     return scale, info
 
 
+def structured_rows(row_maps, block_id, col_scale, column_info, rom, trajectories, num_modes):
+    """Prior blocks and nondimensional scales of structured operator rows O_i = P_i θ_i.
+
+    A coefficient θ_ij that sets one operator column (O_ic = w θ_ij) keeps that
+    column's block and has scale s_c/|w|. One that sets a fixed combination of
+    state-only columns of one block multiplies the feature g_ij = Σ_c w_c f_c(q)
+    (e.g. a Galerkin-projected term with a learned rate); its scale is S/(T g_j),
+    g_j the RMS of g_ij over the observed training coefficients and the modes:
+    the same nondimensionalisation, with the feature's own training size in place
+    of S^p. Returns (P, block (r, k), scale (r, k), info).
+    """
+    P = np.asarray(row_maps, dtype=float)
+    m = len(block_id)
+    if P.ndim != 3 or P.shape[:2] != (num_modes, m) or not 0 < P.shape[2] <= m:
+        raise ValueError(f"row_maps must have shape (num_modes, {m}, k) with k <= {m}; got {P.shape}")
+    k = P.shape[2]
+    if any(np.linalg.matrix_rank(Pi) < k for Pi in P):
+        raise ValueError("Every row map must have full column rank")
+    input_degree = np.asarray(column_info["input_degree"])
+    T, S = data_scales(trajectories)
+    blocks, scale = np.zeros((num_modes, k), dtype=int), np.zeros((num_modes, k))
+    combined = {}
+    for i in range(num_modes):
+        for j in range(k):
+            used = np.flatnonzero(P[i, :, j])
+            if len(used) == 0:
+                raise ValueError(f"Structured coefficient {j} of mode {i} sets no operator column")
+            if len(set(block_id[used])) > 1:
+                raise ValueError(f"Structured coefficient {j} of mode {i} spans several operator blocks")
+            blocks[i, j] = block_id[used[0]]
+            if len(used) == 1:
+                scale[i, j] = col_scale[used[0]] / abs(P[i, used[0], j])
+            elif np.any(input_degree[used] != 0):
+                raise ValueError("Combined structured columns must be state-only")
+            else:
+                combined.setdefault(j, []).append(i)
+    rms = {}
+    if combined:
+        Y = np.concatenate([np.asarray(tr["snapshots_comp"], dtype=float) for tr in trajectories], axis=1)
+        inputs = [tr.get("inputs_eval") for tr in trajectories]
+        ones = None if inputs[0] is None else jnp.ones((np.atleast_2d(inputs[0]).shape[0], Y.shape[1]))
+        F = np.asarray(rom.model._assemble_data_matrix(jnp.asarray(Y), inputs=ones), dtype=float)
+        for j, modes in combined.items():
+            if len({blocks[i, j] for i in modes}) > 1:
+                raise ValueError(f"Combined structured coefficient {j} must use one block in every mode")
+            rms[j] = float(np.sqrt(np.mean([np.mean((F @ P[i, :, j]) ** 2) for i in modes])))
+            if not (np.isfinite(rms[j]) and rms[j] > 0):
+                raise ValueError(f"Combined structured feature {j} vanishes on the training data")
+            scale[modes, j] = S / (T * rms[j])
+    info = dict(coefficients=k, block=blocks.tolist(), scale=scale.tolist(),
+                combined_feature_rms={str(j): v for j, v in rms.items()})
+    return P, blocks, scale, info
+
+
 def _prior_locs(trajectory, cfg):
     """Spectrum-anchored GP-hyperparameter prior locations of one trajectory."""
     kwargs = {}
@@ -221,7 +275,7 @@ def power_likelihood_correction(u, alpha):
     return -0.5 * jnp.sum((alpha - 1.0) * jnp.log(2 * jnp.pi * u) + jnp.log(alpha))
 
 
-def build_model(rom, trajectories, cfg):
+def build_model(rom, trajectories, cfg, row_maps=None):
     """Build the marginalised-O + weak-form NumPyro model.
 
     Parameters
@@ -239,6 +293,12 @@ def build_model(rom, trajectories, cfg):
         Input trends and measurement-noise priors require their corresponding
         trajectory fields when selected in cfg.
     cfg : WeakFormConfig
+    row_maps : optional (num_modes, m, k) array
+        Known structure of the operator rows: row i is O_i = row_maps[i] θ_i and
+        the Gaussian prior and posterior are over the k coefficients θ_i (e.g.
+        structural zeros, or a projected term whose rate is learned); see
+        :func:`structured_rows` for their prior scales. Needs the nondimensional
+        prior. None (default): θ_i = O_i.
 
     Returns
     -------
@@ -249,6 +309,8 @@ def build_model(rom, trajectories, cfg):
         multipliers κ_b (latent ``log_tau_block`` = log κ_b) and ``sigma_O`` is
         unused; ``tau_block=None`` means the prior centre. ``gamma2=None`` (as
         for the model) means the resolved slack ``prior_info["gamma2"]``.
+        With row maps, μ_O = P_i μ_θ and C_O = [P_i C_θ, 0] (zero-padded to m
+        columns), so draws μ_O + C_O z keep the structure exactly.
     time_evals : list of np.ndarray, per-trajectory eval grids.
     prior_info : dict of representative prior locations (diagnostics), the
         closure variance ``gamma2`` (0 under the tempered rule) and the rule's
@@ -282,6 +344,22 @@ def build_model(rom, trajectories, cfg):
         prior_prec_from_tau = _ev.make_prior_prec_from_tau(block_id_jnp)
         log_tau_center = jnp.log(cfg.sigma_O)
         inv_prec_vec = jnp.full(m_total, 1.0 / (cfg.sigma_O ** 2))
+
+    structured = row_maps is not None
+    if structured:
+        if not nondim:
+            raise ValueError("Structured operator rows need the nondimensional operator prior (sigma_O=None)")
+        P_np, theta_block, theta_scale, operator_prior["structured_rows"] = structured_rows(
+            row_maps, block_id, col_scale, operator_prior, rom, trajectories, num_modes)
+        P_rows, k_rows = jnp.asarray(P_np), P_np.shape[2]
+        theta_block_jnp, theta_scale_jnp = jnp.asarray(theta_block), jnp.asarray(theta_scale)
+
+    def _structured_mode(traj_blocks, i, kappa_block):
+        """Mode i's design blocks in its coefficients θ_i, their prior precision and log|prior cov|."""
+        blocks = [(A_D @ P_rows[i], y_D, S_D, A_W @ P_rows[i], y_W, S_W)
+                  for A_D, y_D, S_D, A_W, y_W, S_W in traj_blocks]
+        var = kappa_block[theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2
+        return blocks, 1.0 / var, jnp.sum(jnp.log(var))
 
     tempered = cfg.closure == "tempered"
     if tempered:
@@ -395,9 +473,11 @@ def build_model(rom, trajectories, cfg):
                 "log_tau_block",
                 dist.Normal(log_tau_center * jnp.ones(n_blocks),
                             cfg.hier_tau_scale))
-            prior_prec, log_prior_cov = prior_prec_from_tau(jnp.exp(log_tau))
+            kappa_block = jnp.exp(log_tau)
+            prior_prec, log_prior_cov = prior_prec_from_tau(kappa_block)
         elif nondim:
-            prior_prec, log_prior_cov = prior_prec_from_tau(jnp.ones(n_blocks))
+            kappa_block = jnp.ones(n_blocks)
+            prior_prec, log_prior_cov = prior_prec_from_tau(kappa_block)
         else:
             prior_prec = inv_prec_vec
             log_prior_cov = -jnp.sum(jnp.log(inv_prec_vec))
@@ -419,9 +499,14 @@ def build_model(rom, trajectories, cfg):
 
         total_evidence = 0.0
         for i in range(num_modes):
-            log_p_i, _, _ = evidence_fn(
-                traj_blocks, i, m_total, prior_prec, log_prior_cov,
-                deriv_is_diag)
+            if structured:
+                blocks_i, prec_i, log_cov_i = _structured_mode(traj_blocks, i, kappa_block)
+                log_p_i, _, _ = evidence_fn(
+                    blocks_i, i, k_rows, prec_i, log_cov_i, deriv_is_diag)
+            else:
+                log_p_i, _, _ = evidence_fn(
+                    traj_blocks, i, m_total, prior_prec, log_prior_cov,
+                    deriv_is_diag)
             total_evidence = total_evidence + log_p_i
         numpyro.factor("marg_O_evidence", total_evidence + correction)
 
@@ -431,8 +516,8 @@ def build_model(rom, trajectories, cfg):
         (ells, sig2s, nus) each shaped (num_traj, num_modes)."""
         gamma2 = gamma2_resolved if gamma2 is None else gamma2
         if nondim:
-            prior_prec_vec, _ = prior_prec_from_tau(
-                jnp.ones(n_blocks) if tau_block is None else tau_block)
+            kappa_block = jnp.ones(n_blocks) if tau_block is None else tau_block
+            prior_prec_vec, _ = prior_prec_from_tau(kappa_block)
         elif tau_block is None:
             inv_sO2 = 1.0 / (sigma_O_val ** 2 + 1e-12)
             prior_prec_vec = inv_sO2 * jnp.ones(m_total)
@@ -448,8 +533,15 @@ def build_model(rom, trajectories, cfg):
 
         mu_all, C_all = [], []
         for i in range(num_modes):
-            mi, Ci = posterior_fn(
-                traj_blocks, i, m_total, prior_prec_vec, deriv_is_diag)
+            if structured:
+                blocks_i, prec_i, _ = _structured_mode(traj_blocks, i, kappa_block)
+                theta_i, root_i = posterior_fn(
+                    blocks_i, i, k_rows, prec_i, deriv_is_diag)
+                mi = P_rows[i] @ theta_i
+                Ci = jnp.pad(P_rows[i] @ root_i, ((0, 0), (0, m_total - k_rows)))
+            else:
+                mi, Ci = posterior_fn(
+                    traj_blocks, i, m_total, prior_prec_vec, deriv_is_diag)
             mu_all.append(mi)
             C_all.append(Ci)
         return jnp.stack(mu_all), jnp.stack(C_all)

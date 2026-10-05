@@ -139,13 +139,14 @@ class InputTable:
 
 
 class ProductionField:
-    """dq/dt = c + A q (untreated) or c + A q + alpha(t) (B + N q) (chemo)."""
+    """dq/dt = c + A q (untreated) or c + A q + alpha(t) (B + N q) [+ H (q (x) q)] (chemo; canonical cABN[H])."""
 
     def __init__(self, operator, forcing=None):
         self.operator, self.forcing = np.asarray(operator, dtype=float), forcing
         r = len(self.operator)
-        expected = (r, r + 1) if forcing is None else (r, 2 * r + 2)
-        if self.operator.shape != expected or not np.isfinite(self.operator).all():
+        widths = (r + 1,) if forcing is None else (2 * r + 2, 2 * r + 2 + r * (r + 1) // 2)
+        if (self.operator.ndim != 2 or self.operator.shape[1] not in widths
+                or not np.isfinite(self.operator).all()):
             raise ValueError("Invalid canonical production operator")
 
     def rhs(self, t, q):
@@ -153,7 +154,10 @@ class ProductionField:
         if self.forcing is None:
             return O @ np.r_[1., q]
         r, u = len(q), self.forcing(t)
-        return O[:, 0] + O[:, 1:1 + r] @ q + u * (O[:, 1 + r] + O[:, 2 + r:] @ q)
+        value = O[:, 0] + O[:, 1:1 + r] @ q + u * (O[:, 1 + r] + O[:, 2 + r:2 + 2 * r] @ q)
+        if O.shape[1] > 2 * r + 2:
+            value = value + O[:, 2 + 2 * r:] @ np.concatenate([q[a] * q[:a + 1] for a in range(r)])
+        return value
 
 
 class NeuralField:
