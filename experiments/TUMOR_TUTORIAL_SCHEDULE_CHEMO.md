@@ -30,8 +30,9 @@ train through day 84 (eight treated weeks) and forecast the last four doses
 at 0.5-2x. Their selection rule was declared before the fits. Under it, the
 chosen model forecasts the evaluation seeds within 3.7-5.8% (median per
 dose), close to the basis floor. It has the projected PDE's form and an
-input-aware Gaussian process. See "Mid-course re-planning with the projected
-PDE's form".
+input-aware Gaussian process. Its main remaining error is too little
+regrowth when doses are lowered (day-119 burden 0.88-0.91 of the truth at
+0.5x). See "Mid-course re-planning with the projected PDE's form".
 
 ## Design
 
@@ -428,6 +429,13 @@ minutes each, single-threaded), and all 64 draws completed in every cell.
   band (5-95%) contains the true burden at 99-100% of forecast times at 1x,
   1.5x and 2x, and at 56-85% at 0.5x. These are empirical draw bands, not
   calibrated uncertainty.
+- **Where the remaining error is.** The chosen model regrows the tumour too
+  slowly when doses are lowered.
+  - Its day-119 burden is 0.88-0.91 of the truth at 0.5x, 0.89-0.94 at 1x,
+    and 0.93-1.02 at 2x.
+  - At 0.5x the band contains the true burden at only 19-73% of days 100-119.
+  - Free + input-aware GP has the same low-dose shortfall (0.87-0.90 at
+    0.5x).
 
 **Comparison with the earlier tutorial-schedule design.** That design
 trained on days 5-57 with the free model and default smoothing, and its
@@ -469,6 +477,6 @@ to be decided.
 
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
-`figures/why_2x_looks_best.png`) are local session
+`figures/why_2x_looks_best.png`, `figures/midcourse_eval_burden.png`) are local session
 artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.

@@ -308,6 +308,18 @@ unchanged or rescaled to 0.5x-2x. They are not run by default and are not in
 the manuscript; production results and a clean-data diagnosis are in the
 [tutorial-schedule record](experiments/TUMOR_TUTORIAL_SCHEDULE_CHEMO.md).
 
+Five more exploratory recipes, `midcourse-*-chemo`, re-plan mid-course on the
+same twin. They train on days 5-84 (eight treated weeks) and rescale only the
+last four doses (days 91-112) to 0.5x-2x. Two options set what changes:
+- `galerkin` and `logistic` restrict the reduced model to the projected PDE's
+  form;
+- `-trend` gives the Gaussian-process smoother the dose times.
+
+The selection rule was declared before the fits. On the evaluation seeds,
+`midcourse-logistic-trend-chemo` forecasts days 84-119 within 3.7-5.8%
+(median per dose). The Neural ODE has not been run on these recipes. They are
+also not run by default, and are recorded in the same file.
+
 Inspect the recipes and their production inference settings:
 
 ```bash
