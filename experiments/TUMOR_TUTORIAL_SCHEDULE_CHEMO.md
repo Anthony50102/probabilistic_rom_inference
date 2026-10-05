@@ -22,7 +22,8 @@ difference between doses, against 79-80% on the reported multi-dose task. A
 noise-free least-squares check shows that the model form can represent the
 forecasts (3-7% error when fitted with hindsight). The limit is how little the
 52-day training window determines about the future; inference does not cause
-it.
+it. The 2x arm looks best only because two errors cancel there (see "Why 2x
+looks best").
 
 ## Design
 
@@ -64,6 +65,7 @@ conda run -n prob_rom python 04_unified_benchmark.py alternative-regimen-chemo -
 conda run -n prob_rom python 04_unified_benchmark.py alternative-regimen-chemo              # 48-50
 conda run -n prob_rom python 04_unified_benchmark.py standard-regimen-chemo                 # 51-53
 conda run -n prob_rom python tutorial_chemo_structure_check.py                              # clean-data check (about a minute)
+conda run -n prob_rom python tutorial_chemo_rate_decomposition.py                           # regrowth vs drug split (seconds)
 ```
 
 On first use, preparation generates the TumorTwin sources. These are the
@@ -167,13 +169,54 @@ Three conclusions:
    from days 5-57. Training sees the steep first response: about 40% lost in
    three weeks from the peak. It does not see the slower decline that
    follows. In the true (logistic) model, thinned tissue regrows faster per
-   cell between doses. The likely result is that a linear law fitted to the
-   steep phase keeps shrinking the tumour too fast.
+   cell between doses. Production's fitted regrowth does not speed up, so it
+   keeps shrinking the tumour too fast (measured in the next section).
 3. **Adding the logistic term does not help.** `cAHN` fitted to the training
    window diverges before day 119 on every arm. Even with hindsight, its
    rollouts (21-50%) are worse than those of `cAN`. This matches the
    manuscript's choice to omit `H` as unidentifiable from one training
    trajectory.
+
+## Why 2x looks best: two errors cancel
+
+On the burden plots, production looks accurate at 2x and poor at the other
+doses. `tutorial_chemo_rate_decomposition.py` explains this by splitting the
+burden's growth rate into regrowth and drug kill. In the truth, the drug
+removes exactly α(t) of the cells per day (the term -α(t)u), and regrowth per
+cell rises as the drug thins the tumour (the logistic term). The script
+evaluates production's operators on the true states, so the differences come
+from the operators. Means over days 57-119 for seeds 48-50, in %/day:
+
+| Future dose | True regrowth | Production regrowth | Production kill per unit dose (truth 1) | Regrowth error | Drug error | Net error |
+|---|---|---|---|---|---|---|
+| 0.5x | 3.6 | 1.6-1.9 | 0.74-0.77 | -2.0 to -1.7 | +0.5 to +0.6 | -1.4 to -1.2 |
+| 1x | 4.1 | 1.7-2.0 | 0.74-0.78 | -2.4 to -2.2 | +1.0 to +1.2 | -1.3 to -1.2 |
+| 1.5x | 4.4 | 1.8-2.1 | 0.75-0.79 | -2.6 to -2.3 | +1.4 to +1.7 | -1.0 to -0.8 |
+| 2x | 4.5 | 2.1-2.6 | 0.75-0.79 | -2.4 to -2.0 | +1.8 to +2.2 | -0.4 to +0.2 |
+
+- **Regrowth too slow at every dose.** Before treatment, production's
+  regrowth matches the truth (2.4-2.5 against 2.5%/day). Once the drug thins
+  the tumour, the true regrowth climbs to 3.6-4.5%/day, but production's
+  stays near 2%/day. This error is similar at every dose and shrinks the
+  tumour too fast.
+- **Drug too weak, more so at higher doses.** Production's drug kills
+  0.74-0.79 per unit dose instead of 1. This error grows with the dose. At 2x
+  it cancels most of the regrowth error; at 0.5x and 1x, less than half.
+- **Training cannot tell the two apart.** Over days 35-57, production's
+  regrowth is already 0.8-1.1%/day too slow and its drug 15-21% too weak. The
+  two cancel to within 0.05%/day, so the training fit is accurate either way.
+  Noise-free least squares splits the training window correctly (regrowth 3.3
+  against 3.1%/day, kill 1.06), but its rates run away in the forecast (kill
+  2.5-4.6 per unit dose). With hindsight, its kill is 1.01-1.06.
+- **Scale flatters 2x.** The true 2x tumour ends at 917 cells, 7% of its
+  day-57 burden, so on a linear axis every curve sits near zero. Production's
+  day-119 gap is 120-420 cells at 2x, against 13,500-14,700 at 0.5x and
+  5,200-5,300 at 1x. As a fraction of the truth, production's day-119 burden
+  is 0.44-0.59 at 0.5-1.5x and 0.54-0.87 at 2x.
+
+So the 2x result is not evidence that production extrapolates dose increases
+well. It depends on how the training fit split the net shrinkage between
+regrowth and drug, which the window does not determine.
 
 ## Open decisions
 
@@ -184,7 +227,8 @@ design is kept, the levers are the information in training: a longer window,
 or a scan after a recovery period. The reported cases remain the manuscript's
 chemo results until then.
 
-Run notes, the pre-declared rule, logs, and burden plots
-(`figures/reported_burden.png`, `figures/dev45_burden.png`) are local session
+Run notes, the pre-declared rule, logs, and plots
+(`figures/reported_burden.png`, `figures/dev45_burden.png`,
+`figures/why_2x_looks_best.png`) are local session
 artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
