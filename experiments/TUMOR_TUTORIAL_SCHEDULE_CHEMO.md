@@ -25,10 +25,13 @@ forecasts (3-7% error when fitted with hindsight). The limit is how little the
 it. The 2x arm looks best only because two errors cancel there (see "Why 2x
 looks best").
 
-**Follow-up in progress.** The mid-course re-planning cases
-(`midcourse-*-chemo`) train through day 84 and test a reduced model with the
-projected PDE's form. Their selection rule was declared before the fits; see
-"Mid-course re-planning with the projected PDE's form".
+**Follow-up: mid-course re-planning works.** The `midcourse-*-chemo` cases
+train through day 84 (eight treated weeks) and forecast the last four doses
+at 0.5-2x. Their selection rule was declared before the fits. Under it, the
+chosen model forecasts the evaluation seeds within 3.7-5.8% (median per
+dose), close to the basis floor. It has the projected PDE's form and an
+input-aware Gaussian process. See "Mid-course re-planning with the projected
+PDE's form".
 
 ## Design
 
@@ -395,6 +398,61 @@ spline stand-in's 0.8 bias.
   1.3x the truth for 1.5x doses and 1.9x for 2x doses, and only 11-40 of 64
   draws are within 25% at 2x.
 
+### Evaluation results (seeds 48-50, run once)
+
+Point-forecast full-field error over days 84-119 (%). Each cell lists seeds
+48 / 49 / 50 (median). All six fits completed their 12,000 updates (about 6
+minutes each, single-threaded), and all 64 draws completed in every cell.
+
+| Model | 0.5x | 1x | 1.5x | 2x | Mean | Training fit |
+|---|---|---|---|---|---|---|
+| **logistic + input-aware GP** | 6.7 / 5.8 / 5.7 (**5.8**) | 5.5 / 4.3 / 4.3 (**4.3**) | 4.8 / 3.7 / 3.8 (**3.8**) | 4.4 / 3.5 / 3.7 (**3.7**) | **4.68** | 1.0 |
+| free + input-aware GP | 6.7 / 6.6 / 7.2 (6.7) | 9.1 / 9.2 / 8.7 (9.1) | 15.9 / 16.3 / 15.7 (15.9) | 22.6 / 22.9 / 22.4 (22.6) | 13.61 | 1.2 |
+| Basis floor (median) | 4.9 | 4.1 | 3.5 | 3.0 | | |
+
+- **Success bar met.** Every median is far below 18.9%. The chosen model is
+  within 0.2-0.9 points of the basis floor, i.e. of the best any rank-4 model
+  could do.
+- **Dose changes.** The predicted change from the 1x arm on day 119 is
+  0.86-0.92 of the true change (free + input-aware GP: 0.66-0.74). Its
+  direction is right at every forecast time (294 of 294 per arm). The
+  day-119 burden is 0.88-1.02 of the truth at every dose. Free + input-aware
+  GP over-predicts the 2x burden at 1.82-1.90 times the truth.
+- **Learned rates match the PDE.**
+  - Mode 1's drug coefficient is -1.022, -0.995 and -1.008 (truth -1).
+  - Mode 1's crowding rate is -0.046 to -0.049 (truth -0.052).
+  - Modes 2-4 learn drug coefficients of -0.64 to -0.95 and crowding rates
+    of -0.020 to -0.068.
+- **Posterior draws.** For the chosen model, 63-64 of 64 draws are within
+  25% at every dose and seed (free + input-aware GP: 40-51 at 2x). The draw
+  band (5-95%) contains the true burden at 99-100% of forecast times at 1x,
+  1.5x and 2x, and at 56-85% at 0.5x. These are empirical draw bands, not
+  calibrated uncertainty.
+
+**Comparison with the earlier tutorial-schedule design.** That design
+trained on days 5-57 with the free model and default smoothing, and its
+median forecast errors were 11-35%. Three changes bring them to 3.7-5.8%:
+- a mid-course question (eight treated weeks seen);
+- the projected PDE's form, with no source, a diagonal drug term and the
+  crowding shape;
+- a smoother that knows when doses were given.
+
+The development fits separate their effects:
+- With default smoothing, the structure helps little (21.25% against
+  22.93%).
+- With the input-aware GP alone, the free model reaches 14.96%.
+- Together they reach 5.95%.
+
+The Neural ODE has not been run on this design.
+
+```bash
+cd experiments/tumor
+for c in midcourse-logistic-trend-chemo midcourse-regimen-trend-chemo; do
+  conda run -n prob_rom python 04_unified_benchmark.py $c --seeds 45 46 47      # step 4 (development)
+  conda run -n prob_rom python 04_unified_benchmark.py $c                       # evaluation 48-50
+done
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -403,6 +461,11 @@ manuscript's tumour section and dose description to this design. If the
 design is kept, the levers are the information in training: a longer window,
 or a scan after a recovery period. The reported cases remain the manuscript's
 chemo results until then.
+
+For the mid-course design, the Neural ODE should get the same known physics
+for a like-for-like comparison. That means the same drug term, and no growth
+without tumour. Its exact form (a hybrid with a learned remainder) is still
+to be decided.
 
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
