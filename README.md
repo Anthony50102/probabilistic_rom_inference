@@ -320,6 +320,11 @@ The selection rule was declared before the fits. On the evaluation seeds,
 (median per dose). The Neural ODE has not been run on these recipes. They are
 also not run by default, and are recorded in the same file.
 
+`alternative-regimen-logistic-trend-chemo` is an after-the-fact check, not
+pre-registered. It fits that chosen model to `alternative-regimen-chemo`'s
+days 5-57 split and forecasts days 57-119 within 3.5-11.4% (median per dose),
+against 11.1-35.1% for the free model.
+
 Inspect the recipes and their production inference settings:
 
 ```bash

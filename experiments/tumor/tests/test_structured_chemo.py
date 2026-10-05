@@ -64,6 +64,17 @@ class MidcourseCaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exposure table"):
             replace(CASES["untreated-growth"], input_aware_gp=True)
 
+    def test_earlier_split_check_changes_only_the_model(self):
+        case, base = CASES["alternative-regimen-logistic-trend-chemo"], CASES["alternative-regimen-chemo"]
+        self.assertEqual(replace(case, name=base.name, description=base.description, structure="free",
+                                 input_aware_gp=False), base)
+        self.assertEqual(asdict(production_config(case)),
+                         asdict(production_config(CASES["midcourse-logistic-trend-chemo"])))
+        # Same simulations and exposure table as the earlier split, so its cached sources are reused.
+        for strength in base.future_strengths:
+            self.assertEqual(bd.chemo_branch_path(case, strength), bd.chemo_branch_path(base, strength))
+        self.assertEqual(bd._training_inputs_path(case), bd._training_inputs_path(base))
+
 
 class GalerkinStructureTests(unittest.TestCase):
     def setUp(self):

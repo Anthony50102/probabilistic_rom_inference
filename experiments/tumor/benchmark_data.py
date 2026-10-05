@@ -55,6 +55,7 @@ DEFAULT_SEEDS = {
     # Tutorial-schedule cases: same roles (development acquisition 45, then fresh acquisitions).
     "standard-regimen-chemo": (51, 52, 53),
     "alternative-regimen-chemo": (48, 49, 50),
+    "alternative-regimen-logistic-trend-chemo": (48, 49, 50),
     # Mid-course cases: development acquisitions 45-47 settle every choice before 48-50 are run once.
     "midcourse-regimen-chemo": (48, 49, 50),
     "midcourse-galerkin-chemo": (48, 49, 50),

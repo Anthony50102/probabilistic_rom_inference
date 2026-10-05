@@ -34,6 +34,14 @@ input-aware Gaussian process. Its main remaining error is too little
 regrowth when doses are lowered (day-119 burden 0.88-0.91 of the truth at
 0.5x). See "Mid-course re-planning with the projected PDE's form".
 
+An after-the-fact check finds that the model change, not the split, does
+most of the work. On the earlier days 5-57 split the same model forecasts
+within 3.5-11.4% (median per dose), against 11.1-35.1% before. This revises
+the outcome above. The default smoother contributed to the failure by
+rounding off the drop at each dose, and the projected form leaves less for
+the 52-day window to determine. See "After-the-fact check: the chosen model
+on the earlier split".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -461,22 +469,125 @@ for c in midcourse-logistic-trend-chemo midcourse-regimen-trend-chemo; do
 done
 ```
 
+### What the input-aware Gaussian process changes
+
+The Gaussian process (GP) smooths each mode's noisy scans before the
+operators are fitted.
+
+Each dose makes the tumour's rate of change drop at once: the drug's kill
+rate α(t) jumps at the dose and then decays. So each mode's trajectory has a
+corner at every dose. The default GP, a squared-exponential kernel, is smooth
+everywhere and rounds these corners off.
+
+The input-aware GP adds three terms to each mode's GP: a constant, time, and
+the cumulative training exposure ∫α. Their coefficients are zero-mean
+Gaussian and are integrated out exactly, as for explicit basis functions in
+Rasmussen & Williams (2006, §2.7). The derivative of ∫α is α(t), so the
+smoothed curve can have a corner at each dose, and the size of each corner
+is learned from the scans. The GP uses only the training exposure table,
+which is the same α(t) the reduced model takes as its input. The forecast
+does not use the GP.
+
+On mid-course development seed 45 (training days 5-84;
+`figures/smoother_seed45.png`), the two logistic fits compare with the
+noise-free simulation projected onto the basis as follows:
+- **Rate of change.** The default GP's is off by 54% (mode 1) and 64%
+  (mode 2), against 17% and 18% for the input-aware GP.
+- **State.** The default GP's errors are 1.3% and 3.6%, against 0.4% and
+  0.5%.
+- **Mode 2.** The default GP's length scale is 12 days, longer than the week
+  between doses, so it smooths over mode 2's weekly dose pattern. Mode 2's drug
+  coefficient then comes out near 0 (-0.0025). With the input-aware GP it is
+  -0.96, and mode 1's moves from -0.71 to -0.99 (truth -1).
+
+**Why it is physically justified.**
+- The corners are in the PDE: the term -α(t)u changes the moment α jumps.
+- The GP is told only when and how the drug was given, which the reduced
+  model is already told.
+
+**Limits.**
+- It inherits the drug model (instant rise, decay at .7/day). With a
+  different drug curve the corners would be wrong, but so would the reduced
+  model.
+- Each mode's corner size is one coefficient for the whole window, while the
+  true size scales with the tumour. The squared-exponential part absorbs the
+  difference.
+- The Neural ODE fits trajectories by integrating them, so it needs no
+  smoother.
+
+### After-the-fact check: the chosen model on the earlier split
+
+This check was not pre-registered. The mid-course follow-up changed the
+split, the model form and the smoother together. To separate them,
+`alternative-regimen-logistic-trend-chemo` fits the chosen model (projected
+logistic form plus the input-aware GP, same settings) to the earlier design's
+acquisitions. It trains on days 5-57 and forecasts days 57-119 through eight
+changed doses. Seeds 45 and 48-50 were each run once, and nothing was tuned.
+Each fit took 2.8 minutes, with the four seeds running at once.
+
+Full-field error over days 57-119 (%). Each cell lists seeds 48 / 49 / 50
+(median).
+
+| Model | 0.5x | 1x | 1.5x | 2x | Training fit |
+|---|---|---|---|---|---|
+| Free, default smoothing (Results above) | 31.3 / 35.1 / 35.1 (35.1) | 24.3 / 25.2 / 24.6 (24.6) | 14.4 / 14.4 / 13.5 (14.4) | 9.6 / 12.2 / 11.1 (11.1) | 1.9-2.3 |
+| **Logistic + input-aware GP** | 10.6 / 11.7 / 11.4 (**11.4**) | 6.6 / 7.5 / 6.8 (**6.8**) | 4.4 / 5.1 / 4.3 (**4.4**) | 3.5 / 3.7 / 3.2 (**3.5**) | 0.7-0.9 |
+| Basis floor (median) | 9.4 | 5.8 | 3.7 | 2.6 | |
+
+- **Development seed 45:** 12.5 / 7.1 / 4.7 / 3.6, against 29.1 / 22.0 /
+  12.4 / 9.2 before.
+- **Dose changes.** On day 119, the predicted difference from the 1x arm is
+  0.81-0.88 of the true difference (before: 0.40-0.50). The day-119 burden is
+  0.79-0.90 of the truth at every dose (before: 0.44-0.87).
+- **Learned rates.** Mode 1's drug coefficient is -1.021 to -1.033 (truth
+  -1), and its crowding rate is -0.044 to -0.048 (truth -0.052).
+- **Posterior draws.** 63-64 of 64 draws are within 25% at every dose and
+  seed (before: 9-52). The draw band contains the true burden:
+  - at every forecast time on seed 50;
+  - at 46-100% of forecast times on seed 48;
+  - at only 29-47% on seed 49.
+- **Same days, 84-119.** With this model, the mid-course split's medians are
+  5.8 / 4.3 / 3.8 / 3.7, against 13.6 / 9.7 / 8.1 / 8.2 for the earlier
+  split. That is what 27 more days of data and a shorter horizon should give.
+
+**Conclusion.** The model change, not the split, accounts for most of the
+improvement. With it, the earlier question (data to the second MRI, forecast
+to the third) is within 0.7-2.0 points of its basis floor.
+`figures/what_changed_seed48.png` shows the three steps for seed 48.
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python 04_unified_benchmark.py alternative-regimen-logistic-trend-chemo --seeds 45 48 49 50
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
 this design (about 2-3 hours per seed), tutorial-style figures, and moving the
-manuscript's tumour section and dose description to this design. If the
-design is kept, the levers are the information in training: a longer window,
-or a scan after a recovery period. The reported cases remain the manuscript's
-chemo results until then.
+manuscript's tumour section and dose description to this design. With the
+free model, the only levers were more information in training (a longer
+window, or a scan after a recovery period). The after-the-fact check shows
+that the model change works on the original window. The reported cases
+remain the manuscript's chemo results until then.
 
 For the mid-course design, the Neural ODE should get the same known physics
 for a like-for-like comparison. That means the same drug term, and no growth
 without tumour. Its exact form (a hybrid with a learned remainder) is still
 to be decided.
 
+Which design to report is also open. With the new model the earlier
+tutorial-schedule question works too, and it is the more realistic one: data
+to the second MRI, forecast to the third. Its model was chosen on the
+mid-course development seeds, not on seeds 48-50. Those seeds had, however,
+been seen with the free model. A cleaner confirmation, declared before it is
+run, would be the chosen model on the standard regimen's seeds 51-53 (1x),
+which have not been run with it.
+
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
-`figures/why_2x_looks_best.png`, `figures/midcourse_eval_burden.png`) are local session
+`figures/why_2x_looks_best.png`, `figures/midcourse_eval_burden.png`,
+`figures/midcourse_eval_burden_all_seeds.png`,
+`figures/midcourse_eval_error_vs_time.png`, `figures/smoother_seed45.png`,
+`figures/what_changed_seed48.png`) are local session
 artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.

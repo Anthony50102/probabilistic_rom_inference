@@ -21,6 +21,8 @@ projected logistic crowding term, each with learned rates. The two
 ``midcourse-*-trend-chemo`` cases repeat free and galerkin_logistic with the
 input-aware Gaussian process (``input_aware_gp``: the cumulative training exposure
 in each mode's GP mean), the one fix declared in TUMOR_TUTORIAL_SCHEDULE_CHEMO.md.
+``alternative-regimen-logistic-trend-chemo`` fits that model to the earlier
+days 5-57 split, after the fact, to separate the model change from the split.
 
 Observation models
 ------------------
@@ -142,6 +144,12 @@ CASES = {
         (5., 57.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"], "cABN",
         PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
         sensitivity=TUTORIAL_TWIN["sensitivity"]),
+    "alternative-regimen-logistic-trend-chemo": BenchmarkCase(
+        "alternative-regimen-logistic-trend-chemo",
+        "As alternative-regimen-chemo, with the mid-course model: projected logistic form and input-aware GP.",
+        (5., 57.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"], "cABN",
+        PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
+        sensitivity=TUTORIAL_TWIN["sensitivity"], structure="galerkin_logistic", input_aware_gp=True),
     **{name: BenchmarkCase(
         name, description, (5., 84.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"],
         "cABN", PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
@@ -175,6 +183,8 @@ DEFAULT_POD_PROVENANCE = {
                                   "45 by the lowest mean production forecast_57_119 error over the four future strengths "
                                   "(none r4 18.2%, none r3 22.5%; centred bases diverged at the higher strengths); "
                                   "see experiments/TUMOR_TUTORIAL_SCHEDULE_CHEMO.md."),
+    "alternative-regimen-logistic-trend-chemo": ("Uncentred rank-4 POD of the noisy training scans, as "
+                                                 "alternative-regimen-chemo (the same acquisitions; not reselected)."),
     **{name: ("Uncentred rank-4 POD of the noisy training scans, carried over from alternative-regimen-chemo (not "
               "reselected); the Galerkin structure needs an uncentred basis, and preparation checks that rank 4 clears "
               "the scan-noise threshold.")
