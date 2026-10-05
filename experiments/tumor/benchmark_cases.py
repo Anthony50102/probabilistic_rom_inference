@@ -17,7 +17,10 @@ only in the reduced model's structure (``STRUCTURES``): ``free`` learns every
 operator entry as in the other cases; ``galerkin`` imposes the form that the
 projection of the reaction-diffusion PDE onto the uncentred POD basis implies
 (no constant term, a diagonal drug-kill term) and ``galerkin_logistic`` adds the
-projected logistic crowding term, each with learned rates.
+projected logistic crowding term, each with learned rates. The two
+``midcourse-*-trend-chemo`` cases repeat free and galerkin_logistic with the
+input-aware Gaussian process (``input_aware_gp``: the cumulative training exposure
+in each mode's GP mean), the one fix declared in TUMOR_TUTORIAL_SCHEDULE_CHEMO.md.
 
 Observation models
 ------------------
@@ -93,6 +96,7 @@ class BenchmarkCase:
     observation: str = "segmented"
     sensitivity: float = HISTORICAL_SENSITIVITY
     structure: str = "free"
+    input_aware_gp: bool = False
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
@@ -104,6 +108,8 @@ class BenchmarkCase:
             raise ValueError(f"Unknown reduced-model structure: {self.structure}")
         if self.structure != "free" and not (self.dose_days and self.pod.centering == "none"):
             raise ValueError("The Galerkin structure holds for a chemotherapy ROM on an uncentred POD basis.")
+        if self.input_aware_gp and not self.dose_days:
+            raise ValueError("The input-aware Gaussian process needs a chemotherapy exposure table.")
 
     def pulse_coefficients(self, future_strength: float) -> tuple[float, ...]:
         if future_strength not in self.future_strengths:
@@ -139,14 +145,18 @@ CASES = {
     **{name: BenchmarkCase(
         name, description, (5., 84.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"],
         "cABN", PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
-        sensitivity=TUTORIAL_TWIN["sensitivity"], structure=structure)
-       for name, structure, description in (
-           ("midcourse-regimen-chemo", "free",
+        sensitivity=TUTORIAL_TWIN["sensitivity"], structure=structure, input_aware_gp=trend)
+       for name, structure, trend, description in (
+           ("midcourse-regimen-chemo", "free", False,
             "Tutorial twin, eight standard weekly doses observed; last four doses rescaled (free ROM)."),
-           ("midcourse-galerkin-chemo", "galerkin",
+           ("midcourse-galerkin-chemo", "galerkin", False,
             "As midcourse-regimen-chemo; ROM with the projected PDE's form (no source, diagonal drug term)."),
-           ("midcourse-logistic-chemo", "galerkin_logistic",
-            "As midcourse-galerkin-chemo, plus the projected logistic crowding term."))},
+           ("midcourse-logistic-chemo", "galerkin_logistic", False,
+            "As midcourse-galerkin-chemo, plus the projected logistic crowding term."),
+           ("midcourse-regimen-trend-chemo", "free", True,
+            "As midcourse-regimen-chemo, with the input-aware Gaussian process."),
+           ("midcourse-logistic-trend-chemo", "galerkin_logistic", True,
+            "As midcourse-logistic-chemo, with the input-aware Gaussian process."))},
 }
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
@@ -168,7 +178,8 @@ DEFAULT_POD_PROVENANCE = {
     **{name: ("Uncentred rank-4 POD of the noisy training scans, carried over from alternative-regimen-chemo (not "
               "reselected); the Galerkin structure needs an uncentred basis, and preparation checks that rank 4 clears "
               "the scan-noise threshold.")
-       for name in ("midcourse-regimen-chemo", "midcourse-galerkin-chemo", "midcourse-logistic-chemo")},
+       for name in ("midcourse-regimen-chemo", "midcourse-galerkin-chemo", "midcourse-logistic-chemo",
+                    "midcourse-regimen-trend-chemo", "midcourse-logistic-trend-chemo")},
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -253,7 +264,7 @@ def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
                       mll_weight=0.1, weakform_weight=8.0, operator_solver="normal")
         return replace(cfg, num_modes=settings.rank)
     operators = STRUCTURED_OPERATORS.get(case.structure) or galerkin_operators(case, settings)
-    return replace(cfg, num_modes=settings.rank, operators=operators)
+    return replace(cfg, num_modes=settings.rank, operators=operators, gp_input_trend=case.input_aware_gp)
 
 
 def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
@@ -267,6 +278,8 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
     if fields["structure"] == "free":
         # Likewise for recipes from before the structured ROMs.
         fields.pop("structure")
+    if not fields["input_aware_gp"]:
+        fields.pop("input_aware_gp")
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")

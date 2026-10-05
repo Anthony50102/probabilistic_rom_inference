@@ -179,6 +179,10 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     rom = _production_structure(case, cfg, observations)
     trajectories = [{"t_sampled": observations["t_sampled"], "snapshots_comp": observations["y"],
                      "inputs_eval": observations["native_inputs_eval"] if case.dose_days else None}]
+    if cfg.gp_input_trend:
+        # The training regimen's tabulated exposure (the input-aware GP's cumulative-exposure trend).
+        trajectories[0]["input_table"] = dict(times=np.asarray(observations["input_times"], dtype=float),
+                                              values=np.asarray(observations["input_values"], dtype=float))
     row_maps = None
     if case.structure != "free":
         basis = bd.read_npz(data["folder"] / "basis.npz")

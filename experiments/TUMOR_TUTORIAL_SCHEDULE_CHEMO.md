@@ -325,6 +325,76 @@ training and forecast spans in its name
 alternative-regimen history but not its fit grid. The existing tables
 regenerate bit-identically under the new names.
 
+### Development results (seeds 45-47, default settings)
+
+Point-forecast full-field error over days 84-119 (%). Each cell lists seeds
+45 / 46 / 47 (median). All nine fits completed their 12,000 updates.
+
+| Model | 0.5x | 1x | 1.5x | 2x | Mean | Training fit |
+|---|---|---|---|---|---|---|
+| free (control) | 29.3 / 36.3 / 36.6 (36.3) | 16.7 / 25.9 / 27.3 (25.9) | 10.8 / 18.9 / 20.8 (18.9) | 15.8 / 17.8 / 19.0 (17.8) | 22.93 | 7.8 |
+| galerkin | 38.0 / 44.6 / 40.1 (40.1) | 28.9 / 36.3 / 33.0 (33.0) | 22.4 / 30.0 / 27.1 (27.1) | 21.2 / 27.4 / 23.8 (23.8) | 31.06 | 9.1 |
+| logistic | 27.4 / 32.7 / 29.7 (29.7) | 16.8 / 23.1 / 21.9 (21.9) | 13.5 / 18.3 / 16.2 (16.2) | 20.0 / 21.3 / 14.0 (20.0) | 21.25 | 6.7 |
+
+The basis floor is 5.1, 4.3, 3.6 and 3.2% at 0.5, 1, 1.5 and 2x. Every model
+predicts the right direction of every dose change (294 of 294 times), but
+only 0.29-0.55 of its size on day 119.
+
+**Rule, steps 2-3.** Logistic is chosen (21.25% against 31.06% for
+galerkin). It beats the free control (22.93%), so the evaluation seeds may be
+used. The margin is small, and the success bar is missed at 0.5x, 1x and 2x.
+
+**Learned coefficients: clearly biased.** The drug coefficients should be
+about -1.
+- Mode 1 learns -0.68 to -0.74 in every model; it carries most of the burden.
+- Mode 2 learns -0.003 to -0.018 on seeds 45-46 in the structured models
+  (-0.07 to -0.12 for free).
+- Modes 3-4 learn -0.24 to -0.78.
+
+The crowding rates, -0.023 to -0.082 against -0.052, have the right size.
+Because the bias is clear, step 4 applies before any evaluation seed is used.
+
+**Step 4, declared before these fits.** The fix is the input-aware Gaussian
+process. It adds the cumulative drug exposure to each mode's Gaussian-process
+mean, so the smoother can follow the drop after each dose instead of
+flattening it. Smoothing those drops away is the mechanism behind the
+spline stand-in's 0.8 bias.
+- It is fitted on development seeds 45-47 for the chosen logistic model
+  (`midcourse-logistic-trend-chemo`) and for the free control
+  (`midcourse-regimen-trend-chemo`). Nothing else changes.
+- It is adopted if it lowers logistic's development mean below 21.25%.
+- Evaluation then compares logistic with the free control under the same
+  smoothing. Go/no-go (step 3) is re-applied to that pair. If the fix is not
+  adopted, the default pair is evaluated as above.
+
+**Step 4 result (seeds 45-47).** Each cell lists seeds 45 / 46 / 47 (median).
+
+| Model | 0.5x | 1x | 1.5x | 2x | Mean | Training fit |
+|---|---|---|---|---|---|---|
+| free + input-aware GP | 6.7 / 7.2 / 6.1 (6.7) | 9.8 / 9.4 / 8.8 (9.4) | 17.5 / 16.3 / 19.8 (17.5) | 24.7 / 23.2 / 30.0 (24.7) | 14.96 | 1.2 |
+| logistic + input-aware GP | 6.2 / 9.1 / 7.7 (7.7) | 4.7 / 7.5 / 6.0 (6.0) | 4.0 / 6.5 / 5.1 (5.1) | 3.8 / 5.9 / 4.8 (4.8) | 5.95 | 1.5 |
+
+- **Fix adopted.** Logistic's development mean falls from 21.25% to 5.95%,
+  within 1.5-2.6 points of the basis floor at every dose.
+- **Go/no-go passes.** 5.95% is below the free control's 14.96% under the
+  same smoothing, so the evaluation seeds are run for
+  `midcourse-logistic-trend-chemo` and `midcourse-regimen-trend-chemo`.
+- **The bias is gone where the data inform it.**
+  - Mode 1's drug coefficient is -0.99 to -1.00 (truth -1). Mode 2's is
+    -0.94 to -1.00, and modes 3-4 are -0.53 to -0.76.
+  - Mode 1's crowding rate is -0.046 to -0.058 (truth -0.052).
+  - The predicted dose effect on day 119 is 0.81-0.89 of the truth, up from
+    0.36-0.55. The predicted day-119 burden is 0.84-0.99 of the truth at
+    every dose.
+  - All 64 draws are within 25% at every dose and seed.
+- **Free + input-aware GP** also learns mode 1's drug coefficient (-0.94 to
+  -0.98) and is accurate at the lower doses. It also learns a large constant
+  source (c_1 = 2.1-2.4) that adds tumour whatever its size; the projected
+  form has none, since with no tumour nothing grows. When high doses shrink
+  the tumour, that source dominates. The day-119 burden is over-predicted at
+  1.3x the truth for 1.5x doses and 1.9x for 2x doses, and only 11-40 of 64
+  draws are within 25% at 2x.
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on

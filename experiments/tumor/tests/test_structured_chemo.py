@@ -1,6 +1,6 @@
 """Mid-course cases and the Galerkin-structured chemo ROM (row maps, canonical layout, forecast field)."""
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 import sys
 
@@ -50,6 +50,19 @@ class MidcourseCaseTests(unittest.TestCase):
             replace(CASES["untreated-growth"], structure="galerkin")
         with self.assertRaisesRegex(ValueError, "Unknown reduced-model structure"):
             replace(case, structure="hybrid")
+
+    def test_trend_cases_change_only_the_gaussian_process(self):
+        for name, base in (("midcourse-regimen-trend-chemo", "midcourse-regimen-chemo"),
+                           ("midcourse-logistic-trend-chemo", "midcourse-logistic-chemo")):
+            case, plain = CASES[name], CASES[base]
+            with self.subTest(case=name):
+                self.assertTrue(case.input_aware_gp)
+                self.assertEqual(replace(case, name=base, description=plain.description, input_aware_gp=False), plain)
+                self.assertEqual(asdict(production_config(case)),
+                                 {**asdict(production_config(plain)), "gp_input_trend": True})
+        self.assertFalse(any(case.input_aware_gp for name, case in CASES.items() if "trend" not in name))
+        with self.assertRaisesRegex(ValueError, "exposure table"):
+            replace(CASES["untreated-growth"], input_aware_gp=True)
 
 
 class GalerkinStructureTests(unittest.TestCase):

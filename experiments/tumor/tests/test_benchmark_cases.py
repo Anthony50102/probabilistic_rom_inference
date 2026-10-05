@@ -16,7 +16,8 @@ class BenchmarkCaseTests(unittest.TestCase):
         self.assertEqual(REPORTED_CASES, ("untreated-growth", "single-dose-chemo", "multi-dose-chemo"))
         self.assertEqual(set(CASES), set(REPORTED_CASES) | {"standard-regimen-chemo", "alternative-regimen-chemo",
                                                             "midcourse-regimen-chemo", "midcourse-galerkin-chemo",
-                                                            "midcourse-logistic-chemo"})
+                                                            "midcourse-logistic-chemo", "midcourse-regimen-trend-chemo",
+                                                            "midcourse-logistic-trend-chemo"})
         self.assertEqual(CASES["untreated-growth"].dose_days, ())
         self.assertEqual(CASES["untreated-growth"].prediction_end, 90.)
         single, multi = CASES["single-dose-chemo"], CASES["multi-dose-chemo"]
@@ -53,7 +54,7 @@ class BenchmarkCaseTests(unittest.TestCase):
         for name, case in CASES.items():
             with self.subTest(case=name):
                 cfg = production_config(case)
-                self.assertFalse(cfg.gp_input_trend)
+                self.assertEqual(cfg.gp_input_trend, case.input_aware_gp)
                 self.assertEqual(cfg.gp_noise_prior, "spectrum")
                 self.assertEqual(cfg.operator_solver, "qr")
                 self.assertEqual(cfg.precision, "default")

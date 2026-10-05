@@ -59,6 +59,8 @@ DEFAULT_SEEDS = {
     "midcourse-regimen-chemo": (48, 49, 50),
     "midcourse-galerkin-chemo": (48, 49, 50),
     "midcourse-logistic-chemo": (48, 49, 50),
+    "midcourse-regimen-trend-chemo": (48, 49, 50),
+    "midcourse-logistic-trend-chemo": (48, 49, 50),
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048
