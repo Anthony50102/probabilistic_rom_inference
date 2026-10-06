@@ -54,6 +54,13 @@ on those futures under a rule declared before the fits. It passes the
 It forecasts too little regrowth after a cut, and its errors are 1.2-2.4
 times the projected model's. See "Dose modifications with the free ROM".
 
+Its draw band misses the truth after cuts to 0.5x (from day 84, after about
+three weeks). The band does not include the cells the rank-4 basis cannot
+draw as the tumour spreads, and every model on this basis loses them. A
+backtest on the training scans predicts that loss. Adding it to the band was
+tried after the fact; it is not part of any declared rule. See "Why the draw
+band misses after cuts".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -679,7 +686,8 @@ arm's median is at most 18.9%:
 - **The draw band misses after cuts from day 57.** It contains the true
   burden at 100% of forecast times at 1x, but at only 42-64% at 0.75x and
   29-36% at 0.5x. From day 84 it contains it at 100% at 1x and 0.75x, and at
-  61-66% at 0.5x. All 64 draws are within 25% at every scenario arm.
+  61-66% at 0.5x. All 64 draws are within 25% at every scenario arm. See
+  "Why the draw band misses after cuts" below.
 - **At 1x the error grows with the horizon.**
   - For the standard regimen the error is 6.1-6.6% over days 57-88 and
     24.8-25.5% over days 88-119.
@@ -706,6 +714,74 @@ arm's median is at most 18.9%:
 
 `figures/free_dose_mod_burden.png` shows the burden forecasts for seed 48
 from days 57 and 84, and for the standard regimen.
+
+### Why the draw band misses after cuts (after the fact, no new fits)
+
+This was checked after the 0.5x band was seen to miss. Nothing in this
+subsection was declared beforehand.
+
+- **What the band covers.** The 5-95% band of the 64 posterior draws covers
+  uncertainty in the reduced model's coefficients on this basis. It cannot
+  include cells that the rank-4 basis cannot draw. It also cannot include a
+  growth law that is wrong outside the training data.
+- **The basis loses cells as the tumour spreads.** The best rank-4 answer is
+  the burden of the truth projected on the basis. Its shortfall from the true
+  burden, on seeds 48-50:
+  - from day 84: 1.4% on day 84, and on day 119 5.2-5.3% (1x), 5.8-5.9%
+    (0.5x) and 6.6-6.7% (0x);
+  - from day 57: 0.7% on day 57, and on day 119 9.4-9.5% (1x), 12.6-12.7%
+    (0.5x) and 18.4-18.6% (0x).
+  - Every model on this basis shares it. That includes the Neural ODE, which
+    is trained in the same reduced coordinates.
+- **More modes do not help.** On seed 48 the fifth mode is 1.04 times the
+  scan-noise threshold from day 84 and 0.87 times it from day 57. Ranks 5
+  and 6 cut the day-119 shortfall at 0.5x only from 5.8% to 5.1% and 5.0%
+  (from day 84), and from 12.6% to 12.3% (from day 57). The missing cells lie
+  in tissue that no training scan shows.
+- **From day 84 the miss is all basis loss.** At 0.75x and 0.5x the band
+  contains the best rank-4 answer at 100% of forecast times. The truth leaves
+  the 0.5x band on day 105-107. At 1x the forecast lies above the best rank-4
+  answer and close to the truth, so the two errors cancel. The band contains
+  the best rank-4 answer there at 48-100% of times.
+- **From day 57 the growth law adds to it.** At 0.5x the day-119 forecast is
+  0.70-0.75 of the true burden, against 0.87 for the best rank-4 answer. The
+  band contains the best rank-4 answer at 53-88% of times.
+- **Projected logistic + input-aware GP.** Its band contains the best rank-4
+  answer at 100% of times on both splits. Against the truth at 0.5x it
+  reaches 56-85% from day 84 and 33-100% from day 57, from basis loss alone.
+- **The reported multi-dose bands.** They contain the truth at 100% of days
+  70-110, but they are 3-4 times as wide: 0.38-0.52 of the burden on day 110,
+  against 0.10-0.18 from day 84 here. The Neural-ODE bands there contain it
+  at 1-80%.
+
+**Can the training scans predict the basis loss? (feasibility, no fits)**
+- **Backtest.** The rank-4 POD is fitted to the noisy training scans taken up
+  to 21 days before the last one. It is then used to measure the cells missed
+  in the later scans. The pipeline's scans were regenerated exactly, with
+  singular values matching to 1e-12.
+- **Rates from day 84.** The estimate is 0.09-0.10% per day (seeds 45 and
+  48-50). The true rate is 0.10-0.11% per day at 1x and 0.13% at 0.5x.
+- **Rates from day 57.** The estimate is 0.14% per day. The true rate is
+  0.14-0.15% per day at 1x and 0.19-0.20% at 0.5x.
+- **Sensitivity.** Holding out 14 or 28 days gives 0.08-0.11 from day 84,
+  but 0.09-0.21 from day 57.
+- **What the estimate misses.** It starts at 0.2-0.4%, so it misses most of
+  the 1.4% already lost on day 84. About half of that gap (0.6-0.7 points in
+  the backtest) is cells the scans cannot see, below their detection
+  threshold.
+- **Effect on the band.** The upper edge was divided by
+  1 - (a + r (t - T)), with a and r the backtest's intercept and rate. Time
+  inside the band, against the truth (seeds 48 / 49 / 50):
+  - from day 84: 100% at 1x and 0.75x, and 92 / 82 / 89% at 0.5x (was 64 /
+    61 / 66). The stress arms reach 73 / 63 / 63% at 0.25x and 82 / 59 / 56%
+    at 0x. At 0.5x the day-119 width rises from 0.13 to 0.17 of the truth.
+  - from day 57: 96 / 90 / 100% at 0.75x, and 48 / 60 / 65% at 0.5x.
+- **Shifting both edges** instead drops 1x to 59-100%.
+- **Status.** The rule was chosen after seeing these seeds. Using it would
+  need declaring it first and checking it on fresh seeds.
+
+Scripts: `band_coverage.py`, `shape_loss_backtest.py`, `allowance_coverage.py`
+and `rank5_check.py`. Figure: `figures/band_miss_seed48.png`.
 
 ## Open decisions
 
@@ -738,7 +814,8 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/why_2x_looks_best.png`, `figures/midcourse_eval_burden.png`,
 `figures/midcourse_eval_burden_all_seeds.png`,
 `figures/midcourse_eval_error_vs_time.png`, `figures/smoother_seed45.png`,
-`figures/what_changed_seed48.png`, `figures/free_dose_mod_burden.png`) are
+`figures/what_changed_seed48.png`, `figures/free_dose_mod_burden.png`,
+`figures/band_miss_seed48.png`, and the band-coverage scripts) are
 local session
 artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
