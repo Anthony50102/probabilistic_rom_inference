@@ -16,6 +16,8 @@ class BenchmarkCaseTests(unittest.TestCase):
         self.assertEqual(REPORTED_CASES, ("untreated-growth", "single-dose-chemo", "multi-dose-chemo"))
         self.assertEqual(set(CASES), set(REPORTED_CASES) | {"standard-regimen-chemo", "alternative-regimen-chemo",
                                                             "alternative-regimen-logistic-trend-chemo",
+                                                            "standard-regimen-trend-chemo", "reduced-regimen-trend-chemo",
+                                                            "midcourse-reduced-trend-chemo",
                                                             "midcourse-regimen-chemo", "midcourse-galerkin-chemo",
                                                             "midcourse-logistic-chemo", "midcourse-regimen-trend-chemo",
                                                             "midcourse-logistic-trend-chemo"})

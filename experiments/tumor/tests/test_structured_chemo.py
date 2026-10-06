@@ -75,6 +75,28 @@ class MidcourseCaseTests(unittest.TestCase):
             self.assertEqual(bd.chemo_branch_path(case, strength), bd.chemo_branch_path(base, strength))
         self.assertEqual(bd._training_inputs_path(case), bd._training_inputs_path(base))
 
+    def test_dose_modification_cases_change_only_the_smoother_and_futures(self):
+        for name, base in (("standard-regimen-trend-chemo", "standard-regimen-chemo"),
+                           ("reduced-regimen-trend-chemo", "alternative-regimen-chemo"),
+                           ("midcourse-reduced-trend-chemo", "midcourse-regimen-trend-chemo")):
+            case, plain = CASES[name], CASES[base]
+            with self.subTest(case=name):
+                self.assertEqual((case.structure, case.input_aware_gp), ("free", True))
+                self.assertEqual(replace(case, name=base, description=plain.description,
+                                         input_aware_gp=plain.input_aware_gp,
+                                         future_strengths=plain.future_strengths), plain)
+                self.assertEqual(production_config(case).operators, "cAN")
+                self.assertTrue(production_config(case).gp_input_trend)
+                # Shared strengths reuse the cached simulations and exposure table.
+                for strength in set(case.future_strengths) & set(plain.future_strengths):
+                    self.assertEqual(bd.chemo_branch_path(case, strength), bd.chemo_branch_path(plain, strength))
+                self.assertEqual(bd._training_inputs_path(case), bd._training_inputs_path(plain))
+        reduced = CASES["reduced-regimen-trend-chemo"]
+        self.assertEqual(reduced.future_strengths, (0., .25, .5, .75, 1.))
+        self.assertEqual(reduced.pulse_coefficients(0.), (.23,) * 4 + (0.,) * 8)
+        self.assertEqual(CASES["midcourse-reduced-trend-chemo"].pulse_coefficients(.75),
+                         (.23,) * 8 + (.23 * .75,) * 4)
+
 
 class GalerkinStructureTests(unittest.TestCase):
     def setUp(self):

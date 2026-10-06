@@ -24,6 +24,13 @@ in each mode's GP mean), the one fix declared in TUMOR_TUTORIAL_SCHEDULE_CHEMO.m
 ``alternative-regimen-logistic-trend-chemo`` fits that model to the earlier
 days 5-57 split, after the fact, to separate the model change from the split.
 
+The three free-ROM dose-modification cases keep the reported free ROM and add
+only the input-aware Gaussian process: ``standard-regimen-trend-chemo`` (planned
+course), ``reduced-regimen-trend-chemo`` (data to the second MRI) and
+``midcourse-reduced-trend-chemo`` (eight doses seen). The last two give the
+remaining doses at 1, 0.75 or 0.5x, the neuropathy dose reductions of the
+paclitaxel protocol, plus 0.25x and 0x (stopped) as stress arms.
+
 Observation models
 ------------------
 ``segmented`` (reported): every scan, including the baseline, adds Gaussian
@@ -150,6 +157,21 @@ CASES = {
         (5., 57.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"], "cABN",
         PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
         sensitivity=TUTORIAL_TWIN["sensitivity"], structure="galerkin_logistic", input_aware_gp=True),
+    "standard-regimen-trend-chemo": BenchmarkCase(
+        "standard-regimen-trend-chemo", "As standard-regimen-chemo (free ROM), with the input-aware Gaussian process.",
+        (5., 57.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"], "cABN",
+        PATIENT_DOSE_DAYS, 1., (1.,), PODSettings(4, "observed_training", "none"),
+        sensitivity=TUTORIAL_TWIN["sensitivity"], input_aware_gp=True),
+    **{name: BenchmarkCase(
+        name, description, (5., end), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"],
+        "cABN", PATIENT_DOSE_DAYS, 1., (0., .25, .5, .75, 1.), PODSettings(4, "observed_training", "none"),
+        sensitivity=TUTORIAL_TWIN["sensitivity"], input_aware_gp=True)
+       for name, end, description in (
+           ("reduced-regimen-trend-chemo", 57.,
+            "Tutorial twin, data to the second MRI; remaining weekly doses kept, reduced or stopped "
+            "(free ROM, input-aware GP)."),
+           ("midcourse-reduced-trend-chemo", 84.,
+            "Tutorial twin, eight weekly doses seen; last four kept, reduced or stopped (free ROM, input-aware GP)."))},
     **{name: BenchmarkCase(
         name, description, (5., 84.), 119., 120, .01, TUTORIAL_TWIN["growth_rate"], TUTORIAL_TWIN["diffusion"],
         "cABN", PATIENT_DOSE_DAYS, 1., (.5, 1., 1.5, 2.), PODSettings(4, "observed_training", "none"),
@@ -185,6 +207,11 @@ DEFAULT_POD_PROVENANCE = {
                                   "see experiments/TUMOR_TUTORIAL_SCHEDULE_CHEMO.md."),
     "alternative-regimen-logistic-trend-chemo": ("Uncentred rank-4 POD of the noisy training scans, as "
                                                  "alternative-regimen-chemo (the same acquisitions; not reselected)."),
+    **{name: ("Uncentred rank-4 POD of the noisy training scans, as alternative-regimen-chemo (the same "
+              "acquisitions; not reselected).")
+       for name in ("standard-regimen-trend-chemo", "reduced-regimen-trend-chemo")},
+    "midcourse-reduced-trend-chemo": ("Uncentred rank-4 POD of the noisy training scans, as the midcourse-*-chemo "
+                                      "cases (carried over from alternative-regimen-chemo; not reselected)."),
     **{name: ("Uncentred rank-4 POD of the noisy training scans, carried over from alternative-regimen-chemo (not "
               "reselected); the Galerkin structure needs an uncentred basis, and preparation checks that rank 4 clears "
               "the scan-noise threshold.")

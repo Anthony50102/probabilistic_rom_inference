@@ -560,6 +560,61 @@ cd experiments/tumor
 conda run -n prob_rom python 04_unified_benchmark.py alternative-regimen-logistic-trend-chemo --seeds 45 48 49 50
 ```
 
+## Dose modifications with the free ROM (rule declared before any fit)
+
+**Why.** The manuscript reports the free ROM. On this twin it fails mainly at
+1.5x and 2x, where the tumour shrinks far below the sizes seen in training.
+There its learned constant source (c_1 about 2.1-2.4) dominates. Those arms
+are not clinical options: the weekly paclitaxel dose is not raised (toxicity,
+mainly neuropathy, limits it). The protocol's response to neuropathy is to
+hold the drug, then:
+- resume at 75% (grade 2);
+- resume at 50% (grade 3);
+- stop if it does not resolve.
+
+Source: University Hospital Southampton breast paclitaxel protocol, "Dose
+Modifications"; checked 2026-10-06. With the input-aware GP, the free ROM's
+mid-course errors were 6.7% at 0.5x and 9.1% at 1x (evaluation seeds 48-50,
+above). This check asks whether the free ROM, changed only by that smoother,
+forecasts these realistic futures.
+
+**Cases.** All three use:
+- the free ROM (`cAN`, as reported);
+- the input-aware GP;
+- the uncentred rank-4 POD, carried over;
+- the production settings. Nothing else changes.
+
+| Case | Training | Forecast | Future doses | Seeds |
+|---|---|---|---|---|
+| `standard-regimen-trend-chemo` | 5-57 | 57-119 | 1x (as planned) | 51-53 |
+| `reduced-regimen-trend-chemo` | 5-57 | 57-119 | 1, 0.75, 0.5x; stress 0.25, 0x | 45, 48-50 |
+| `midcourse-reduced-trend-chemo` | 5-84 | 84-119 | 1, 0.75, 0.5x; stress 0.25, 0x | 45, 48-50 |
+
+**Rule.**
+1. **Runs.** Each seed is run once, and nothing is tuned.
+2. **Metric.** The point-forecast full-field error over the forecast window,
+   as a median over seeds 48-50 (51-53 for the standard case). Seed 45 is
+   reported separately.
+3. **Arms.** The scenario arms are 1, 0.75 and 0.5x. The stress arms are
+   0.25x and 0x (stopped): there the tumour regrows past the sizes seen in
+   training. They are reported but not judged.
+4. **Bar.** The free ROM works on a split if every scenario arm's median is
+   at most 18.9%, the worst arm of the reported chemo tasks. Also reported:
+   - the basis floor;
+   - the day-119 burden as a fraction of the truth;
+   - the projected logistic model, where it was run.
+5. **Overlap.** This model has already been run at 0.5x and 1x on the
+   mid-course split (seeds 45-50, above), and those arms should reproduce.
+   Only 0.75x, 0.25x and 0x are new there. It has not been run on the 5-57
+   split or on seeds 51-53.
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python 04_unified_benchmark.py reduced-regimen-trend-chemo --seeds 45 48 49 50
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo --seeds 45 48 49 50
+conda run -n prob_rom python 04_unified_benchmark.py standard-regimen-trend-chemo                  # 51-53
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
