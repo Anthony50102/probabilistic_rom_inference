@@ -42,6 +42,18 @@ rounding off the drop at each dose, and the projected form leaves less for
 the 52-day window to determine. See "After-the-fact check: the chosen model
 on the earlier split".
 
+**The free ROM on realistic dose changes.** The protocol never raises the
+weekly dose; it cuts it to 75% or 50% for nerve damage, or stops. The
+reported free ROM was given only the input-aware Gaussian process and tested
+on those futures under a rule declared before the fits. It passes the
+18.9% bar everywhere:
+- the planned course from day 57: 16.1% (median);
+- cuts from day 57: 12.0-16.6%;
+- cuts from day 84: 6.7-9.1%.
+
+It forecasts too little regrowth after a cut, and its errors are 1.2-2.4
+times the projected model's. See "Dose modifications with the free ROM".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -615,6 +627,86 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 conda run -n prob_rom python 04_unified_benchmark.py standard-regimen-trend-chemo                  # 51-53
 ```
 
+### Results (each seed run once)
+
+All 11 fits completed their 12,000 updates, and all 64 draws completed in
+every arm. With seven fits running at once, the 5-57 fits took about 13.5
+minutes each and the standard fits 7.5. The mid-course fits took 12.7
+minutes, with four at once. The mid-course 0.5x and 1x arms reproduce the
+earlier `midcourse-regimen-trend-chemo` fits exactly, with identical
+operators and scores.
+
+Full-field error over the forecast window (%). Each cell lists seeds 48 / 49
+/ 50 (median).
+
+| Training | 1x | 0.75x | 0.5x | 0.25x (stress) | 0x (stress) |
+|---|---|---|---|---|---|
+| Days 5-57 | 16.9 / 15.4 / 16.6 (**16.6**) | 12.3 / 11.4 / 12.0 (**12.0**) | 15.1 / 12.8 / 13.9 (**13.9**) | 18.1 / 14.3 / 16.6 (16.6) | 20.2 / 18.6 / 20.4 (20.2) |
+| Basis floor | 5.8 | 7.4 | 9.4 | 11.9 | 15.0 |
+| Days 5-84 | 9.1 / 9.2 / 8.7 (**9.1**) | 7.0 / 6.9 / 6.9 (**6.9**) | 6.7 / 6.6 / 7.2 (**6.7**) | 7.3 / 7.5 / 8.8 (7.5) | 8.2 / 8.5 / 10.5 (8.5) |
+| Basis floor | 4.1 | 4.5 | 4.9 | 5.4 | 6.0 |
+
+- **Standard regimen** (days 5-57, 1x as planned, seeds 51 / 52 / 53): 16.1
+  / 15.9 / 16.3 (**16.1**). The basis floor is 5.7. With default smoothing
+  the same model gave 29.1 / 16.4 / 32.6 (29.1).
+- **Development seed 45** (1, 0.75, 0.5, 0.25, 0x):
+  - days 5-57: 17.2 / 10.6 / 12.6 / 14.0 / 16.7;
+  - days 5-84: 9.8 / 7.2 / 6.7 / 7.6 / 8.6.
+
+**Verdict under the rule: the free ROM works on all three.** Every scenario
+arm's median is at most 18.9%:
+- days 5-57: 16.6, 12.0 and 13.9%;
+- days 5-84: 9.1, 6.9 and 6.7%;
+- standard regimen: 16.1%.
+
+**How it compares.**
+- **Default smoothing, same model.** On days 5-57 it gave 24.6% at 1x and
+  35.1% at 0.5x. The smoother alone turns a fail into a pass.
+- **Projected logistic + input-aware GP.** It gave 6.8% and 11.4% (days
+  5-57) and 4.3% and 5.8% (days 5-84) at 1x and 0.5x. The free ROM's
+  errors are 1.2-2.4 times as large.
+
+**Where the error is.**
+- **Too little regrowth after a dose cut.**
+  - The predicted day-119 change from the 1x arm is 0.47-0.60 of the true
+    change from day 57 at 0.75x and 0.5x, and 0.67-0.74 from day 84.
+  - The day-119 burden at those arms is 0.70-0.84 of the truth from day 57,
+    and 0.87-0.95 from day 84.
+  - The learned constant source (c_1 = 2.0-2.4 on seeds 48-53, A_11 about
+    0) adds a fixed number of cells per day. In the PDE, regrowth is
+    proportional to the tumour. With the drug stopped, the predicted burden
+    rises along a straight line while the truth curves upward.
+- **The draw band misses after cuts from day 57.** It contains the true
+  burden at 100% of forecast times at 1x, but at only 42-64% at 0.75x and
+  29-36% at 0.5x. From day 84 it contains it at 100% at 1x and 0.75x, and at
+  61-66% at 0.5x. All 64 draws are within 25% at every scenario arm.
+- **At 1x the error grows with the horizon.**
+  - For the standard regimen the error is 6.1-6.6% over days 57-88 and
+    24.8-25.5% over days 88-119.
+  - The day-119 burden is 0.99-1.05 of the truth, but partly by coincidence.
+    On seed 51 the rank-4 basis holds 9% fewer cells than the truth on day
+    119 (8,846 against 9,753). The free ROM's mode 1 is 36% too large and
+    adds back about as many cells, in the wrong places.
+  - From day 84 the error is 4.6-5.1% over days 84-101.5 and 12.0-12.5% over
+    days 101.5-119.
+- **Learned drug coefficient.** Mode 1's is -0.96 to -0.99 on every split,
+  close to the projected form's -1.
+
+**What this means.**
+- The reported free ROM can forecast the protocol's realistic dose changes
+  (continue, 75% or 50%). The only change is the smoother, an implementation
+  detail.
+- Its limits must be disclosed:
+  - it forecasts too little regrowth after dose cuts;
+  - it over-predicts when the tumour shrinks far below the training sizes
+    (1.5x and 2x, above).
+- The choice of reduction-only futures was informed by that failure. The
+  clinical reason, the protocol, is independent of it.
+- The projected form remains more accurate.
+
+`figures/free_dose_mod_burden.png` shows the burden forecasts for seed 48
+from days 57 and 84, and for the standard regimen.
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -630,8 +722,11 @@ for a like-for-like comparison. That means the same drug term, and no growth
 without tumour. Its exact form (a hybrid with a learned remainder) is still
 to be decided.
 
-Which design to report is also open. With the new model the earlier
-tutorial-schedule question works too, and it is the more realistic one: data
+Which model and design to report are also open. The free ROM with the
+input-aware GP passes on the protocol's dose cuts, so the manuscript's model
+could stay as it is. The projected form is more accurate, but it adds a
+model section. With the projected form the earlier tutorial-schedule
+question works too, and it is the more realistic one: data
 to the second MRI, forecast to the third. Its model was chosen on the
 mid-course development seeds, not on seeds 48-50. Those seeds had, however,
 been seen with the free model. A cleaner confirmation, declared before it is
@@ -643,6 +738,7 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/why_2x_looks_best.png`, `figures/midcourse_eval_burden.png`,
 `figures/midcourse_eval_burden_all_seeds.png`,
 `figures/midcourse_eval_error_vs_time.png`, `figures/smoother_seed45.png`,
-`figures/what_changed_seed48.png`) are local session
+`figures/what_changed_seed48.png`, `figures/free_dose_mod_burden.png`) are
+local session
 artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.

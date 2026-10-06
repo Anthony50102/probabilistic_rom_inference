@@ -308,7 +308,8 @@ unchanged or rescaled to 0.5x-2x. They are not run by default and are not in
 the manuscript; production results and a clean-data diagnosis are in the
 [tutorial-schedule record](experiments/TUMOR_TUTORIAL_SCHEDULE_CHEMO.md).
 
-Five more exploratory recipes, `midcourse-*-chemo`, re-plan mid-course on the
+Five more exploratory recipes, `midcourse-*-chemo` (except
+`midcourse-reduced-trend-chemo`, below), re-plan mid-course on the
 same twin. They train on days 5-84 (eight treated weeks) and rescale only the
 last four doses (days 91-112) to 0.5x-2x. Two options set what changes:
 - `galerkin` and `logistic` restrict the reduced model to the projected PDE's
@@ -324,6 +325,22 @@ also not run by default, and are recorded in the same file.
 pre-registered. It fits that chosen model to `alternative-regimen-chemo`'s
 days 5-57 split and forecasts days 57-119 within 3.5-11.4% (median per dose),
 against 11.1-35.1% for the free model.
+
+Three more recipes keep the reported free model and add only the `-trend`
+smoother. Their futures are ones the paclitaxel protocol allows: the dose is
+never raised, but it is cut to 75% or 50%, or stopped.
+- `standard-regimen-trend-chemo` continues the planned course from day 57.
+- `reduced-regimen-trend-chemo` and `midcourse-reduced-trend-chemo` give the
+  remaining doses at 1x, 0.75x or 0.5x from day 57 or day 84. They also test
+  0.25x and 0x (stopped) as stress arms.
+
+The rule was declared before the fits. The median errors are:
+- 16.1% for the planned course;
+- 12.0-16.6% for 1x-0.5x from day 57;
+- 6.7-9.1% for 1x-0.5x from day 84.
+
+The model forecasts too little regrowth after a cut. These recipes are also
+not run by default, and are recorded in the same file.
 
 Inspect the recipes and their production inference settings:
 
@@ -436,7 +453,7 @@ stores every chemo fit in the `cABN` column layout, with a zero `B` column for
 `cAN`.
 
 Each runner accepts a case (`untreated-growth`, `single-dose-chemo`,
-`multi-dose-chemo`, or one of the two exploratory tutorial-schedule cases;
+`multi-dose-chemo`, or one of the exploratory tutorial-schedule cases;
 without one it runs the three reported cases), `--seeds`, `--observation`,
 the `--pod-*` overrides of
 `benchmark_cases.py`, and `--output-root` for scratch runs; `--help` lists the
