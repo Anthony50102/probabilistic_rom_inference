@@ -736,8 +736,18 @@ subsection was declared beforehand.
 - **More modes do not help.** On seed 48 the fifth mode is 1.04 times the
   scan-noise threshold from day 84 and 0.87 times it from day 57. Ranks 5
   and 6 cut the day-119 shortfall at 0.5x only from 5.8% to 5.1% and 5.0%
-  (from day 84), and from 12.6% to 12.3% (from day 57). The missing cells lie
-  in tissue that no training scan shows.
+  (from day 84), and from 12.6% to 12.3% (from day 57).
+- **Where the lost cells are.** Every mode is a blend of training scans, so
+  it is zero wherever no training scan showed tumour. On seed 48 the modes'
+  support is exactly the union of the segmented lesions. The shortfall splits
+  into two parts (seeds 48-50, 0.5x, day 119):
+  - cells outside that region, where no mix of the modes can put any: 2.9%
+    from day 84 and 7.2-7.4% from day 57;
+  - a form inside the region that no mix of the modes matches: 2.9% from
+    day 84 and 5.3-5.4% from day 57.
+  - On the last training day the parts are 0.7 + 0.7% (day 84) and
+    0.3-0.4 + 0.3% (day 57). From day 84 the two parts are equal at every
+    arm. From day 57 the outside part is 57-60% of the shortfall.
 - **From day 84 the miss is all basis loss.** At 0.75x and 0.5x the band
   contains the best rank-4 answer at 100% of forecast times. The truth leaves
   the 0.5x band on day 105-107. At 1x the forecast lies above the best rank-4
@@ -766,9 +776,9 @@ subsection was declared beforehand.
 - **Sensitivity.** Holding out 14 or 28 days gives 0.08-0.11 from day 84,
   but 0.09-0.21 from day 57.
 - **What the estimate misses.** It starts at 0.2-0.4%, so it misses most of
-  the 1.4% already lost on day 84. About half of that gap (0.6-0.7 points in
-  the backtest) is cells the scans cannot see, below their detection
-  threshold.
+  the 1.4% already lost on day 84. About half of that gap is cells the scans
+  cannot see, below their detection threshold: on day 84, 0.7 of the 1.4
+  points lie outside every segmented lesion.
 - **Effect on the band.** The upper edge was divided by
   1 - (a + r (t - T)), with a and r the backtest's intercept and rate. Time
   inside the band, against the truth (seeds 48 / 49 / 50):
@@ -780,8 +790,10 @@ subsection was declared beforehand.
 - **Status.** The rule was chosen after seeing these seeds. Using it would
   need declaring it first and checking it on fresh seeds.
 
-Scripts: `band_coverage.py`, `shape_loss_backtest.py`, `allowance_coverage.py`
-and `rank5_check.py`. Figure: `figures/band_miss_seed48.png`.
+Scripts: `band_coverage.py`, `shape_loss_backtest.py`, `allowance_coverage.py`,
+`rank5_check.py` and `four_shapes.py`. Figures: `figures/band_miss_seed48.png`
+and `figures/four_shapes_seed48.png` (the four modes on one slice, and where
+the lost cells are).
 
 ## Open decisions
 
@@ -815,7 +827,8 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/midcourse_eval_burden_all_seeds.png`,
 `figures/midcourse_eval_error_vs_time.png`, `figures/smoother_seed45.png`,
 `figures/what_changed_seed48.png`, `figures/free_dose_mod_burden.png`,
-`figures/band_miss_seed48.png`, and the band-coverage scripts) are
+`figures/band_miss_seed48.png`, `figures/four_shapes_seed48.png`, and the
+band-coverage scripts) are
 local session
 artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
