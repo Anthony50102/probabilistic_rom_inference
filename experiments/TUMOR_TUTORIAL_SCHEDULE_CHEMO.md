@@ -842,6 +842,34 @@ beforehand.
   of pure noise in the same lesion masks with and without the smoothing. It
   allows 6 modes from day 84 and 5 from day 57 on seeds 48-50; our maps allow
   5 and 4.
+- **What the smoothing is.** It is a blur, not added noise. Each voxel
+  becomes a Gaussian-weighted average of its neighbours (sigma 2 mm, i.e. 2
+  voxels), counting breast voxels only, so the total number of cells is
+  unchanged (within 0.1%). Nothing random is added. The voxel noise drops to
+  about 5% of its level. The pipeline's own detection step already blurs each
+  scan by 1 mm to find the outline, but it then reports the unblurred values.
+- **Is it physical? Partly** (seed 48, data to day 84):
+  - For. The twin spreads cells by uniform, direction-independent diffusion
+    (TumorTwin `ReactionDiffusion3D`: one scalar d inside the breast mask).
+    Diffusion alone turns a point into a Gaussian of width sqrt(2 D t). A 2 mm
+    blur is therefore about 21 days of the twin's own diffusion
+    (D = 0.0965 mm^2/day); over the 35-day forecast it is 2.6 mm. The zero
+    beyond the outline is a detection artefact: on day 84, 0.85% of the true
+    cells lie outside it. The blurred map puts 1.18% there and is closer to
+    the truth (full-field error 4.8% against 5.6% for the reported map).
+  - Against. The 2 mm was chosen after the fact. The blur guesses the margin
+    by spreading the cells seen inside the outline; it does not measure it.
+    It is wrong for a small, sharp tumour. On day 5 the edge comes from the
+    segmented patient MRI. On a line through the tumour the blur lowers the
+    peak (0.60 against 0.65) and pushes the edge outward. It puts 2.4% of the
+    cells outside the outline (truth 0.03%), and the error is 20.5% against
+    2.5%. Hence the cost inside the training window below. It also matches
+    the twin's even spread by construction; real tissue is not uniform, so a
+    real tumour's margin need not look like a blur.
+  - A defensible version would fix the width by a stated rule before any fit,
+    for example the diffusion length over the forecast from a literature D
+    (not the twin's), and keep the data sharp ("smooth modes" or "spread"
+    modes below).
 - **Basis loss.** Shortfall of the best mix of the modes from the true
   burden, at 0.5x on day 119, and full-field error of the best mix over the
   training window. Seeds 48-50 agree within 0.3 points.
@@ -943,10 +971,12 @@ beforehand.
   error inside the training window next to the forecast.
 
 Scripts: `pod_variants.py` (basis loss for any seed), `pod_fix_figure.py`,
-`blur_fit.py` (fit runner) and `blur_fit_summary.py` (tables and figure).
+`blur_fit.py` (fit runner), `blur_fit_summary.py` (tables and figure) and
+`smoothing_explainer.py` (what the blur does to one scan).
 Figures: `figures/pod_fix_seed48.png` (the idea on one slice, and loss
-against rank) and `figures/blur_fit_burden.png` (burden forecasts and bands,
-seeds 48-50).
+against rank), `figures/blur_fit_burden.png` (burden forecasts and bands,
+seeds 48-50) and `figures/smoothing_profile_seed48.png` (a line through the
+tumour edge on days 84 and 5, with a zoom on the edge).
 
 ## Open decisions
 
@@ -986,7 +1016,8 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/what_changed_seed48.png`, `figures/free_dose_mod_burden.png`,
 `figures/band_miss_seed48.png`, `figures/four_shapes_seed48.png`,
 `figures/pod_limits_seed48.png`, `figures/pod_fix_seed48.png`,
-`figures/blur_fit_burden.png`, the band-coverage scripts, and the smoothed-POD
+`figures/blur_fit_burden.png`, `figures/smoothing_profile_seed48.png`, the
+band-coverage scripts, and the smoothed-POD
 scripts and fits) are local session artifacts, not bundled with the
 repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
