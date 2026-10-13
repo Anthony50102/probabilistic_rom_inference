@@ -736,7 +736,8 @@ subsection was declared beforehand.
 - **More modes do not help.** On seed 48 the fifth mode is 1.04 times the
   scan-noise threshold from day 84 and 0.87 times it from day 57. Ranks 5
   and 6 cut the day-119 shortfall at 0.5x only from 5.8% to 5.1% and 5.0%
-  (from day 84), and from 12.6% to 12.3% (from day 57).
+  (from day 84), and from 12.6% to 12.3% (from day 57). All 120 modes give
+  5.0% and 12.2%.
 - **Where the lost cells are.** Every mode is a blend of training scans, so
   it is zero wherever no training scan showed tumour. On seed 48 the modes'
   support is exactly the union of the segmented lesions. The shortfall splits
@@ -748,6 +749,25 @@ subsection was declared beforehand.
   - On the last training day the parts are 0.7 + 0.7% (day 84) and
     0.3-0.4 + 0.3% (day 57). From day 84 the two parts are equal at every
     arm. From day 57 the outside part is 57-60% of the shortfall.
+  - On seed 48 the cells outside lie close to the region: median 1.7 mm and
+    99% within 7.1 mm of it from day 84; 2.0 mm and 7.9 mm from day 57.
+- **The limit is the scans, not POD itself.** The same 120 training scan
+  times were decomposed three ways (seed 48, 0.5x, day 119, shortfall of the
+  best mix):
+  - our scans (noisy, zero outside the detected outline): 5.8% at rank 4 and
+    5.0% at any rank from 6 to 120 (from day 84);
+  - the same scans without noise, still cut at the outline: 3.5% at rank 120
+    from day 84 and 8.6% from day 57. None of the cells beyond the outline
+    come back at any rank;
+  - the same scans without noise or cutting (a perfect scanner): 4.5% at
+    rank 4, 1.5% at rank 6 and 0.2% at rank 10 from day 84. Rank 10 puts
+    back 92% of the cells beyond the outline. From day 57 rank 10 gives 2.5%
+    and puts back 63%.
+  - The earlier fields have a faint edge below the detection threshold. A mix
+    of them can push the edge outwards. The patterns that do this are weak:
+    the fifth is 0.7 times the scan-noise threshold and the tenth 0.009
+    times (day 84). With this noise only four or five patterns can be read
+    from the scans. The Neural ODE in the same coordinates has the same limit.
 - **From day 84 the miss is all basis loss.** At 0.75x and 0.5x the band
   contains the best rank-4 answer at 100% of forecast times. The truth leaves
   the 0.5x band on day 105-107. At 1x the forecast lies above the best rank-4
@@ -791,9 +811,11 @@ subsection was declared beforehand.
   need declaring it first and checking it on fresh seeds.
 
 Scripts: `band_coverage.py`, `shape_loss_backtest.py`, `allowance_coverage.py`,
-`rank5_check.py` and `four_shapes.py`. Figures: `figures/band_miss_seed48.png`
-and `figures/four_shapes_seed48.png` (the four modes on one slice, and where
-the lost cells are).
+`rank5_check.py`, `four_shapes.py` and `pod_limits.py`. Figures:
+`figures/band_miss_seed48.png`, `figures/four_shapes_seed48.png` (the four
+modes on one slice, and where the lost cells are) and
+`figures/pod_limits_seed48.png` (shortfall against rank for the three kinds
+of scan, and each pattern's strength against the noise).
 
 ## Open decisions
 
@@ -827,8 +849,8 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/midcourse_eval_burden_all_seeds.png`,
 `figures/midcourse_eval_error_vs_time.png`, `figures/smoother_seed45.png`,
 `figures/what_changed_seed48.png`, `figures/free_dose_mod_burden.png`,
-`figures/band_miss_seed48.png`, `figures/four_shapes_seed48.png`, and the
-band-coverage scripts) are
+`figures/band_miss_seed48.png`, `figures/four_shapes_seed48.png`,
+`figures/pod_limits_seed48.png`, and the band-coverage scripts) are
 local session
 artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
