@@ -61,6 +61,14 @@ backtest on the training scans predicts that loss. Adding it to the band was
 tried after the fact; it is not part of any declared rule. See "Why the draw
 band misses after cuts".
 
+Smoothing the reported maps by 2 mm before the POD, also after the fact,
+wins most of those cells back. With 5 modes, from day 84, the band then
+holds the truth at 0.5x on seeds 48-50, and the forecast error falls. The
+model then reproduces blurred fields inside the training window, unless
+only the modes are smoothed. From day 57 it helps less, because the free
+model's regrowth after a cut is too slow. See "Can preprocessing win the cells
+back?".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -817,6 +825,129 @@ modes on one slice, and where the lost cells are) and
 `figures/pod_limits_seed48.png` (shortfall against rank for the three kinds
 of scan, and each pattern's strength against the noise).
 
+### Can preprocessing win the cells back? (after the fact)
+
+This asks whether a different preprocessing or POD removes the basis loss
+above. The smoothing width (2 mm) and the ranks were chosen after looking at
+seed 48, and seeds 48-50 had been seen before. Nothing here was declared
+beforehand.
+
+- **Idea.** The modes are zero beyond the detected outline because every
+  reported map is. Each reported map is smoothed with a 2 mm Gaussian
+  (normalised inside the breast) before the POD. The maps, and so the modes,
+  then taper a little past the outline. Averaging neighbouring voxels also
+  lowers the noise, so more patterns clear the noise threshold. This is close
+  to smoothed functional PCA (Silverman 1996). The threshold is carried over:
+  Gavish-Donoho for our maps, times the ratio of the largest singular values
+  of pure noise in the same lesion masks with and without the smoothing. It
+  allows 6 modes from day 84 and 5 from day 57 on seeds 48-50; our maps allow
+  5 and 4.
+- **Basis loss.** Shortfall of the best mix of the modes from the true
+  burden, at 0.5x on day 119, and full-field error of the best mix over the
+  training window. Seeds 48-50 agree within 0.3 points.
+
+  | Basis | Shortfall, from day 84 | Shortfall, from day 57 | Training window, from day 84 |
+  |---|---|---|---|
+  | reported maps, rank 4 (as run) | 5.8-5.9% | 12.6-12.7% | 0.7% |
+  | smoothed 2 mm, rank 4 | 2.5% | 6.0-6.1% | 5.6-5.7% |
+  | smoothed 2 mm, rank 5 | 1.3% | 4.5-4.6% | 3.6-3.7% |
+  | smoothed 2 mm, rank 6 | 0.9-1.0% | 3.5-3.8% | 3.0-3.2% |
+
+  - Rank 5 puts back 59-60% of the cells beyond the outline from day 84 and
+    46% from day 57.
+  - Smooth modes cannot draw the sharp training fields as well, hence the
+    last column.
+  - Smoothing by 1 mm gives 2.4% at rank 6 (day 84). Smoothing only inside
+    the outline gives nothing back.
+- **Fits.** The unchanged production fit (free ROM, input-aware GP, 64 draws)
+  was run on these bases for seeds 48-50, in two ways:
+  - *smoothed maps as data*: the POD and the reduced observations both use
+    the smoothed maps;
+  - *smooth modes only*: the POD uses the smoothed maps, but the reduced
+    observations are the reported maps projected on those modes, so the fit
+    sees no blur.
+  - Nothing in the repository changed. `blur_fit.py` swaps the map,
+    threshold and POD functions for its own process only.
+- **From day 84** (seeds 48 / 49 / 50). Full-field error over days 84-119,
+  and the share of forecast times with the true burden inside the 5-95% band:
+
+  | | reported, rank 4 | smoothed maps, rank 4 | smoothed maps, rank 5 | smooth modes, rank 5 |
+  |---|---|---|---|---|
+  | 1x error | 9.1 / 9.2 / 8.7% | 6.6 / 6.4 / 6.4% | 6.2 / 6.4 / 5.9% | 8.1 / 8.0 / 7.3% |
+  | 1x in band | 100 / 100 / 100% | 100 / 100 / 100% | 100 / 97 / 89% | 100 / 52 / 53% |
+  | 0.75x error | 7.0 / 6.9 / 6.9% | 4.6 / 3.8 / 4.3% | 4.1 / 3.7 / 3.7% | 5.6 / 5.2 / 4.6% |
+  | 0.75x in band | 100% | 100% | 100% | 100% |
+  | 0.5x error | 6.7 / 6.6 / 7.2% | 4.9 / 3.9 / 5.0% | 4.2 / 3.5 / 4.5% | 5.1 / 4.4 / 4.8% |
+  | 0.5x in band | 64 / 61 / 66% | 86 / 85 / 76% | 100 / 100 / 100% | 100 / 100 / 100% |
+  | 0.5x day 119, point / truth | 0.87-0.90 | 0.90-0.92 | 0.92-0.93 | 0.92-0.94 |
+  | 0.5x day 119, band width / truth | 0.12-0.15 | 0.12-0.16 | 0.16-0.24 | 0.25-0.33 |
+  | error inside the training window | 1.0-1.4% | 10.0-10.2% | 10.1-10.3% | 3.7-3.8% |
+
+  - Each of these three beats the reported basis in forecast error at every
+    arm, on every seed. With 5 smoothed modes the 0.5x band holds the truth
+    throughout on all three seeds, partly because it is wider.
+  - Smoothing alone, at the same rank 4, already helps.
+  - The stress arms follow the same pattern. At 0x the error is 5.2 / 5.4 /
+    8.0% with smoothed maps at rank 5 (reported: 8.2 / 8.5 / 10.5%).
+- **Cost inside the training window.** With smoothed maps as data, the model
+  reproduces a blurred tumour. The error is about 10% instead of about 1%.
+  It is about 20% on day 5 and 4-6% on day 84 (seeds 48-50), because blur
+  matters most for the small early tumour. Smooth modes keep the data sharp,
+  and the error is 3.7-3.8%, which is the basis's own limit (3.6-3.7%
+  above). The price is wider bands, and a 1x forecast 1.06-1.09 times the
+  true burden on day 119.
+- **Rank 6 is unstable.** On seed 48 it did well (0.5x: 4.1% with smoothed
+  maps, 4.6% with smooth modes). On seeds 49 and 50 it overshot:
+  - with smoothed maps, day-119 burden up to 1.4 times the truth and errors
+    up to 31%;
+  - with smooth modes, 1.3-2.1 times the truth and bands up to 18 times the
+    burden.
+  - Most of the error is in the first mode. The sixth pattern is only
+    1.1-1.2 times the noise threshold. Why it upsets seeds 49 and 50 and not
+    48 is not pinned down.
+- **From day 57** (rank 5, seeds 48 / 49 / 50):
+
+  | | reported, rank 4 | smoothed maps, rank 5 | smooth modes, rank 5 |
+  |---|---|---|---|
+  | 1x error | 16.9 / 15.4 / 16.6% | 13.5 / 12.6 / 13.2% | 17.8 / 15.8 / 17.1% |
+  | 0.75x error | 12.3 / 11.4 / 12.0% | 10.0 / 8.5 / 9.4% | 12.8 / 9.6 / 11.4% |
+  | 0.75x in band | 50 / 42 / 64% | 94 / 100 / 95% | 97 / 100 / 100% |
+  | 0.5x error | 15.1 / 12.8 / 13.9% | 12.3 / 8.7 / 11.2% | 14.3 / 8.9 / 11.8% |
+  | 0.5x in band | 29 / 30 / 36% | 48 / 50 / 43% | 38 / 100 / 100% |
+  | 0.5x day 119, point / truth | 0.70-0.75 | 0.77-0.83 | 0.74-0.83 |
+  | 0.5x day 119, band width / truth | 0.21-0.22 | 0.24-0.28 | 0.30-0.39 |
+  | error inside the training window | 0.8% | 10.5% | 3.7% |
+
+  - Smoothed maps are better at every arm, on every seed, but the 0.5x band
+    still misses about half the time. From day 57 the free model's too-slow
+    regrowth after a cut adds to the basis loss (above), and smoothing cannot
+    fix that.
+  - Smooth modes hold the truth more often than smoothed maps mainly because
+    their bands are wider (0.52-0.77 of the burden at 1x on day 119). Their
+    point forecast is worse than the reported basis at 1x on every seed, and
+    at 0.75x and 0x on seed 48.
+- **Other options (basis loss only, not fitted).**
+  - Unsegmented maps inside a 6 mm margin around the lesion, then smoothed:
+    0.3-0.4% at rank 6 from day 84, 3.1-3.3% from day 57. This needs maps
+    reported beyond the outline. It changes the measurement, not the
+    processing.
+  - The four modes plus copies of them smoothed by 3 mm ("spread" modes,
+    rank 8): 0.2% from day 84 and 1.1% from day 57, and the training window
+    stays at 0.5-0.6%. The width was picked after the fact, and 4 mm
+    overshoots. An eight-mode model was not fitted. Rank 6 above suggests
+    weak extra modes can make the model unstable.
+  - More modes of the reported maps: 5.0% at any rank from 6 (above).
+- **Status.** Exploratory. To use it: declare the smoothing width, the
+  variant and the rank rule first (for example, chosen on development seed
+  45 as the original basis was), then test on fresh seeds and report the
+  error inside the training window next to the forecast.
+
+Scripts: `pod_variants.py` (basis loss for any seed), `pod_fix_figure.py`,
+`blur_fit.py` (fit runner) and `blur_fit_summary.py` (tables and figure).
+Figures: `figures/pod_fix_seed48.png` (the idea on one slice, and loss
+against rank) and `figures/blur_fit_burden.png` (burden forecasts and bands,
+seeds 48-50).
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -843,6 +974,10 @@ been seen with the free model. A cleaner confirmation, declared before it is
 run, would be the chosen model on the standard regimen's seeds 51-53 (1x),
 which have not been run with it.
 
+Whether to build the POD from smoothed maps is open too. If adopted, the
+smoothing width, the variant (smoothed maps or smooth modes) and the rank
+rule would be declared first and tested on fresh seeds.
+
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
 `figures/why_2x_looks_best.png`, `figures/midcourse_eval_burden.png`,
@@ -850,7 +985,8 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/midcourse_eval_error_vs_time.png`, `figures/smoother_seed45.png`,
 `figures/what_changed_seed48.png`, `figures/free_dose_mod_burden.png`,
 `figures/band_miss_seed48.png`, `figures/four_shapes_seed48.png`,
-`figures/pod_limits_seed48.png`, and the band-coverage scripts) are
-local session
-artifacts, not bundled with the repository:
+`figures/pod_limits_seed48.png`, `figures/pod_fix_seed48.png`,
+`figures/blur_fit_burden.png`, the band-coverage scripts, and the smoothed-POD
+scripts and fits) are local session artifacts, not bundled with the
+repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
