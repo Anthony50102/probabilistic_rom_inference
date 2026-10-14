@@ -6,8 +6,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 
-from benchmark_cases import (CASES, LEGACY_PODS, PATIENT_DOSE_DAYS, REPORTED_CASES, PODSettings, describe,
-                             galerkin_operators, get_case, production_config, _adapter)
+from benchmark_cases import (CASES, LEGACY_PODS, PATIENT_DOSE_DAYS, REPORTED_CASES, SCAN_SCHEDULE_CASES, PODSettings,
+                             describe, galerkin_operators, get_case, production_config, regular_scan_days, _adapter)
 from core.weakform_opinf import WeakFormConfig
 
 
@@ -20,7 +20,7 @@ class BenchmarkCaseTests(unittest.TestCase):
                                                             "midcourse-reduced-trend-chemo",
                                                             "midcourse-regimen-chemo", "midcourse-galerkin-chemo",
                                                             "midcourse-logistic-chemo", "midcourse-regimen-trend-chemo",
-                                                            "midcourse-logistic-trend-chemo"})
+                                                            "midcourse-logistic-trend-chemo"} | set(SCAN_SCHEDULE_CASES))
         self.assertEqual(CASES["untreated-growth"].dose_days, ())
         self.assertEqual(CASES["untreated-growth"].prediction_end, 90.)
         single, multi = CASES["single-dose-chemo"], CASES["multi-dose-chemo"]
@@ -165,6 +165,28 @@ class BenchmarkCaseTests(unittest.TestCase):
             with self.subTest(case=name):
                 self.assertEqual(describe(get_case(name, "oracle_masked"))["recipe_fingerprint"][:16], prefix)
                 self.assertNotEqual(describe(get_case(name))["recipe_fingerprint"][:16], prefix)
+
+    def test_fixed_scan_schedules(self):
+        self.assertEqual(regular_scan_days((5., 84.), spacing=7.),
+                         (5., 12., 19., 27., 34., 41., 48., 55., 62., 70., 77., 84.))
+        self.assertEqual(regular_scan_days((5., 57.), spacing=14.), (5., 18., 31., 44., 57.))
+        self.assertEqual(regular_scan_days((5., 57.), count=2), (5., 57.))
+        for name in SCAN_SCHEDULE_CASES:
+            with self.subTest(case=name):
+                case = CASES[name]
+                base = CASES[name.rsplit("-", 2)[0]]
+                self.assertEqual(len(case.scan_days), case.observations)
+                self.assertEqual(replace(case, name=base.name, description=base.description, observations=120,
+                                         scan_days=(), pod=base.pod), base)
+                self.assertIn("scan_days", describe(case))
+                self.assertLessEqual(case.pod.rank, min(4, case.observations))
+        self.assertNotIn("scan_days", describe(CASES["midcourse-reduced-trend-chemo"]))
+        base = CASES["midcourse-reduced-trend-chemo"]
+        for count, days in ((3, (5., 84.)), (2, (6., 84.)), (2, (5., 90.)), (3, (5., 40., 40.))):
+            with self.assertRaises(ValueError):
+                replace(base, observations=count, scan_days=days)
+        with self.assertRaises(ValueError):
+            regular_scan_days((5., 84.), count=1)
 
     def test_segmented_scans_fit_their_own_POD(self):
         case = CASES["multi-dose-chemo"]

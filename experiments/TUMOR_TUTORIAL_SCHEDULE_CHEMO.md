@@ -1051,6 +1051,78 @@ Figures:
 - `figures/blurred_modes_burden.png` (sharp data and blurred modes against
   the reported basis, seeds 48-50, from days 84 and 57).
 
+## Realistic scan schedules (rule declared before any fit)
+
+**Why.** Every case above trains on 120 scans at random times, far more than
+any patient gets. This patient's record (`TNBC_demo_001.json`) has three
+MRIs: days 0, 57 and 119. That is before treatment, three weeks into weekly
+paclitaxel, and after the twelfth dose. It is the schedule of the I-SPY 2
+imaging trial: "before treatment, at early treatment (3 weeks), at
+midtreatment (12 weeks), and after treatment" (Partridge et al., Radiology
+2018;289:618-627, ACRIN 6698). Before a decision on day 57 or day 84, a
+real patient has two MRIs. A research protocol could scan more often, at
+most weekly: the patient is in clinic weekly from day 35 for the infusions.
+
+**Design.** The `*-scans` cases (`benchmark_cases.SCAN_SCHEDULE_CASES`)
+repeat `midcourse-reduced-trend-chemo` (data to day 84) and
+`reduced-regimen-trend-chemo` (data to day 57). Everything is kept: the twin,
+the doses, the arms, the free ROM with the input-aware Gaussian process, the
+1% noise rule and the segmentation. Only the scan days change. They are
+fixed and evenly spaced, with the first and last scan at the window ends
+(`regular_scan_days`: the whole number of intervals closest to the target
+spacing, days rounded to whole days). The days are the same for every seed,
+so a seed now changes only the scanner noise.
+
+| Schedule | Data to day 84: scan days | Rank | Data to day 57: scan days | Rank |
+|---|---|---|---|---|
+| Random (reported) | 120 random | 4 | 120 random | 4 |
+| Regular (control) | 120, every 0.66 days | 4 | not run | |
+| Weekly | 5, 12, 19, 27, 34, 41, 48, 55, 62, 70, 77, 84 (12) | 4 | 5, 12, 20, 27, 35, 42, 50, 57 (8) | 3 |
+| Fortnightly | 5, 18, 31, 45, 58, 71, 84 (7) | 4 | 5, 18, 31, 44, 57 (5) | 3 |
+| Four-weekly | 5, 31, 58, 84 (4) | 3 | 5, 31, 57 (3) | 3 |
+
+The regular control separates even spacing from fewer scans. The
+four-weekly schedule to day 57 is the trial's two MRIs (the first moved from
+day 0 to day 5, the window start) plus one on day 31.
+
+**Two scans cannot be run.** A mechanical smoke run (300 updates, scores not
+used) stopped at the operator-layout step, which takes second-order
+differences and so needs three scans. With that step bypassed for the test,
+it stopped again at the Gaussian process's lengthscale prior. That prior has
+its median at the scan spacing and its 99th percentile at the window length;
+with two scans they coincide, and the prior has zero width. Both could be
+patched, but the data could not support the model anyway. Two scans give 2
+numbers per mode, against 5 operator entries per mode at rank 2. Three scans
+are the fewest the method runs on.
+
+**Rank rule.** The rank stays 4 unless fewer modes clear the scan-noise
+threshold on every acquisition (45 and 48-50). This was checked on the noisy
+scans alone, before any fit (`scan_schedule_check.py`). Fewer scans mean
+smaller singular values against the same noise. To day 84 the fourth mode is
+1.19 times the threshold weekly, 1.05 fortnightly and 0.87 four-weekly. To day
+57 it is 0.95 weekly. The noise rule takes 1% of the range of the noise-free
+fields on the scanned days. That gives a noise level of 0.0086-0.0087 for
+weekly to four-weekly, against 0.0088 for 120 scans.
+
+**Rule.**
+1. **Runs.** Seeds 48-50, each run once. Nothing is tuned.
+2. **Metric and arms.** As in "Dose modifications with the free ROM": the
+   point-forecast full-field error over the forecast window (median over
+   seeds). Scenario arms are 1, 0.75 and 0.5x; 0.25x and 0x are stress arms,
+   reported and not judged.
+3. **Bar.** A schedule works on a split if every scenario arm's median is at
+   most 18.9%.
+4. **Also reported.** The basis floor, the training-window error, the
+   day-119 burden as a fraction of the truth, and how often the 5-95% draw
+   band holds the true burden at 0.5x and 1x.
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo-weekly-scans   # 48-50
+# likewise -fortnightly-scans, -4weekly-scans, -regular-scans,
+# and reduced-regimen-trend-chemo-{weekly,fortnightly,4weekly}-scans
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on

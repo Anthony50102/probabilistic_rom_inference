@@ -35,7 +35,7 @@ for _path in (str(ROOT), str(SCRIPT_DIR)):
 
 from benchmark_cases import (  # noqa: E402
     CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION, OBSERVATION_MODELS, REPORTED_CASES,
-    BenchmarkCase, PODSettings, describe, get_case)
+    SCAN_SCHEDULE_CASES, BenchmarkCase, PODSettings, describe, get_case)
 
 TUMORTWIN = ROOT.parent / "TumorTwin"
 PATIENT = "TNBC_demo_001"
@@ -65,6 +65,8 @@ DEFAULT_SEEDS = {
     "midcourse-logistic-chemo": (48, 49, 50),
     "midcourse-regimen-trend-chemo": (48, 49, 50),
     "midcourse-logistic-trend-chemo": (48, 49, 50),
+    # Fixed scan schedules: evaluation acquisitions only (seed 45 entered only the data-only POD rank check).
+    **{name: (48, 49, 50) for name in SCAN_SCHEDULE_CASES},
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048
@@ -617,7 +619,9 @@ def noise_threshold(noise_sd, lesion_voxels):
 def _training_fields(case, seed, source):
     """Noise-free training fields (scans x voxels) at this acquisition's times, from knots <= end."""
     start, end = case.training_span
-    if case.dose_days:
+    if case.scan_days:
+        times = np.asarray(case.scan_days, dtype=float)
+    elif case.dose_days:
         times = sample_times((start, end), case.observations, np.random.default_rng(seed))
     else:
         # Same scan times as the earlier untreated-growth design for this seed.

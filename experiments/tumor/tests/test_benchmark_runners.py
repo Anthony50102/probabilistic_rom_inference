@@ -178,7 +178,8 @@ class CommandLineTests(unittest.TestCase):
                                             "midcourse-galerkin-chemo": (48, 49, 50),
                                             "midcourse-logistic-chemo": (48, 49, 50),
                                             "midcourse-regimen-trend-chemo": (48, 49, 50),
-                                            "midcourse-logistic-trend-chemo": (48, 49, 50)})
+                                            "midcourse-logistic-trend-chemo": (48, 49, 50),
+                                            **{name: (48, 49, 50) for name in bd.SCAN_SCHEDULE_CASES}})
         self.assertEqual(bd.LEGACY_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
                                            "multi-dose-chemo": (48, 49, 50)})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
@@ -195,7 +196,13 @@ class CommandLineTests(unittest.TestCase):
                           "midcourse-galerkin-chemo": "segmented_observed_none_r4",
                           "midcourse-logistic-chemo": "segmented_observed_none_r4",
                           "midcourse-regimen-trend-chemo": "segmented_observed_none_r4",
-                          "midcourse-logistic-trend-chemo": "segmented_observed_none_r4"})
+                          "midcourse-logistic-trend-chemo": "segmented_observed_none_r4",
+                          **{f"{base}-{schedule}-scans": f"segmented_observed_none_r{rank}"
+                             for base, ranks in {"midcourse-reduced-trend-chemo": {"weekly": 4, "fortnightly": 4,
+                                                                                    "4weekly": 3, "regular": 4},
+                                                 "reduced-regimen-trend-chemo": {"weekly": 3, "fortnightly": 3,
+                                                                                 "4weekly": 3}}.items()
+                             for schedule, rank in ranks.items()}})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.REPORTED_CASES},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})

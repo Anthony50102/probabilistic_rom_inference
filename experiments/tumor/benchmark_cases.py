@@ -31,6 +31,12 @@ course), ``reduced-regimen-trend-chemo`` (data to the second MRI) and
 remaining doses at 1, 0.75 or 0.5x, the neuropathy dose reductions of the
 paclitaxel protocol, plus 0.25x and 0x (stopped) as stress arms.
 
+The ``*-scans`` cases repeat those last two with fixed, evenly spaced scan days
+(``scan_days``; the same for every seed, so a seed changes only the scanner
+noise) instead of 120 random ones: about weekly, fortnightly or four-weekly,
+and (mid-course only) 120 evenly spaced scans. Their POD rank drops below 4
+where fewer modes clear the scan-noise threshold.
+
 Observation models
 ------------------
 ``segmented`` (reported): every scan, including the baseline, adds Gaussian
@@ -106,6 +112,8 @@ class BenchmarkCase:
     sensitivity: float = HISTORICAL_SENSITIVITY
     structure: str = "free"
     input_aware_gp: bool = False
+    # Fixed scan days shared by every acquisition; empty means random times per seed (benchmark_data.sample_times).
+    scan_days: tuple[float, ...] = ()
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
@@ -119,12 +127,34 @@ class BenchmarkCase:
             raise ValueError("The Galerkin structure holds for a chemotherapy ROM on an uncentred POD basis.")
         if self.input_aware_gp and not self.dose_days:
             raise ValueError("The input-aware Gaussian process needs a chemotherapy exposure table.")
+        if self.scan_days:
+            days = self.scan_days
+            if len(days) != self.observations:
+                raise ValueError("A fixed scan schedule lists one day per observation.")
+            if (days[0] != self.training_span[0] or days[-1] > self.training_span[1]
+                    or any(later <= earlier for earlier, later in zip(days, days[1:]))):
+                raise ValueError("Fixed scan days must increase from the first training day and stay in the "
+                                 "training window.")
 
     def pulse_coefficients(self, future_strength: float) -> tuple[float, ...]:
         if future_strength not in self.future_strengths:
             raise ValueError(f"{future_strength} is not a declared strength for {self.name}.")
         return tuple(self.sensitivity * (self.training_strength if day <= self.training_span[1]
                                          else future_strength) for day in self.dose_days)
+
+
+def regular_scan_days(span, *, spacing=None, count=None):
+    """Evenly spaced scan days over a training window, with the first and last scan at its ends.
+
+    ``spacing`` (days) takes the whole number of intervals closest to it and rounds each day to a whole day;
+    ``count`` gives exactly that many scans, unrounded.
+    """
+    start, end = span
+    if (spacing is None) == (count is None) or (count is not None and count < 2):
+        raise ValueError("Give a target spacing or a scan count of at least two.")
+    intervals = max(1, int((end - start) / spacing + .5)) if count is None else count - 1
+    days = [start + (end - start) * i / intervals for i in range(intervals + 1)]
+    return tuple(float(int(day + .5)) if count is None else float(day) for day in days)
 
 
 CASES = {
@@ -188,6 +218,34 @@ CASES = {
            ("midcourse-logistic-trend-chemo", "galerkin_logistic", True,
             "As midcourse-logistic-chemo, with the input-aware Gaussian process."))},
 }
+# Realistic scan schedules (TUMOR_TUTORIAL_SCHEDULE_CHEMO.md, "Realistic scan schedules"): the free-ROM
+# dose-modification cases with fixed, evenly spaced scan days instead of 120 random ones. Everything else is the
+# base case's. The POD rank is the base's 4 unless fewer modes clear the scan-noise threshold on every acquisition
+# (45 and 48-50, checked on the noisy scans alone before any fit). Two scans are not supported: the Gaussian
+# process's lengthscale prior (median at the scan spacing, 99th percentile at the window) collapses.
+SCAN_SPACING_DAYS = {"weekly": 7., "fortnightly": 14., "4weekly": 28.}
+SCAN_SCHEDULE_RANKS = {
+    "midcourse-reduced-trend-chemo": {"weekly": 4, "fortnightly": 4, "4weekly": 3, "regular": 4},
+    "reduced-regimen-trend-chemo": {"weekly": 3, "fortnightly": 3, "4weekly": 3},
+}
+
+
+def _scan_schedule_case(base: str, schedule: str) -> BenchmarkCase:
+    case = CASES[base]
+    if schedule in SCAN_SPACING_DAYS:
+        days = regular_scan_days(case.training_span, spacing=SCAN_SPACING_DAYS[schedule])
+        label = f"about every {SCAN_SPACING_DAYS[schedule]:g} days, whole days"
+    else:
+        days, label = regular_scan_days(case.training_span, count=case.observations), "evenly spaced"
+    return replace(case, name=f"{base}-{schedule}-scans", observations=len(days), scan_days=days,
+                   description=f"As {base}, with {len(days)} fixed scans ({label}).",
+                   pod=replace(case.pod, rank=SCAN_SCHEDULE_RANKS[base][schedule]))
+
+
+SCAN_SCHEDULE_CASES = tuple(f"{base}-{schedule}-scans" for base, ranks in SCAN_SCHEDULE_RANKS.items()
+                            for schedule in ranks)
+CASES.update({f"{base}-{schedule}-scans": _scan_schedule_case(base, schedule)
+              for base, ranks in SCAN_SCHEDULE_RANKS.items() for schedule in ranks})
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
 
@@ -217,6 +275,10 @@ DEFAULT_POD_PROVENANCE = {
               "the scan-noise threshold.")
        for name in ("midcourse-regimen-chemo", "midcourse-galerkin-chemo", "midcourse-logistic-chemo",
                     "midcourse-regimen-trend-chemo", "midcourse-logistic-trend-chemo")},
+    **{f"{base}-{schedule}-scans": (f"Uncentred rank-{rank} POD of the noisy training scans: {base}'s rank 4, "
+                                    "lowered to the modes that clear the scan-noise threshold on acquisitions 45 and "
+                                    "48-50 (checked on the scans alone, before any fit).")
+       for base, ranks in SCAN_SCHEDULE_RANKS.items() for schedule, rank in ranks.items()},
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -317,6 +379,9 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
         fields.pop("structure")
     if not fields["input_aware_gp"]:
         fields.pop("input_aware_gp")
+    if not fields["scan_days"]:
+        # Random scan times (every case before the fixed schedules) keep their recorded fingerprints.
+        fields.pop("scan_days")
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")
