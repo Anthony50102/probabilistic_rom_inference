@@ -66,8 +66,13 @@ wins most of those cells back. With 5 modes, from day 84, the band then
 holds the truth at 0.5x on seeds 48-50, and the forecast error falls. The
 model then reproduces blurred fields inside the training window, unless
 only the modes are smoothed. From day 57 it helps less, because the free
-model's regrowth after a cut is too slow. See "Can preprocessing win the cells
-back?".
+model's regrowth after a cut is too slow.
+
+Blurring only the four production modes, with the reported maps kept as
+data, lowers the forecast error at every arm from day 84. The bands are a
+little wider, and the 0.5x band holds the truth 76-100% of the time. The
+price is a blurred first scan: 14% error on day 5, against 2%. See "Can
+preprocessing win the cells back?".
 
 ## Design
 
@@ -954,6 +959,61 @@ beforehand.
     their bands are wider (0.52-0.77 of the burden at 1x on day 119). Their
     point forecast is worse than the reported basis at 1x on every seed, and
     at 0.75x and 0x on seed 48.
+- **Sharp data, blurred modes, rank 4.** A third way: the four production
+  modes are blurred by 2 mm, and the reported maps stay the data
+  (`blur_fit.py` "blurred"). The rank rule is the production one.
+  - Blurring the modes and taking the POD of blurred maps give the same
+    subspace, to within 2.6 degrees at rank 4 and 6.3 degrees at rank 5
+    (seeds 48-50, `blurred_modes_check.py`). "Smooth modes, rank 5" above is
+    therefore the same idea with a fifth mode.
+  - Blurring turns the weakest production direction by about 48 degrees
+    (53 from day 57).
+
+  From day 84 (seeds 48 / 49 / 50):
+
+  | | reported, rank 4 | blurred, rank 4 | blurred, rank 5 |
+  |---|---|---|---|
+  | 1x error | 9.1 / 9.2 / 8.7% | 8.0 / 8.2 / 7.5% | 8.1 / 8.0 / 7.3% |
+  | 1x in band | 100 / 100 / 100% | 100 / 100 / 100% | 100 / 52 / 53% |
+  | 1x day 119, point / truth | 1.03-1.04 | 1.04-1.06 | 1.06-1.09 |
+  | 0.75x error | 7.0 / 6.9 / 6.9% | 5.7 / 5.6 / 5.6% | 5.6 / 5.2 / 4.6% |
+  | 0.5x error | 6.7 / 6.6 / 7.2% | 5.6 / 5.1 / 6.3% | 5.1 / 4.4 / 4.8% |
+  | 0.5x in band | 64 / 61 / 66% | 92 / 100 / 76% | 100 / 100 / 100% |
+  | 0.5x day 119, point / truth | 0.87-0.90 | 0.88-0.92 | 0.92-0.94 |
+  | 0.5x day 119, band width / truth | 0.12-0.15 | 0.14-0.15 | 0.25-0.33 |
+  | 0.5x, best possible on the basis | 4.8-4.9% | 2.1-2.2% | 1.4% |
+  | error inside the training window | 1.0-1.4% | 5.5-5.6% | 3.7-3.8% |
+
+  - At rank 4 the forecast error is lower than the reported basis at every
+    arm, including the stress arms, on every seed. The 0.75x band holds the
+    truth throughout. The 0.5x band holds it more often (median 92%, lowest
+    76%). The bands are a little wider: on day 119, 0.14-0.19 of the burden
+    from 1x to 0.5x, against 0.10-0.18. Full dose stays inside its band.
+  - The fifth mode gives full coverage at 0.5x, but the bands are about
+    twice as wide, and the 1x forecast leaves its band on seeds 49 and 50.
+  - The basis is no longer the main limit. At 0.5x the best possible error
+    falls from about 4.9% to 2.2%, but the forecast error only falls from
+    6.7% to 5.6%. The rest is the model's too-slow regrowth after the cut:
+    on day 119 the 0.5x burden is still 0.88-0.92 of the truth, while the
+    basis alone would lose only 2.6% of it.
+  - Cost: the model draws a slightly blurred tumour. Inside the training
+    window the error (rank 4, seeds 48-50) is:
+    - 14% on day 5 (reported: 2%);
+    - 6.5% on day 20;
+    - 2-4% from day 40;
+    - 1.5-2.0% on day 84, better than the reported basis (2.3-2.6%).
+
+    Blurred modes suit the late, diffuse tumour, not the small, sharp first
+    scan.
+  - From day 57, at rank 4, the forecast is better at 0.5x and below on
+    every seed (0.5x: 14.6 / 8.9 / 10.9%, against 15.1 / 12.8 / 13.9%).
+    - The 0.5x band holds the truth 38 / 100 / 57% of the time (reported:
+      29 / 30 / 36%).
+    - At 0.75x it is better on seeds 49 and 50 but worse on seed 48.
+    - At 1x it is no better (19.1 / 15.5 / 16.8%, against 16.9 / 15.4 /
+      16.6%).
+    - The best possible error at 0.5x falls from 9.4% to 4.1%, so the
+      regrowth law dominates.
 - **Other options (basis loss only, not fitted).**
   - Unsegmented maps inside a 6 mm margin around the lesion, then smoothed:
     0.3-0.4% at rank 6 from day 84, 3.1-3.3% from day 57. This needs maps
@@ -968,15 +1028,28 @@ beforehand.
 - **Status.** Exploratory. To use it: declare the smoothing width, the
   variant and the rank rule first (for example, chosen on development seed
   45 as the original basis was), then test on fresh seeds and report the
-  error inside the training window next to the forecast.
+  error inside the training window next to the forecast. The simplest
+  candidate is the four production modes blurred: it keeps the production
+  rank rule and adds a single setting, the width.
 
-Scripts: `pod_variants.py` (basis loss for any seed), `pod_fix_figure.py`,
-`blur_fit.py` (fit runner), `blur_fit_summary.py` (tables and figure) and
-`smoothing_explainer.py` (what the blur does to one scan).
-Figures: `figures/pod_fix_seed48.png` (the idea on one slice, and loss
-against rank), `figures/blur_fit_burden.png` (burden forecasts and bands,
-seeds 48-50) and `figures/smoothing_profile_seed48.png` (a line through the
-tumour edge on days 84 and 5, with a zoom on the edge).
+Scripts:
+- `pod_variants.py` (basis loss for any seed);
+- `pod_fix_figure.py`;
+- `blur_fit.py` (fit runner);
+- `blur_fit_summary.py` (tables and figure);
+- `smoothing_explainer.py` (what the blur does to one scan);
+- `blurred_modes_check.py` (blurred modes against the POD of blurred maps,
+  and basis loss);
+- `blurred_modes_summary.py` (tables and figure).
+
+Figures:
+- `figures/pod_fix_seed48.png` (the idea on one slice, and loss against
+  rank);
+- `figures/blur_fit_burden.png` (burden forecasts and bands, seeds 48-50);
+- `figures/smoothing_profile_seed48.png` (a line through the tumour edge on
+  days 84 and 5, with a zoom on the edge);
+- `figures/blurred_modes_burden.png` (sharp data and blurred modes against
+  the reported basis, seeds 48-50, from days 84 and 57).
 
 ## Open decisions
 
@@ -1005,8 +1078,9 @@ run, would be the chosen model on the standard regimen's seeds 51-53 (1x),
 which have not been run with it.
 
 Whether to build the POD from smoothed maps is open too. If adopted, the
-smoothing width, the variant (smoothed maps or smooth modes) and the rank
-rule would be declared first and tested on fresh seeds.
+smoothing width, the variant and the rank rule would be declared first and
+tested on fresh seeds. The variants are smoothed maps, smooth modes, or the
+production modes blurred.
 
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
@@ -1016,8 +1090,9 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/what_changed_seed48.png`, `figures/free_dose_mod_burden.png`,
 `figures/band_miss_seed48.png`, `figures/four_shapes_seed48.png`,
 `figures/pod_limits_seed48.png`, `figures/pod_fix_seed48.png`,
-`figures/blur_fit_burden.png`, `figures/smoothing_profile_seed48.png`, the
-band-coverage scripts, and the smoothed-POD
+`figures/blur_fit_burden.png`, `figures/smoothing_profile_seed48.png`,
+`figures/blurred_modes_burden.png`, the band-coverage scripts, and the
+smoothed-POD
 scripts and fits) are local session artifacts, not bundled with the
 repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
