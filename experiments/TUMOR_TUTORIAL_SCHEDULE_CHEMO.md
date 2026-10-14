@@ -74,6 +74,15 @@ little wider, and the 0.5x band holds the truth 76-100% of the time. The
 price is a blurred first scan: 14% error on day 5, against 2%. See "Can
 preprocessing win the cells back?".
 
+**Realistic scan schedules fail.** Every result above trains on 120 scans,
+one every 0.4-0.7 days. On realistic schedules, from four-weekly to weekly
+(3-12 scans), the free ROM learns little or no drug effect. It fails the
+18.9% bar on every such schedule, from day 57 and from day 84; its worst
+scenario arm is 32-76% off. 120 evenly spaced scans pass, so the number of
+scans matters, not the even spacing. After the fact, on one seed, it comes
+back under the bar with scans about every 2 days (to day 84) or daily (to
+day 57). See "Realistic scan schedules".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -1123,6 +1132,142 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 # and reduced-regimen-trend-chemo-{weekly,fortnightly,4weekly}-scans
 ```
 
+### Results (each seed run once)
+
+All 21 fits completed their 12,000 updates, and all 64 draws completed in
+every arm. With six fits at once they took 13-16 minutes each; the 120-scan
+control took 18-19 minutes alongside other jobs.
+
+**Verdict under the rule: no realistic schedule works.** Every one fails the
+18.9% bar, on both splits, most by a wide margin. The 120 evenly spaced
+scans pass, and do slightly better than 120 random ones. Even spacing is
+not the problem; the number of scans is.
+
+Full-field error over the forecast window (%), median of seeds 48-50. The
+seeds now differ only in scanner noise and agree within 1.3 points on
+these arms.
+"Training" is the point forecast's error over the training window. The band
+columns are for 0.5x: how often the 5-95% draw band holds the true burden,
+and its width on day 119 as a fraction of the true burden.
+
+| Data to | Schedule (scans, rank) | 1x | 0.75x | 0.5x | Training | Band holds truth | Band width | Verdict |
+|---|---|---|---|---|---|---|---|---|
+| Day 84 | 120 random (reported; r4) | 9.1 | 6.9 | 6.7 | 1.2 | 61-66% | 0.12-0.15 | pass |
+| | 120 evenly spaced (control; r4) | 8.9 | 6.3 | 6.1 | 1.2 | 59-82% | 0.11-0.14 | **pass** |
+| | Weekly (12; r4) | 22.1 | 24.1 | 32.4 | 18.2 | 100% | 1.3 | **fail** |
+| | Fortnightly (7; r4) | 70.9 | 49.9 | 33.7 | 29.0 | 100% | 3.1 | **fail** |
+| | Four-weekly (4; r3) | 68.9 | 48.3 | 32.3 | 28.0 | 100% | 2.9-3.2 | **fail** |
+| Day 57 | 120 random (reported; r4) | 16.6 | 12.0 | 13.9 | 0.8 | 29-36% | 0.21-0.22 | pass |
+| | Weekly (8; r3) | 42.4 | 49.1 | 53.9 | 3.2 | 13% | 0.78 | **fail** |
+| | Fortnightly (5; r3) | 63.7 | 31.1 | 18.0 | 24.3 | 100% | 1.8 | **fail** |
+| | Four-weekly (3; r3) | 75.5 | 40.6 | 19.9 | 22.3 | 100% | 2.0-2.2 | **fail** |
+
+**What goes wrong.**
+- **The fits learn almost no drug effect.**
+  - Mode 1's drug coefficient is -0.02 to -0.15 from day 84 and -0.05 to
+    -0.66 from day 57. With 120 scans it is -0.95 to -0.99, close to the
+    projected form's -1. The growth source c_1 falls from 2.0-2.4 to -0.02
+    to 0.29.
+  - The forecasts barely respond to the dose. At 0.5x they reproduce 0-7%
+    of the true day-119 change from the 1x arm from day 84, and 7-25% from
+    day 57. With 120 scans: 68-74% and 50-60%.
+- **They do not follow their own scans.**
+  - The training-window error is 18-29% (3.2% for weekly scans to day 57),
+    against about 1% with 120 scans.
+  - The Gaussian process smooths over 9-48 days, against 2-8 with 120 scans.
+  - Its estimate of the scanner noise in mode 1 is 6-11 times as large from
+    day 84, and 13-20 times from day 57 (same seed, 120 random scans).
+  - So the fit settles on small operators and puts most of the change between
+    scans down to noise.
+- **The bands are honest but useless, except weekly to day 57, where they
+  are wrong.**
+  - From day 84, the 0.5x band is 1.3-3.2 times the tumour wide. It holds
+    the truth because it holds almost everything.
+  - With weekly scans to day 57 the fit tracks the scans (3.2%). But it
+    forecasts the tumour falling to 18-23% of the true day-119 burden, and
+    the band holds the truth only 13-24% of the time across the scenario
+    arms.
+- **Weekly scans miss each dose's effect.**
+  - Each weekly dose kills 16-19% of the tumour, which bottoms out 2.4-3.0
+    days later. It then regrows 7-13% before the next dose (1x truth, doses
+    on days 35-77).
+  - To day 84, every treated weekly scan falls either 6 days after a dose
+    or on a dose day, before the drug acts. Both are near the top of the
+    sawtooth.
+  - So the scans show a smooth decline, and nothing in them separates the
+    drug from slower growth.
+  - Fortnightly and four-weekly scans land at varied points of the cycle,
+    but leave only 4 and 2 treated scans to day 84.
+- **Too few numbers for the unknowns.** This is a rough count.
+  - The free model has 36 unknown operator entries at rank 4, and 21 at
+    rank 3.
+  - The first scan sets the starting state. The rest give 44 numbers
+    weekly, 24 fortnightly and 9 four-weekly (to day 84), and 21, 12 and 6
+    (to day 57). 120 scans give 476.
+  - The Gaussian process adds smoothness between scans, not information,
+    and the true tumour is not smooth at the scale of a week.
+  - More numbers than unknowns does not guarantee a good fit. Weekly scans
+    to day 84 give 44 for 36 and still fail, because they all sit near the
+    top of the dose cycle.
+- **The lower rank is not the main cause.** The basis floors rise, to
+  5.6-8.2% from day 84 and 9.1-14.2% from day 57. Every scenario-arm floor
+  is still under the 18.9% bar, so a better fit on the same basis could
+  pass.
+
+Because the scan days are fixed, the seeds no longer test sensitivity to
+scan timing. Moving the scans a day or two relative to the doses could
+change these numbers; that was not tested.
+
+### How often would we have to scan? (after the fact)
+
+This was not declared. Session `scan_sweep_fit.py` registered the same cases
+with scans about every 3.5, 2 and 1 days, for this process only. It built
+them exactly as the declared ones and ran seed 48 only. Rank 4 cleared the
+noise threshold in every case. Nothing in the repository changed.
+
+| Data to | Scan every | Scans | 1x | 0.75x | 0.5x | 0.5x band holds truth |
+|---|---|---|---|---|---|---|
+| Day 84 | 7 days (declared) | 12 | 22.3 | 24.1 | 32.4 | 100% |
+| | 3.5 days | 24 | 9.2 | 12.2 | 19.3 | 36% |
+| | 2 days | 41 | 9.2 | 7.4 | 9.3 | 70% |
+| | 1 day | 80 | 9.2 | 7.0 | 7.7 | 46% |
+| | 0.66 days (declared control) | 120 | 8.9 | 6.4 | 6.1 | 59% |
+| Day 57 | 7 days (declared) | 8 | 42.5 | 49.2 | 53.9 | 13% |
+| | 3.5 days | 16 | 30.5 | 36.7 | 42.8 | 16% |
+| | 2 days | 27 | 19.2 | 15.8 | 18.8 | 18% |
+| | 1 day | 53 | 15.2 | 14.3 | 17.4 | 22% |
+| | 120 random (reported) | 120 | 16.9 | 12.3 | 15.1 | 29% |
+
+Seed 48 throughout.
+- **Day 84.** The 1x forecast recovers at about twice-weekly scans. Lower
+  doses need scans about every 2 days.
+- **Day 57.** It takes daily scans to come in under the bar (2 days misses
+  by 0.3 points at 1x).
+- **At 0.5x the band still misses part of the time on every dense
+  schedule.** It holds the truth 16-70% of the time, as with 120 scans. The
+  basis and regrowth limits in "Why the draw band misses after cuts" apply
+  here too.
+
+**What this means.**
+- The free ROM with the input-aware GP needs dense imaging on this twin:
+  about every 2 days to day 84, and daily to day 57 (after the fact, one
+  seed).
+- Clinical MRI is far too sparse. On the trial's schedule a patient has two
+  MRIs before a decision on day 57 or 84, and a research protocol could scan
+  at most weekly.
+- Every chemo result in this record assumes about 120 scans in the training
+  window, so a scan every 0.4-0.7 days.
+- Any model that learns all 36 entries from one patient's scans faces the
+  same count, and the Neural ODE learns more. Clinical schedules would need
+  fewer unknowns, for example the projected form, or prior information from
+  other patients. Neither has been tested on sparse scans.
+
+`figures/scan_schedule_burden.png` shows the burden forecasts and the scans
+for seed 48 on every declared schedule. `figures/scan_schedule_error.png`
+plots error against the number of scans, and `figures/scan_sweep_burden.png`
+shows the after-the-fact schedules. The tables come from
+`scan_schedule_summary.py` (log `logs/scan_schedule_summary.txt`).
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -1154,6 +1299,13 @@ smoothing width, the variant and the rank rule would be declared first and
 tested on fresh seeds. The variants are smoothed maps, smooth modes, or the
 production modes blurred.
 
+The realistic-scan result bears on all of these choices. Every chemo result
+here assumes about 120 scans in the training window, far denser than
+clinical MRI. The options are open:
+- state the dense-imaging assumption in the paper;
+- test the projected form on the realistic schedules, declared first;
+- move the example to a setting with frequent imaging.
+
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
 `figures/why_2x_looks_best.png`, `figures/midcourse_eval_burden.png`,
@@ -1163,8 +1315,9 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/band_miss_seed48.png`, `figures/four_shapes_seed48.png`,
 `figures/pod_limits_seed48.png`, `figures/pod_fix_seed48.png`,
 `figures/blur_fit_burden.png`, `figures/smoothing_profile_seed48.png`,
-`figures/blurred_modes_burden.png`, the band-coverage scripts, and the
-smoothed-POD
-scripts and fits) are local session artifacts, not bundled with the
-repository:
+`figures/blurred_modes_burden.png`, `figures/scan_schedule_burden.png`,
+`figures/scan_schedule_error.png`, `figures/scan_sweep_burden.png`, the
+band-coverage scripts, the smoothed-POD scripts and fits, and the
+scan-schedule check, summary and sweep scripts) are local session
+artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
