@@ -6,8 +6,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 
-from benchmark_cases import (CASES, LEGACY_PODS, PATIENT_DOSE_DAYS, REPORTED_CASES, SCAN_SCHEDULE_CASES, PODSettings,
-                             describe, galerkin_operators, get_case, production_config, regular_scan_days, _adapter)
+from benchmark_cases import (CASES, LEGACY_PODS, PATIENT_DOSE_DAYS, REPORTED_CASES, SCAN_SCHEDULE_CASES,
+                             SPARSE_FIX_CASES, PODSettings, describe, galerkin_operators, get_case, production_config,
+                             regular_scan_days, stride_scan_days, _adapter)
 from core.weakform_opinf import WeakFormConfig
 
 
@@ -20,7 +21,8 @@ class BenchmarkCaseTests(unittest.TestCase):
                                                             "midcourse-reduced-trend-chemo",
                                                             "midcourse-regimen-chemo", "midcourse-galerkin-chemo",
                                                             "midcourse-logistic-chemo", "midcourse-regimen-trend-chemo",
-                                                            "midcourse-logistic-trend-chemo"} | set(SCAN_SCHEDULE_CASES))
+                                                            "midcourse-logistic-trend-chemo"} | set(SCAN_SCHEDULE_CASES)
+                         | set(SPARSE_FIX_CASES))
         self.assertEqual(CASES["untreated-growth"].dose_days, ())
         self.assertEqual(CASES["untreated-growth"].prediction_end, 90.)
         single, multi = CASES["single-dose-chemo"], CASES["multi-dose-chemo"]
@@ -58,7 +60,9 @@ class BenchmarkCaseTests(unittest.TestCase):
             with self.subTest(case=name):
                 cfg = production_config(case)
                 self.assertEqual(cfg.gp_input_trend, case.input_aware_gp)
-                self.assertEqual(cfg.gp_noise_prior, "spectrum")
+                self.assertEqual(cfg.gp_noise_prior, case.gp_noise_prior)
+                self.assertEqual(case.gp_noise_prior == "measurement",
+                                 name in SPARSE_FIX_CASES and "known-noise" in name)
                 self.assertEqual(cfg.operator_solver, "qr")
                 self.assertEqual(cfg.precision, "default")
                 self.assertEqual(cfg.num_steps, 12000)
@@ -187,6 +191,40 @@ class BenchmarkCaseTests(unittest.TestCase):
                 replace(base, observations=count, scan_days=days)
         with self.assertRaises(ValueError):
             regular_scan_days((5., 84.), count=1)
+
+    def test_sparse_fix_cases_change_only_the_declared_settings(self):
+        self.assertEqual(stride_scan_days((5., 84.), 8.),
+                         (5., 13., 21., 29., 37., 45., 53., 61., 69., 77., 84.))
+        self.assertEqual(stride_scan_days((5., 57.), 8.), (5., 13., 21., 29., 37., 45., 53., 57.))
+        self.assertEqual(stride_scan_days((5., 61.), 8.), (5., 13., 21., 29., 37., 45., 53., 61.))
+        for span, stride in (((5., 84.), 0.), ((5., 5.), 8.)):
+            with self.assertRaises(ValueError):
+                stride_scan_days(span, stride)
+        self.assertEqual(len(SPARSE_FIX_CASES), 9)
+        for name in SPARSE_FIX_CASES:
+            with self.subTest(case=name):
+                case = CASES[name]
+                base = CASES[next(b for b in ("midcourse-reduced-trend-chemo", "reduced-regimen-trend-chemo")
+                                  if name.startswith(b + "-"))]
+                every8 = "-every8-" in name
+                source = base if every8 else CASES[name.removesuffix("-known-noise")]
+                days = stride_scan_days(base.training_span, 8.) if every8 else source.scan_days
+                self.assertEqual(case.scan_days, days)
+                self.assertEqual(case.gp_noise_prior, "measurement" if "known-noise" in name else "spectrum")
+                self.assertEqual(case.pod.rank, 2 if name.endswith("-r2") else
+                                 CASES[f"{base.name}-weekly-scans"].pod.rank)
+                self.assertEqual(replace(case, name=source.name, description=source.description, pod=source.pod,
+                                         observations=source.observations, scan_days=source.scan_days,
+                                         gp_noise_prior="spectrum"), source)
+                self.assertEqual(production_config(case).gp_noise_prior, case.gp_noise_prior)
+                self.assertEqual("gp_noise_prior" in describe(case), "known-noise" in name)
+                if "-regular-" not in name:
+                    self.assertLessEqual(case.observations, CASES[f"{base.name}-weekly-scans"].observations)
+        self.assertEqual(CASES["midcourse-reduced-trend-chemo-regular-scans-known-noise"].observations, 120)
+        with self.assertRaises(ValueError):
+            replace(CASES["midcourse-reduced-trend-chemo"], gp_noise_prior="oracle")
+        with self.assertRaises(ValueError):
+            replace(get_case("multi-dose-chemo", "oracle_masked"), gp_noise_prior="measurement")
 
     def test_segmented_scans_fit_their_own_POD(self):
         case = CASES["multi-dose-chemo"]

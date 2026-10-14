@@ -83,6 +83,11 @@ scans matters, not the even spacing. After the fact, on one seed, it comes
 back under the bar with scans about every 2 days (to day 84) or daily (to
 day 57). See "Realistic scan schedules".
 
+**Fixing sparse scans: declared, results pending.** Two fixes keep the scan
+count at weekly or below. One tells the Gaussian process the scanner's known
+noise; the other scans every 8 days, so the scans fall at different points
+of the dose cycle. See "Fixing sparse scans".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -1267,6 +1272,162 @@ for seed 48 on every declared schedule. `figures/scan_schedule_error.png`
 plots error against the number of scans, and `figures/scan_sweep_burden.png`
 shows the after-the-fact schedules. The tables come from
 `scan_schedule_summary.py` (log `logs/scan_schedule_summary.txt`).
+
+## Fixing sparse scans (rule declared before any fit)
+
+**Why.** On realistic schedules the free ROM learns almost no drug effect
+("Realistic scan schedules"). Two of the causes found there can be fixed
+without more scans:
+- **The Gaussian process is told the wrong noise level.**
+  - Each mode's noise prior is centred on 1% of that mode's variance
+    across the scans.
+  - For weekly scans to day 84 that is 42,600, 17,300, 1,150 and 159 times
+    the voxel noise variance for modes 1-4. The fits then raise mode 1's
+    estimate further, to about 290,000 times.
+  - But the pipeline already knows the scanner noise. The noise rule sets
+    it (0.0087), and segmentation and the rank threshold use it.
+- **Weekly scans all land at the same point of the dose cycle.** To day 84,
+  every treated weekly scan falls 6 days after a dose or on a dose day. The
+  scans then cannot separate the drug from slower growth.
+
+A third cause, too few numbers for the unknowns, is tested on the side with
+two modes instead of three or four.
+
+**Fix 1: the scans' known noise (`*-known-noise`).** Each mode's noise prior
+is centred on the noise its reduced observations carry. This is computed from
+the scans and the known noise level alone
+(`benchmark_data.scan_noise_variances`). For mode i:
+
+```text
+nu_i = sigma^2 + mean over scans j of (n_j * sigma^2 * y_ij / s_i^2)^2
+```
+
+- **Symbols.** sigma is the voxel noise SD and n_j the number of segmented
+  voxels in scan j. y_ij is the reduced observation, and s_i is mode i's
+  singular value of the scan matrix (the size of y_i).
+- **First term.** The scanner noise inside the outline. For a fixed
+  orthonormal mode it is at most sigma^2.
+- **Second term.** The noise a mode soaks up because the POD was fitted to
+  the same noisy scans. It grows with the lesion and is large for weak modes.
+  The earlier `04_unified_chemo.py` profile fitted its basis to clean data,
+  so it needed only the first term.
+- **Width.** The prior's width is unchanged: log-normal with scale 1.0, a
+  factor of 2.7 either way. Nothing else changes.
+
+Prior centre divided by the voxel noise variance. The known-noise values
+agree to within 2% on acquisitions 45 and 48-50.
+
+| Prior and scans | Mode 1 | Mode 2 | Mode 3 | Mode 4 |
+|---|---|---|---|---|
+| Default (1% of variance), weekly to day 84 | 42,600 | 17,300 | 1,150 | 159 |
+| Known noise, weekly to day 84 | 1.4 | 18 | 244 | 1,830 |
+| Known noise, every 8 days to day 84 | 1.5 | 21 | 268 | 2,100 |
+| Known noise, weekly to day 57 | 1.6 | 33 | 607 | |
+| Known noise, every 8 days to day 57 | 1.7 | 34 | 550 | |
+
+The default prior is not just too large; it has the wrong shape. It treats
+mode 1 as the noisiest mode and mode 4 as the cleanest, but the reverse is
+true.
+
+**Checks of the formula, before any fit.**
+- **Synthetic test.** In
+  `test_scan_noise_variances_predict_the_reduced_observation_error`, the
+  formula predicts the weakest mode's error to within 1% on average.
+- **Development acquisition 45** (actual error divided by declared):
+  - Mode 1: 1.55-1.73. The formula leaves out segmentation errors, such as
+    clipping and the outline.
+  - Mode 2: 0.71-0.78.
+  - Weaker modes: 1.00-1.07.
+- **Disclosure.** While deriving the formula, I also compared it with the
+  actual error on evaluation acquisitions 48-50. That covered weekly,
+  fortnightly and four-weekly scans, and the ratio was 0.74-1.38. The
+  comparison used their noise-free fields, which are evaluation-only. No
+  forecast was computed with the new prior, and the formula has no tuned
+  constant.
+
+**Fix 2: scans every 8 days (`*-every8-scans`).** One scan every 8 days from
+day 5, plus one on the last training day (`stride_scan_days`). Each scan
+falls a day later in the weekly dose cycle than the one before. There are
+never more scans than weekly. A research protocol would need some visits on
+days without an infusion.
+
+| Data to | Schedule | Scan days | Days after the last dose (treated scans) |
+|---|---|---|---|
+| Day 84 | Weekly (declared earlier) | 5, 12, 19, 27, 34, 41, 48, 55, 62, 70, 77, 84 (12) | 6, 6, 6, 6, 0, 0, 0 |
+| | Every 8 days | 5, 13, 21, 29, 37, 45, 53, 61, 69, 77, 84 (11) | 2, 3, 4, 5, 6, 0, 0 |
+| Day 57 | Weekly (declared earlier) | 5, 12, 20, 27, 35, 42, 50, 57 (8) | 0, 0, 1, 1 |
+| | Every 8 days | 5, 13, 21, 29, 37, 45, 53, 57 (8) | 2, 3, 4, 1 |
+
+The weekly schedules' ranks also clear the scan-noise threshold here on
+acquisitions 45 and 48-50. The fourth mode is 1.18 times the threshold to
+day 84, and the third is 2.4 times to day 57.
+
+**Side check: two modes (`*-every8-scans-known-noise-r2`).** Scans every 8
+days with the known noise, at rank 2. That leaves 10 unknown operator
+entries, against 36 at rank 4 and 21 at rank 3. The basis floor rises, and
+it is reported.
+
+**Control: 120 evenly spaced scans with the known noise** (to day 84 only).
+It checks that the new prior does not hurt dense scans.
+
+**Design.** Nine cases (`benchmark_cases.SPARSE_FIX_CASES`). Each is built
+from a declared case, and only the named settings change.
+
+| Case suffix | Scans to day 84 / 57 | Noise prior | Rank to day 84 / 57 |
+|---|---|---|---|
+| `-weekly-scans-known-noise` | weekly: 12 / 8 | known | 4 / 3 |
+| `-every8-scans` | every 8 days: 11 / 8 | default | 4 / 3 |
+| `-every8-scans-known-noise` | every 8 days: 11 / 8 | known | 4 / 3 |
+| `-every8-scans-known-noise-r2` | every 8 days: 11 / 8 | known | 2 / 2 |
+| `-regular-scans-known-noise` | 120 evenly spaced / not run | known | 4 / - |
+
+Each of the first three rows makes one paired comparison with the weekly
+results:
+- **First row:** only the prior changes (same scans, same noise).
+- **Second row:** only the timing changes.
+- **Third row:** both change.
+
+**Rule.** As in "Realistic scan schedules":
+1. **Runs.** Seeds 48-50, each run once. Nothing is tuned.
+2. **Metric and arms.** The same metric. Scenario arms are 1, 0.75 and 0.5x;
+   0.25x and 0x are stress arms, reported and not judged.
+3. **Bar.** A case passes on its split if every scenario arm's median is at
+   most 18.9%.
+4. **Also reported.**
+   - The basis floor, the training-window error and the day-119 burden.
+   - How often the 0.5x and 1x bands hold the truth, and their widths.
+   - Mode 1's drug coefficient, c_1 and the share of the true dose effect.
+   - The Gaussian process's lengthscale, and its noise estimate against the
+     declared value.
+
+**Expectations, written before any fit.**
+- **Known noise, weekly.**
+  - To day 84, the fit should follow its scans much more closely: training
+    error well under the earlier 18%. But the scans still sit at the top of
+    the dose cycle, so I expect little drug effect and a fail at 0.5x.
+  - To day 57, the fit already followed its scans (3.2%), so I expect little
+    change.
+- **Every 8 days, default prior.** Some drug effect may appear, but the
+  Gaussian process still smooths over the dose cycle. I expect a fail.
+- **Every 8 days with known noise.** This has the best chance.
+  - To day 84, a pass would not surprise me.
+  - To day 57 a pass is less likely: 8 scans, 21 unknowns and only 4 treated
+    scans.
+- **Two modes.** Fewer unknowns, but a higher floor. It may help to day 57.
+- **Control.** Still passes, within about 2 points of 8.9, 6.3 and 6.1%.
+
+If no realistic schedule passes, the next step is a population prior on the
+tumour-wide growth and kill rates, learned from a virtual cohort. It will be
+declared separately.
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo-every8-scans-known-noise   # 48-50
+# likewise every case in benchmark_cases.SPARSE_FIX_CASES
+```
+
+The data-only check is session `sparse_fix_check.py`, and its output is
+`sparse_fix_check.json`.
 
 ## Open decisions
 

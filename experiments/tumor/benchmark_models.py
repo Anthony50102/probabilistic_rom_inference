@@ -183,6 +183,15 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         # The training regimen's tabulated exposure (the input-aware GP's cumulative-exposure trend).
         trajectories[0]["input_table"] = dict(times=np.asarray(observations["input_times"], dtype=float),
                                               values=np.asarray(observations["input_values"], dtype=float))
+    noise_prior = {}
+    if cfg.gp_noise_prior == "measurement":
+        # The scans' known measurement noise per mode (from the scans and the scanner's noise level alone).
+        acquisition = data["metadata"]["acquisition"]
+        variances = bd.scan_noise_variances(observations["y"], acquisition["lesion_voxels_per_scan"],
+                                            acquisition["noise_sd"])
+        trajectories[0]["noise_variances"] = variances
+        noise_prior = {"measurement_noise_variances": variances.tolist(),
+                       "measurement_noise_rule": "benchmark_data.scan_noise_variances"}
     row_maps = None
     if case.structure != "free":
         basis = bd.read_npz(data["folder"] / "basis.npz")
@@ -212,7 +221,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
             "production_config": asdict(cfg),
             "planned_updates": total, "observations_sha256": data["metadata"]["observations_sha256"],
             "inputs": "Reduced training observations and (chemo) the training exposure table only.",
-            "ODE_calls_in_objective": 0, "thread_environment": benchmark_environment.current()})
+            "ODE_calls_in_objective": 0, "thread_environment": benchmark_environment.current(), **noise_prior})
 
     @jax.jit
     def step(current, unused):
@@ -238,7 +247,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         "finite_operator_draws": int(np.isfinite(exported["O_samples"]).all(axis=(1, 2)).sum()),
         "operators_sha256": bd.digest(folder / "operators.npz"),
         "initial_conditions_sha256": bd.digest(folder / "initial_conditions.npz"),
-        "production_config": asdict(cfg), "prior_info": priors,
+        "production_config": asdict(cfg), "prior_info": priors, **noise_prior,
         "point_definition": "Conditional operator mean at the mean of 500 GP/tau draws; observed initial state.",
         "runtime_seconds": time.monotonic() - started, "ODE_calls_in_objective": 0,
         "thread_environment": benchmark_environment.current(),

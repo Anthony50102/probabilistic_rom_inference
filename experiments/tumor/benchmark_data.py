@@ -35,7 +35,7 @@ for _path in (str(ROOT), str(SCRIPT_DIR)):
 
 from benchmark_cases import (  # noqa: E402
     CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION, OBSERVATION_MODELS, REPORTED_CASES,
-    SCAN_SCHEDULE_CASES, BenchmarkCase, PODSettings, describe, get_case)
+    SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, BenchmarkCase, PODSettings, describe, get_case)
 
 TUMORTWIN = ROOT.parent / "TumorTwin"
 PATIENT = "TNBC_demo_001"
@@ -67,6 +67,8 @@ DEFAULT_SEEDS = {
     "midcourse-logistic-trend-chemo": (48, 49, 50),
     # Fixed scan schedules: evaluation acquisitions only (seed 45 entered only the data-only POD rank check).
     **{name: (48, 49, 50) for name in SCAN_SCHEDULE_CASES},
+    # Sparse-scan fixes: likewise (seed 45 also checked the measurement-noise formula, scans only, no fit).
+    **{name: (48, 49, 50) for name in SPARSE_FIX_CASES},
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048
@@ -614,6 +616,24 @@ def noise_threshold(noise_sd, lesion_voxels):
     beta = min(m, n) / max(m, n)
     factor = np.sqrt(2. * (beta + 1.) + 8. * beta / (beta + 1. + np.sqrt(beta**2 + 14. * beta + 1.)))
     return float(factor * np.sqrt(max(m, n)) * noise_sd)
+
+
+def scan_noise_variances(y, lesion_voxels, noise_sd):
+    """Per-mode measurement-noise variance of segmented scans' reduced observations, from the scans alone.
+
+    Mode i's observations y_i = s_i v_i (s_i = |y_i|, v_i a unit vector over the m scans) carry two errors: the
+    scanner noise inside the segmented lesion (variance at most noise_sd^2 for an orthonormal mode) and the noise the
+    mode absorbs because it was fitted to the same noisy scans, n_j noise_sd^2 v_ij / s_i in scan j with n_j noisy
+    voxels (first order in the noise for an isolated singular value). Returns
+    noise_sd^2 + mean_j (n_j noise_sd^2 y_ij / s_i^2)^2 for each mode.
+    """
+    y, n = np.asarray(y, dtype=float), np.asarray(lesion_voxels, dtype=float)
+    if y.ndim != 2 or n.shape != (y.shape[1],) or np.any(n < 0) or not noise_sd > 0:
+        raise ValueError("Give one lesion size per scan and a positive noise level.")
+    energy = np.sum(y**2, axis=1, keepdims=True)
+    if np.any(energy <= 0):
+        raise ValueError("Every mode needs nonzero observations.")
+    return noise_sd**2 + np.mean((n * noise_sd**2 * y / energy)**2, axis=1)
 
 
 def _training_fields(case, seed, source):

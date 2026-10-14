@@ -37,6 +37,15 @@ noise) instead of 120 random ones: about weekly, fortnightly or four-weekly,
 and (mid-course only) 120 evenly spaced scans. Their POD rank drops below 4
 where fewer modes clear the scan-noise threshold.
 
+The sparse-scan fix cases (``SPARSE_FIX_CASES``) keep that weekly scan count or
+fewer. ``*-known-noise`` centres each mode's Gaussian-process noise prior on the
+scans' known measurement noise (``gp_noise_prior="measurement"``,
+``benchmark_data.scan_noise_variances``) instead of 1% of the mode's variance;
+``*-every8-scans*`` scans every 8 days (``stride_scan_days``), so the scans fall
+at different points of the weekly dose cycle; ``-r2`` keeps two POD modes. The
+120-scan ``regular-scans-known-noise`` control checks the noise prior on dense
+scans.
+
 Observation models
 ------------------
 ``segmented`` (reported): every scan, including the baseline, adds Gaussian
@@ -114,10 +123,17 @@ class BenchmarkCase:
     input_aware_gp: bool = False
     # Fixed scan days shared by every acquisition; empty means random times per seed (benchmark_data.sample_times).
     scan_days: tuple[float, ...] = ()
+    # Centre of each mode's GP noise prior: 1% of the mode's variance ("spectrum") or the scans' known measurement
+    # noise ("measurement", benchmark_data.scan_noise_variances).
+    gp_noise_prior: str = "spectrum"
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
             raise ValueError(f"Unknown observation model: {self.observation}")
+        if self.gp_noise_prior not in ("spectrum", "measurement"):
+            raise ValueError(f"Unknown GP noise prior: {self.gp_noise_prior}")
+        if self.gp_noise_prior == "measurement" and self.observation != "segmented":
+            raise ValueError("The measurement-noise prior is derived from segmented scans.")
         if self.observation == "segmented" and self.pod.source != "observed_training":
             raise ValueError("Segmented acquisitions fit their POD to the noisy training scans "
                              "(observed_training); simulation bases belong to the oracle_masked design.")
@@ -155,6 +171,17 @@ def regular_scan_days(span, *, spacing=None, count=None):
     intervals = max(1, int((end - start) / spacing + .5)) if count is None else count - 1
     days = [start + (end - start) * i / intervals for i in range(intervals + 1)]
     return tuple(float(int(day + .5)) if count is None else float(day) for day in days)
+
+
+def stride_scan_days(span, stride):
+    """A scan every ``stride`` days from the first training day, plus one on the last training day."""
+    start, end = span
+    if not stride > 0 or not end > start:
+        raise ValueError("Give a positive stride and a training window that ends after it starts.")
+    days = []
+    while start + stride * len(days) < end:
+        days.append(float(start + stride * len(days)))
+    return tuple(days) + (float(end),)
 
 
 CASES = {
@@ -246,6 +273,43 @@ SCAN_SCHEDULE_CASES = tuple(f"{base}-{schedule}-scans" for base, ranks in SCAN_S
                             for schedule in ranks)
 CASES.update({f"{base}-{schedule}-scans": _scan_schedule_case(base, schedule)
               for base, ranks in SCAN_SCHEDULE_RANKS.items() for schedule in ranks})
+# Fixing sparse scans (TUMOR_TUTORIAL_SCHEDULE_CHEMO.md, "Fixing sparse scans"), declared before any fit: the
+# weekly-count schedules with the scans' known measurement noise as the centre of the GP noise prior ("known-noise")
+# and/or phase-diverse timing ("every8": a scan every 8 days, so each scan falls one day later in the weekly dose
+# cycle than the one before, and no more scans than weekly). The "-r2" cases repeat every8 with known noise at POD
+# rank 2 (side check: fewer unknowns); the regular-120 control checks that the known-noise prior does not hurt dense
+# scans. Other ranks are the weekly schedules', checked on the noisy scans alone (acquisitions 45 and 48-50).
+SCAN_STRIDE_DAYS = {"every8": 8.}
+SPARSE_FIX_DESIGNS = {  # (schedule, known measurement noise, POD rank, name suffix)
+    "midcourse-reduced-trend-chemo": (
+        ("weekly", True, 4, "weekly-scans-known-noise"), ("every8", False, 4, "every8-scans"),
+        ("every8", True, 4, "every8-scans-known-noise"), ("every8", True, 2, "every8-scans-known-noise-r2"),
+        ("regular", True, 4, "regular-scans-known-noise")),
+    "reduced-regimen-trend-chemo": (
+        ("weekly", True, 3, "weekly-scans-known-noise"), ("every8", False, 3, "every8-scans"),
+        ("every8", True, 3, "every8-scans-known-noise"), ("every8", True, 2, "every8-scans-known-noise-r2")),
+}
+
+
+def _sparse_fix_case(base: str, schedule: str, known_noise: bool, rank: int, suffix: str) -> BenchmarkCase:
+    if schedule in SCAN_STRIDE_DAYS:
+        stride, case = SCAN_STRIDE_DAYS[schedule], CASES[base]
+        days = stride_scan_days(case.training_span, stride)
+        case = replace(case, observations=len(days), scan_days=days)
+        description = (f"As {base}, with {len(days)} fixed scans every {stride:g} days from the first training day "
+                       "plus one on the last (each a day later in the weekly dose cycle)")
+    else:
+        case = CASES[f"{base}-{schedule}-scans"]
+        description = f"As {case.name}"
+    description += ("; GP noise prior centred on the scans' known noise" if known_noise else "") + (
+        f"; POD rank {rank}" if rank != case.pod.rank else "") + "."
+    return replace(case, name=f"{base}-{suffix}", description=description, pod=replace(case.pod, rank=rank),
+                   gp_noise_prior="measurement" if known_noise else "spectrum")
+
+
+SPARSE_FIX_CASES = tuple(f"{base}-{design[-1]}" for base, designs in SPARSE_FIX_DESIGNS.items() for design in designs)
+CASES.update({f"{base}-{design[-1]}": _sparse_fix_case(base, *design)
+              for base, designs in SPARSE_FIX_DESIGNS.items() for design in designs})
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
 
@@ -279,6 +343,12 @@ DEFAULT_POD_PROVENANCE = {
                                     "lowered to the modes that clear the scan-noise threshold on acquisitions 45 and "
                                     "48-50 (checked on the scans alone, before any fit).")
        for base, ranks in SCAN_SCHEDULE_RANKS.items() for schedule, rank in ranks.items()},
+    **{f"{base}-{suffix}": (f"Uncentred rank-{rank} POD of the noisy training scans: "
+                            + ("deliberately two modes (side check: fewer unknowns)." if rank == 2 else
+                               f"as {base}-{schedule}-scans." if schedule not in SCAN_STRIDE_DAYS else
+                               f"the weekly schedule's rank {rank}, which also clears the scan-noise threshold here "
+                               "on acquisitions 45 and 48-50 (checked on the scans alone, before any fit)."))
+       for base, designs in SPARSE_FIX_DESIGNS.items() for schedule, _, rank, suffix in designs},
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -363,7 +433,8 @@ def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
                       mll_weight=0.1, weakform_weight=8.0, operator_solver="normal")
         return replace(cfg, num_modes=settings.rank)
     operators = STRUCTURED_OPERATORS.get(case.structure) or galerkin_operators(case, settings)
-    return replace(cfg, num_modes=settings.rank, operators=operators, gp_input_trend=case.input_aware_gp)
+    return replace(cfg, num_modes=settings.rank, operators=operators, gp_input_trend=case.input_aware_gp,
+                   gp_noise_prior=case.gp_noise_prior)
 
 
 def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
@@ -382,6 +453,9 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
     if not fields["scan_days"]:
         # Random scan times (every case before the fixed schedules) keep their recorded fingerprints.
         fields.pop("scan_days")
+    if fields["gp_noise_prior"] == "spectrum":
+        # Likewise for recipes from before the measurement-noise prior.
+        fields.pop("gp_noise_prior")
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")

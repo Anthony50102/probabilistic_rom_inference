@@ -179,7 +179,8 @@ class CommandLineTests(unittest.TestCase):
                                             "midcourse-logistic-chemo": (48, 49, 50),
                                             "midcourse-regimen-trend-chemo": (48, 49, 50),
                                             "midcourse-logistic-trend-chemo": (48, 49, 50),
-                                            **{name: (48, 49, 50) for name in bd.SCAN_SCHEDULE_CASES}})
+                                            **{name: (48, 49, 50) for name in bd.SCAN_SCHEDULE_CASES},
+                                            **{name: (48, 49, 50) for name in bd.SPARSE_FIX_CASES}})
         self.assertEqual(bd.LEGACY_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
                                            "multi-dose-chemo": (48, 49, 50)})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
@@ -202,7 +203,15 @@ class CommandLineTests(unittest.TestCase):
                                                                                     "4weekly": 3, "regular": 4},
                                                  "reduced-regimen-trend-chemo": {"weekly": 3, "fortnightly": 3,
                                                                                  "4weekly": 3}}.items()
-                             for schedule, rank in ranks.items()}})
+                             for schedule, rank in ranks.items()},
+                          **{f"{base}-{suffix}": f"segmented_observed_none_r{rank}"
+                             for base, ranks in {"midcourse-reduced-trend-chemo": {
+                                 "weekly-scans-known-noise": 4, "every8-scans": 4, "every8-scans-known-noise": 4,
+                                 "every8-scans-known-noise-r2": 2, "regular-scans-known-noise": 4},
+                                 "reduced-regimen-trend-chemo": {
+                                     "weekly-scans-known-noise": 3, "every8-scans": 3, "every8-scans-known-noise": 3,
+                                     "every8-scans-known-noise-r2": 2}}.items()
+                             for suffix, rank in ranks.items()}})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.REPORTED_CASES},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})
@@ -318,6 +327,33 @@ class SegmentedScanTests(unittest.TestCase):
         self.assertEqual(int(np.sum(values > threshold)), 1)
         pure = np.linalg.svd(noise_sd * rng.standard_normal((voxels, scans)), compute_uv=False)
         self.assertLess(pure.max(), threshold)
+
+    def test_scan_noise_variances_predict_the_reduced_observation_error(self):
+        np.testing.assert_allclose(bd.scan_noise_variances([[3., 4.]], [0, 0], .1), [.01])
+        np.testing.assert_allclose(bd.scan_noise_variances([[3., 4.]], [10, 20], .1),
+                                   [.01 + np.mean((np.array([10., 20.]) * .01 * np.array([3., 4.]) / 25.)**2)])
+        for bad in (([[1., 2.]], [1], .1), ([[1., 2.]], [1, -1], .1), ([[1., 2.]], [1, 1], 0.),
+                    ([[0., 0.]], [1, 1], .1)):
+            with self.assertRaises(ValueError):
+                bd.scan_noise_variances(*bad)
+        # Modes fitted to the same noisy scans absorb noise: the weakest mode's error is tens of times the voxel
+        # noise variance, and the formula predicts it (noise only inside each scan's growing lesion).
+        rng = np.random.default_rng(5)
+        voxels, scans, noise_sd = 3000, 12, .02
+        lesions = np.linspace(600, voxels, scans).astype(int)
+        pattern = np.linalg.qr(rng.standard_normal((voxels, 3)))[0]
+        signal = (pattern @ (np.array([[80.], [8.], [2.]]) * np.linalg.qr(rng.standard_normal((scans, 3)))[0].T)).T
+        actual, declared = 0., 0.
+        for _ in range(40):
+            noisy = signal + noise_sd * rng.standard_normal((scans, voxels)) * (np.arange(voxels) < lesions[:, None])
+            D, _, _ = bd.observed_pod(noisy, bd.PODSettings(3, "observed_training", "none"))
+            y = D.T @ noisy.T
+            actual = actual + np.mean((y - D.T @ signal.T)**2, axis=1)
+            declared = declared + bd.scan_noise_variances(y, lesions, noise_sd)
+        self.assertGreater(declared[-1] / declared[0], 20.)
+        ratio = actual / declared
+        self.assertTrue(np.all((ratio > .5) & (ratio < 1.2)), ratio)
+        self.assertAlmostEqual(ratio[-1], 1., delta=.1)
 
     def test_acquisition_is_deterministic_noisy_from_the_first_scan_and_uses_no_future_knots(self):
         case = replace(bd.get_case("multi-dose-chemo"), observations=6)
