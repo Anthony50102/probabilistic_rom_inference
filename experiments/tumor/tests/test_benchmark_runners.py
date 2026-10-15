@@ -182,7 +182,8 @@ class CommandLineTests(unittest.TestCase):
                                             **{name: (48, 49, 50) for name in bd.SCAN_SCHEDULE_CASES},
                                             **{name: (48, 49, 50) for name in bd.SPARSE_FIX_CASES},
                                             **{name: (48, 49, 50) for name in bd.LEARNED_TREND_CASES},
-                                            **{name: (48, 49, 50) for name in bd.COHORT_CASES}})
+                                            **{name: (48, 49, 50) for name in bd.COHORT_CASES},
+                                        **{name: (48,) for name in bd.COHORT_SWEEP_CASES}})
         self.assertEqual(bd.LEGACY_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
                                            "multi-dose-chemo": (48, 49, 50)})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
@@ -224,7 +225,9 @@ class CommandLineTests(unittest.TestCase):
                                                  "reduced-regimen-trend-chemo": {"weekly-scans": 3,
                                                                                  "every8-scans": 3}}.items()
                              for source, rank in ranks.items()
-                             for arm in ("cohort-basis", "cohort-prior", "cohort-pooled")}})
+                             for arm in ("cohort-basis", "cohort-prior", "cohort-pooled")},
+                          **{f"midcourse-reduced-trend-chemo-weekly-scans-learned-trend-cohort{size}-{arm}":
+                             "segmented_cohort_none_r4" for size in (4, 8, 16, 32, 64) for arm in ("basis", "pooled")}})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.REPORTED_CASES},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})

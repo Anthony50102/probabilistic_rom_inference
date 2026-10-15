@@ -2509,6 +2509,98 @@ This completes the agreed order: ideas 1, 2 and 5, then the population
 prior, then partial pooling. No further sparse-scan fit is planned. What
 to report is an open decision.
 
+## More past patients (design written before any fit)
+
+**Why.** On the training-data plot the new patient's tumour ends above all
+eight past patients. It is not like them: relative to the population it
+grows faster (+0.8 SD), spreads faster (+2.0 SD) and responds less to the
+drug (-0.6 SD). Pooling at K = 8 past patients forecast it with the
+cohort's average rates. This sweep asks what more past patients do. More
+patients tell the model more about how patients differ, but they also pin
+the average more firmly. No patient is picked to resemble the new one: the
+past patients are the first K of one random draw.
+
+**The draw, before any fit.** The draw continues the eight-patient
+cohort's draw (same seed, centre and spread), so past patients 0-7 are the
+same eight as before. Compared with the new patient (k, D and s in
+population SDs; computed from the draw alone):
+
+| K | Cohort mean minus the new patient (k, D, s) | Grow faster | Spread faster | Respond less | All three |
+|---|---|---|---|---|---|
+| 4 | -0.4, -2.1, +1.0 | 1 of 4 | 0 | 0 | 0 |
+| 8 | -0.9, -2.2, +1.1 | 2 of 8 | 0 | 0 | 0 |
+| 16 | -0.8, -2.2, +1.1 | 5 of 16 | 0 | 3 of 16 | 0 |
+| 32 | -0.8, -2.2, +0.8 | 7 of 32 | 0 | 6 of 32 | 0 |
+| 64 | -1.0, -2.1, +0.8 | 12 of 64 | 0 | 14 of 64 | 0 |
+
+None of the 64 spreads as fast as the new patient (largest D 0.0954,
+against 0.0965). More past patients add faster growers and weaker
+responders, but never one like the new patient.
+
+**Design** (`benchmark_cases.COHORT_SWEEP_DESIGN`, `COHORT_SWEEP_CASES`;
+`benchmark_cohort.py build-sweep`).
+- **Past patients.** 64, drawn as above. Patient m has patient (m mod 8)'s
+  dose change, so 3 in every 8 have a cut (1 of 4 at K = 4). Each has a
+  weekly scan from day 5 + (m mod 7) to day 119 (16-17 scans), with the
+  same scanner and segmentation as before.
+- **K = 4, 8, 16, 32 and 64:** the first K past patients. Each K has its
+  own POD basis from those patients' scans: rank 4, checked against the
+  noise threshold when the cohort is built. The new patient's scans are
+  only projected onto it.
+- **New patient:** as before. Weekly scans to day 84 (12 scans), the
+  learned trend scale, seed 48 only. Seeds differ only in scanner noise,
+  and the pooled seeds agreed within 0.1 points.
+- **Two fits per K.** "Pooled": jointly with the K past patients, as at
+  K = 8. "Basis alone": the new patient alone on the same basis, which
+  shows what the basis does by itself. That makes 10 fits with the
+  production recipe, each run once, with nothing tuned.
+- **References, already run (seed 48):** the new patient alone on its own
+  basis (13.6 / 16.1 / 21.1% at 1 / 0.75 / 0.5x), alone on the K = 8
+  basis (14.8 / 18.9 / 23.8%), and K = 8 pooled with the earlier solver
+  (7.1 / 8.4 / 10.8%).
+- **Solver.** The earlier pooled calculation solves for all patients'
+  operators at once, so its cost grows with K³; one K = 64 fit would take
+  about a day. The "blocked" solver gives the same answer one patient at
+  a time, at a cost that grows with K (`build_model(pooled_solver=
+  "blocked")`). Tests show that the evidence, its gradient and every
+  posterior equal the earlier solver's to rounding, for one to three
+  patients. K = 8 is rerun with it (both fits), as a check against the
+  earlier K = 8 fits. It will not be equal bit for bit: the basis is
+  computed from sparse scans, so it differs by rounding (measured when the
+  cohort is built), and the fits run in float32.
+- **K = 64 only if it is practical.** A smoke run times it first
+  (development seed 45, 20 updates; not a result). K = 64 is run if one
+  fit takes under about 4 hours. If it needs more than about 4 GB of
+  memory, it runs alone. If it is not run, it is reported as not run.
+
+**Reported.** The same metric and arms: 1, 0.75 and 0.5x, plus 0.25x and
+0x. The 18.9% bar is drawn for reference. There is no pass or fail rule
+for the sweep.
+- Error against K, pooled and basis alone, beside the references.
+- The day-119 burden, how often the bands hold the truth, and their width.
+- The learned spreads κ_δ per block (at K = 8 the drug block's collapsed
+  to 0.004-0.018), and how far the new patient's operator is from M.
+- Each past patient's in-sample error with their own operator.
+- The share of the new patient's scans each basis captures.
+
+**Expectations (written before any fit).**
+- **K = 4** is worse than K = 8: fewer patients and a basis from fewer
+  scans.
+- **Beyond K = 8** the error stays about the same or gets worse. If
+  pooling again learns mainly the average, a firmer average pulls the
+  forecast toward slower spread and a stronger drug effect. An uncertain
+  call: more patients with different responses could also make κ_δ
+  larger and let the new patient move away from the average.
+- **Basis alone** improves a little with K, since its basis has seen more
+  tumour shapes.
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python benchmark_cohort.py build-sweep   # 64 past patients, five bases (cached)
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo-weekly-scans-learned-trend-cohort16-pooled --seeds 48
+# likewise every case in benchmark_cases.COHORT_SWEEP_CASES
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on

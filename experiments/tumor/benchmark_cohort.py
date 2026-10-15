@@ -14,8 +14,14 @@ fit (the target case's own configuration) to all members' reduced scans at once,
 point operator is the centre of the ``-cohort-prior`` cases' operator prior (benchmark_models.fit_production).
 The ``-cohort-pooled`` cases instead fit the members' scans jointly with the target's (``pooled_trajectories``).
 
+``build-sweep`` builds the cohort-size sweep (``COHORT_SWEEP_DESIGN``): the same draw continued to 64 members, weekly
+scans only, and one basis per cohort size K from the first K members' scans (members 0-7 are the declared cohort's,
+checked against its cache). Scans are held sparse (each is zero outside its segmented lesion) and the clean fields are
+solved a second time for the members' clean coefficients, so the build never holds all members' fields at once.
+
     python benchmark_cohort.py build
     python benchmark_cohort.py fit CASE [--steps N] [--output-root PATH]
+    python benchmark_cohort.py build-sweep
 """
 from __future__ import annotations
 
@@ -32,8 +38,8 @@ import numpy as np
 import benchmark_data as bd
 import benchmark_environment
 from benchmark_cases import (
-    CASES, COHORT_CASES, COHORT_DESIGN, COHORT_SOURCES, PATIENT_DOSE_DAYS, TUTORIAL_TWIN, PODSettings, get_case,
-    production_config)
+    CASES, COHORT_CASES, COHORT_DESIGN, COHORT_SOURCES, COHORT_SWEEP_CASES, COHORT_SWEEP_DESIGN, PATIENT_DOSE_DAYS,
+    TUTORIAL_TWIN, PODSettings, get_case, production_config)
 
 PARAMETERS = ("growth_rate", "diffusion", "sensitivity")
 OPERATOR_DRAWS = 500
@@ -87,38 +93,44 @@ def check_target(case):
     if (twin != TUTORIAL_TWIN or tuple(case.dose_days) != PATIENT_DOSE_DAYS or case.training_strength != 1.
             or case.noise_level != NOISE_LEVEL or case.sensitivity != COHORT_DESIGN["input_sensitivity"]):
         raise ValueError(f"{case.name} is not the target the cohort was built for.")
+    if case.cohort_size and (case.cohort_size not in COHORT_SWEEP_DESIGN["sizes"]
+                             or case.cohort not in COHORT_SWEEP_DESIGN["strides"]):
+        raise ValueError(f"{case.name} asks for a cohort the size sweep does not have.")
 
 
 # -----------------------------------------------------------------------------
 # Members
 # -----------------------------------------------------------------------------
-def member_parameters():
-    """log k, log D, log sensitivity = twin + log_sd (z_centre + z_member); z_centre drawn first, once."""
-    rng = np.random.default_rng(COHORT_DESIGN["parameter_seed"])
+def member_parameters(cohort=COHORT_DESIGN):
+    """log k, log D, log sensitivity = twin + log_sd (z_centre + z_member); z_centre drawn first, once. The draws
+    are sequential, so a larger cohort from the same seed starts with the smaller one's members."""
+    rng = np.random.default_rng(cohort["parameter_seed"])
     centre_z = rng.standard_normal(len(PARAMETERS))
-    member_z = rng.standard_normal((COHORT_DESIGN["members"], len(PARAMETERS)))
+    member_z = rng.standard_normal((cohort["members"], len(PARAMETERS)))
     twin = np.log([TUTORIAL_TWIN[name] for name in PARAMETERS])
-    values = np.exp(twin + COHORT_DESIGN["log_sd"] * (centre_z + member_z))
+    values = np.exp(twin + cohort["log_sd"] * (centre_z + member_z))
     return {"order": PARAMETERS, "centre_z": centre_z, "member_z": member_z, "values": values,
-            "centre": np.exp(twin + COHORT_DESIGN["log_sd"] * centre_z),
+            "centre": np.exp(twin + cohort["log_sd"] * centre_z),
             # The target relative to the population, in population standard deviations.
             "target_z": -centre_z}
 
 
-def dose_factors(member):
-    """Fraction of the planned dose given at each weekly dose: one held (0), then the reduced fraction."""
+def dose_factors(member, cohort=COHORT_DESIGN):
+    """Fraction of the planned dose given at each weekly dose: one held (0), then the reduced fraction. In the size
+    sweep member m has member (m mod dose_modification_cycle)'s modification."""
+    listed = member % cohort["dose_modification_cycle"] if "dose_modification_cycle" in cohort else member
     factors = np.ones(len(PATIENT_DOSE_DAYS))
-    for who, held, fraction in COHORT_DESIGN["dose_modifications"]:
-        if who == member:
+    for who, held, fraction in cohort["dose_modifications"]:
+        if who == listed:
             factors[held] = 0.
             factors[held + 1:] = fraction
     return factors
 
 
-def scan_days(member, protocol):
+def scan_days(member, protocol, cohort=COHORT_DESIGN):
     """A scan every stride days, from member mod stride days after the first scan day to the last."""
-    stride = COHORT_DESIGN["strides"][protocol]
-    start, end = COHORT_DESIGN["span"]
+    stride = cohort["strides"][protocol]
+    start, end = cohort["span"]
     first = start + member % int(stride)
     return first + stride * np.arange(int((end - first) // stride) + 1)
 
@@ -176,22 +188,16 @@ def _scan(clean, tissue, shape, spacing, rng):
                    "scan_relative_error_percent": 100 * float(np.linalg.norm(scans - clean) / np.linalg.norm(clean))}
 
 
-def build(log=print):
-    """Simulate, scan and pool the cohort (both protocols), with the clone and input checks; cached."""
-    if record_path().exists():
-        return bd.read_json(record_path())
-    started = time.monotonic()
+def _checked_target(log):
+    """The target's cached history and grid, once the member solver with the twin's parameters and the planned
+    course reproduces that history and the member inputs reproduce the target's exposure table."""
     target = CASES[next(iter(COHORT_SOURCES))]
-    for name in COHORT_CASES:
-        check_target(CASES[name])
     history, geometry = bd.chemo_history(target, log)
-    tissue = np.asarray(geometry["breast_mask"], dtype=bool).reshape(-1)
-    shape = tuple(int(n) for n in geometry["grid_shape"])
-    volume = float(np.prod(geometry["spacing"]))
-    initial = np.asarray(history[:, 0]).reshape(shape)
     days = np.arange(1., COHORT_DESIGN["span"][1] + 1.)
     if not np.array_equal(bd.SOURCE_KNOTS[2 * days.astype(int)], days):
         raise RuntimeError("The cached history's knots are not on half days.")
+    shape = tuple(int(n) for n in geometry["grid_shape"])
+    initial = np.asarray(history[:, 0]).reshape(shape)
 
     log("Clone check: the member solver with the twin's parameters and the planned course ...")
     clone = solve_member([TUTORIAL_TWIN[name] for name in PARAMETERS], np.ones(len(PATIENT_DOSE_DAYS)), initial, days)
@@ -211,6 +217,22 @@ def build(log=print):
                    "max_value": float(np.abs(reference["input_values"]).max())}
     if input_check["max_abs_difference"] > 1e-9 * input_check["max_value"]:
         raise RuntimeError(f"The member inputs do not reproduce the target's exposure table: {input_check}")
+    return {"geometry": geometry, "tissue": np.asarray(geometry["breast_mask"], dtype=bool).reshape(-1),
+            "shape": shape, "volume": float(np.prod(geometry["spacing"])), "initial": initial, "days": days,
+            "input_times": times, "clone_check": clone_check, "input_check": input_check}
+
+
+def build(log=print):
+    """Simulate, scan and pool the cohort (both protocols), with the clone and input checks; cached."""
+    if record_path().exists():
+        return bd.read_json(record_path())
+    started = time.monotonic()
+    for name in COHORT_CASES:
+        check_target(CASES[name])
+    checked = _checked_target(log)
+    geometry, tissue, shape, volume = (checked[key] for key in ("geometry", "tissue", "shape", "volume"))
+    initial, days, times = checked["initial"], checked["days"], checked["input_times"]
+    clone_check, input_check = checked["clone_check"], checked["input_check"]
 
     parameters = member_parameters()
     protocols = COHORT_DESIGN["strides"]
@@ -303,6 +325,8 @@ def _built():
 def cohort_basis(case, pod):
     """The cohort basis for a target case: decoder (first pod.rank modes), zero shift and its record."""
     check_target(case)
+    if case.cohort_size:
+        return _sweep_basis(case, pod)
     record = _built()
     stored = record["protocols"][case.cohort]
     if pod.rank > COHORT_DESIGN["rank"] or pod.centering != "none":
@@ -325,6 +349,262 @@ def load_members(protocol, rank):
              "clean_q": arrays[f"{protocol}_m{member}_clean_q"][:rank], "input_times": arrays["input_times"],
              "input_values": arrays[f"m{member}_input_values"], "dose_factors": dose_factors(member)}
             for member in range(len(record["members"]))]
+
+
+# -----------------------------------------------------------------------------
+# Cohort-size sweep
+# -----------------------------------------------------------------------------
+GRAM_COLUMNS = 8192  # voxels per block when the scans' Gram matrix is accumulated
+
+
+def sweep_design():
+    """Everything the sweep's members, scans and bases depend on: the declared cohort's design with the sweep's."""
+    return {**design(), "cohort_design": COHORT_SWEEP_DESIGN}
+
+
+def sweep_fingerprint():
+    return hashlib.sha256(json.dumps(bd.json_value(sweep_design()), sort_keys=True).encode()).hexdigest()
+
+
+def _sweep_stem():
+    return bd.CACHE / f"cohort_sweep_{sweep_fingerprint()[:12]}"
+
+
+def sweep_record_path():
+    return _sweep_stem().with_suffix(".json")
+
+
+def sweep_basis_path(size):
+    return Path(f"{_sweep_stem()}_K{size}_basis.npz")
+
+
+def sweep_members_path():
+    return Path(f"{_sweep_stem()}_members.npz")
+
+
+def _gram_basis(scans, eigenvalues, vectors, rank):
+    """``bd.observed_pod``'s uncentred decoder from the scans' Gram matrix eigenpairs (descending): the scans
+    (sparse rows) times the leading eigenvectors over the singular values, orthonormalised, fixed column sign."""
+    kept = eigenvalues[:rank]
+    if len(kept) < rank or not np.isfinite(kept).all() or np.any(kept <= 1e-12 * eigenvalues[0]):
+        raise ValueError("Declared POD rank is numerically unresolved; refusing to reduce it silently.")
+    weights = np.zeros((scans.shape[0], rank))
+    weights[:len(vectors)] = vectors[:, :rank] / np.sqrt(kept)  # later scans (larger cohorts) get zero weight
+    D, _ = np.linalg.qr(np.asarray(scans.T @ weights), mode="reduced")
+    D *= np.sign(D[np.argmax(abs(D), axis=0), np.arange(rank)])[None]
+    return D
+
+
+def build_sweep(log=print):
+    """The cohort-size sweep: 64 members (the declared cohort's draw continued), their noisy weekly scans, one
+    basis per cohort size from the first K members' scans, and every member's reduced noisy scans and clean
+    coefficients on each basis it belongs to; cached. Members 0-7 are checked against the declared cohort."""
+    if sweep_record_path().exists():
+        return bd.read_json(sweep_record_path())
+    import scipy.sparse
+    started = time.monotonic()
+    sweep = COHORT_SWEEP_DESIGN
+    (protocol, stride), = sweep["strides"].items()
+    sizes, rank, first = tuple(sweep["sizes"]), sweep["rank"], COHORT_DESIGN["members"]
+    if first not in sizes or max(sizes) != sweep["members"]:
+        raise ValueError("The sweep must contain the declared cohort's size and use all its members.")
+    for name in COHORT_SWEEP_CASES:
+        check_target(CASES[name])
+    declared = _built()
+    checked = _checked_target(log)
+    geometry, tissue, shape, volume = (checked[key] for key in ("geometry", "tissue", "shape", "volume"))
+    initial, days, times = checked["initial"], checked["days"], checked["input_times"]
+
+    parameters = member_parameters(sweep)
+    indices, values, members = [], [], []
+    for member in range(sweep["members"]):
+        factors = dose_factors(member, sweep)
+        taken = scan_days(member, protocol, sweep)
+        log(f"Member {member}: k, D, sensitivity = {np.round(parameters['values'][member], 4).tolist()}, "
+            f"doses {factors.tolist()} ({time.monotonic() - started:.0f} s)")
+        tick = time.monotonic()
+        fields = solve_member(parameters["values"][member], factors, initial, days)
+        clean = fields[taken.astype(int) - 1]
+        record = {"member": member, "parameters": dict(zip(PARAMETERS, parameters["values"][member])),
+                  "z": parameters["member_z"][member] + parameters["centre_z"], "dose_factors": factors,
+                  "solve_seconds": time.monotonic() - tick,
+                  "burden_day": {f"{day:g}": volume * float(fields[int(day) - 1].sum()) for day in (5, 35, 57, 84, 119)},
+                  "clean_scans_sha256": hashlib.sha256(np.ascontiguousarray(clean).tobytes()).hexdigest()}
+        del fields
+        rng = np.random.default_rng([sweep["parameter_seed"], member, int(stride)])
+        noisy, acquisition = _scan(clean.astype(float), tissue, shape, geometry["spacing"], rng)
+        record[protocol] = {"scan_days": taken, **acquisition}
+        for scan in noisy:
+            # A segmented scan is zero outside its lesion: keep its nonzero voxels only.
+            support = np.flatnonzero(scan)
+            indices.append(support.astype(np.int32))
+            values.append(scan[support])
+        members.append(record)
+        del clean, noisy
+
+    counts = [len(support) for support in indices]
+    scans = scipy.sparse.csr_matrix((np.concatenate(values), np.concatenate(indices), np.r_[0, np.cumsum(counts)]),
+                                    shape=(len(counts), len(tissue)))
+    del indices, values
+    log(f"Gram matrix of {scans.shape[0]} scans ({scans.nnz} nonzero voxels) ...")
+    columns = scans.tocsc()
+    support = np.flatnonzero(np.diff(columns.indptr))
+    gram = np.zeros((scans.shape[0], scans.shape[0]))
+    for start in range(0, len(support), GRAM_COLUMNS):
+        block = columns[:, support[start:start + GRAM_COLUMNS]].toarray()
+        gram += block @ block.T
+        del block
+    del columns
+    rows = np.r_[0, np.cumsum([len(record[protocol]["scan_days"]) for record in members])]
+
+    bases, size_records = {}, {}
+    for size in sizes:
+        count = int(rows[size])
+        eigenvalues, vectors = np.linalg.eigh(gram[:count, :count])
+        order = np.argsort(eigenvalues)[::-1]
+        eigenvalues, vectors = eigenvalues[order], vectors[:, order]
+        D = _gram_basis(scans, eigenvalues, vectors, rank)
+        nested = float(np.abs(_gram_basis(scans, eigenvalues, vectors, rank - 1) - D[:, :rank - 1]).max())
+        if nested > 1e-8:
+            raise RuntimeError(f"The rank-{rank - 1} K={size} basis is not the first columns of rank {rank}: {nested}")
+        singular_values = np.sqrt(np.maximum(eigenvalues, 0.))
+        noise_sd = max(record[protocol]["noise_sd"] for record in members[:size])
+        lesion_voxels = [n for record in members[:size] for n in record[protocol]["lesion_voxels"]]
+        threshold = bd.noise_threshold(noise_sd, lesion_voxels)
+        resolved = int(np.sum(singular_values > threshold))
+        if rank > resolved:
+            raise ValueError(f"The first {size} members' scans resolve only {resolved} modes above the noise "
+                             f"threshold {threshold:.3g}; the declared rank is {rank}.")
+        bd.write_npz(sweep_basis_path(size), physical_matrix=D, physical_shift=np.zeros(len(D)),
+                     singular_values=singular_values)
+        energy = singular_values**2
+        bases[size] = D
+        size_records[str(size)] = {
+            "members": size, "scans": count, "singular_values": singular_values[:12],
+            "singular_value_threshold": threshold, "modes_above_threshold": resolved,
+            "threshold_rule": "Gavish-Donoho, the largest member noise level, n = mean lesion voxels of all scans",
+            "cumulative_energy": (np.cumsum(energy) / energy.sum())[:6], "nested_rank_max_abs_difference": nested,
+            "basis_nonzero_voxels": int(np.sum(np.any(D != 0., axis=1)))}
+        log(f"  K={size}: {count} scans, {resolved} modes above the threshold, singular values "
+            f"{np.round(singular_values[:rank + 2], 1).tolist()}")
+    del gram
+
+    arrays = {"input_times": times}
+    for member, record in enumerate(members):
+        own = scans[rows[member]:rows[member + 1]]
+        scan_energy = float(np.sum(own.data**2))
+        arrays[f"m{member}_t"] = record[protocol]["scan_days"]
+        arrays[f"m{member}_input_values"] = input_table(record["dose_factors"])[1]
+        record[protocol]["captured_scan_energy"] = {}
+        for size in sizes:
+            if member < size:
+                y = np.asarray(own @ bases[size]).T
+                arrays[f"K{size}_m{member}_y"] = y
+                record[protocol]["captured_scan_energy"][str(size)] = float(np.sum(y**2) / scan_energy)
+    del scans
+
+    log("Second pass: the members' clean fields again, for their clean coefficients ...")
+    for member, record in enumerate(members):
+        log(f"  member {member} ({time.monotonic() - started:.0f} s)")
+        fields = solve_member(parameters["values"][member], record["dose_factors"], initial, days)
+        clean = fields[record[protocol]["scan_days"].astype(int) - 1]
+        del fields
+        if hashlib.sha256(np.ascontiguousarray(clean).tobytes()).hexdigest() != record["clean_scans_sha256"]:
+            raise RuntimeError(f"Member {member}'s clean fields changed between the two passes.")
+        clean = clean.astype(float)
+        clean_energy = float(np.sum(clean**2))
+        record[protocol]["captured_clean_energy"] = {}
+        for size in sizes:
+            if member < size:
+                clean_q = bases[size].T @ clean.T
+                arrays[f"K{size}_m{member}_clean_q"] = clean_q
+                record[protocol]["captured_clean_energy"][str(size)] = float(np.sum(clean_q**2) / clean_energy)
+        del clean
+
+    # Members 0-7 are the declared cohort's: same draws, doses, scan days and scans; K=8 is its basis.
+    declared_parameters = member_parameters()
+    declared_arrays = bd.read_npz(members_path())
+    declared_basis = bd.read_npz(basis_path(protocol))["physical_matrix"]
+
+    def largest(key, sweep_key):
+        return max(float(np.abs(arrays[sweep_key.format(m=m)] - declared_arrays[key.format(m=m)]).max())
+                   for m in range(first))
+
+    declared_check = {
+        "members": first, "declared_design_fingerprint": declared["design_fingerprint"],
+        "parameters_equal": bool(np.array_equal(parameters["values"][:first], declared_parameters["values"])
+                                 and np.array_equal(parameters["centre_z"], declared_parameters["centre_z"])),
+        "dose_factors_equal": all(np.array_equal(dose_factors(m, sweep), dose_factors(m)) for m in range(first)),
+        "scan_days_equal": all(np.array_equal(scan_days(m, protocol, sweep), scan_days(m, protocol))
+                               for m in range(first)),
+        "acquisitions_equal": all(
+            members[m][protocol][key] == declared["members"][m][protocol][key]
+            for m in range(first) for key in ("noise_sd", "lesion_voxels", "false_positive_voxels")),
+        "basis_max_abs_difference": float(np.abs(bases[first] - declared_basis).max()),
+        "reduced_scans_max_abs_difference": largest(f"{protocol}_m{{m}}_y", f"K{first}_m{{m}}_y"),
+        "clean_coefficients_max_abs_difference": largest(f"{protocol}_m{{m}}_clean_q", f"K{first}_m{{m}}_clean_q"),
+        "reduced_scans_max_abs": max(float(np.abs(declared_arrays[f"{protocol}_m{m}_y"]).max()) for m in range(first)),
+        "rule": "the K=8 basis is computed from the Gram matrix of sparse scans, the declared one from dense scans: "
+                "equal up to rounding"}
+    if not all(declared_check[key] for key in ("parameters_equal", "dose_factors_equal", "scan_days_equal",
+                                                "acquisitions_equal")) or declared_check["basis_max_abs_difference"] > 1e-8:
+        raise RuntimeError(f"The sweep's first {first} members are not the declared cohort: {declared_check}")
+    if declared_check["reduced_scans_max_abs_difference"] > 1e-8 * declared_check["reduced_scans_max_abs"]:
+        raise RuntimeError(f"The sweep's K={first} reduced scans are not the declared cohort's: {declared_check}")
+    log(f"  declared cohort check: {declared_check}")
+
+    bd.write_npz(sweep_members_path(), **arrays)
+    record = {
+        "design": sweep_design(), "design_fingerprint": sweep_fingerprint(), "protocol": protocol,
+        "population": {key: value for key, value in parameters.items() if key != "values"},
+        "members": members, "sizes": size_records, "declared_cohort_check": declared_check,
+        "clone_check": checked["clone_check"], "input_check": checked["input_check"],
+        "determinism": {"clean_scans_equal_in_both_passes": True, "members": len(members)},
+        "storage": "noisy scans held as sparse rows (nonzero voxels only, float64); Gram matrix accumulated over "
+                   f"{GRAM_COLUMNS}-voxel blocks; clean fields solved again in a second pass",
+        "files": {**{f"K{size}_basis": bd.file_record(sweep_basis_path(size)) for size in sizes},
+                  "members": bd.file_record(sweep_members_path())},
+        "runtime_seconds": time.monotonic() - started}
+    bd.write_json(sweep_record_path(), record)
+    log(f"Cohort-size sweep built in {record['runtime_seconds']:.0f} s: {sweep_record_path()}")
+    return record
+
+
+def _sweep_built():
+    if not sweep_record_path().exists():
+        raise FileNotFoundError(f"The cohort-size sweep is not built ({sweep_record_path()}); run "
+                                "`python benchmark_cohort.py build-sweep` first.")
+    record = bd.read_json(sweep_record_path())
+    if record["design_fingerprint"] != sweep_fingerprint():
+        raise RuntimeError("The cached cohort-size sweep was built from a different design.")
+    for name, expected in record["files"].items():
+        if bd.digest(expected["path"]) != expected["sha256"]:
+            raise RuntimeError(f"The sweep file {expected['path']} changed after it was built.")
+    return record
+
+
+def _sweep_basis(case, pod):
+    record = _sweep_built()
+    size = case.cohort_size
+    stored = record["sizes"][str(size)]
+    if pod.rank > COHORT_SWEEP_DESIGN["rank"] or pod.centering != "none":
+        raise ValueError(f"The sweep bases are uncentred, at most rank {COHORT_SWEEP_DESIGN['rank']}.")
+    D = bd.read_npz(sweep_basis_path(size))["physical_matrix"][:, :pod.rank]
+    return D, np.zeros(len(D)), {
+        **record["files"][f"K{size}_basis"], "protocol": case.cohort, "cohort_size": size, "rank_used": pod.rank,
+        "stored_rank": COHORT_SWEEP_DESIGN["rank"], "design_fingerprint": record["design_fingerprint"],
+        "pooled_scans": stored["scans"], "modes_above_threshold": stored["modes_above_threshold"],
+        "singular_value_threshold": stored["singular_value_threshold"]}
+
+
+def load_sweep_members(size, rank):
+    """The first size members of the sweep on the size-K basis (as load_members)."""
+    _sweep_built()
+    arrays = bd.read_npz(sweep_members_path())
+    return [{"t_sampled": arrays[f"m{member}_t"], "y": arrays[f"K{size}_m{member}_y"][:rank],
+             "clean_q": arrays[f"K{size}_m{member}_clean_q"][:rank], "input_times": arrays["input_times"],
+             "input_values": arrays[f"m{member}_input_values"],
+             "dose_factors": dose_factors(member, COHORT_SWEEP_DESIGN)} for member in range(size)]
 
 
 # -----------------------------------------------------------------------------
@@ -492,6 +772,14 @@ def pooled_record(case, pod=None):
     check_target(case)
     if case.operator_prior_mean != "pooled":
         raise ValueError(f"{case.name} is not a partial-pooling case.")
+    if case.cohort_size:
+        record, count = _sweep_built(), case.cohort_size
+        return {"protocol": case.cohort, "rank": pod.rank, "members": count, "cohort_size": count,
+                "design_fingerprint": record["design_fingerprint"],
+                "members_sha256": record["files"]["members"]["sha256"],
+                "cohort_basis_sha256": record["files"][f"K{count}_basis"]["sha256"],
+                "solver": COHORT_SWEEP_DESIGN["pooled_solver"],
+                "trajectory_order": f"this acquisition first (index 0), then members 0-{count - 1} (indices 1-{count})"}
     record = _built()
     count = len(record["members"])
     return {"protocol": case.cohort, "rank": pod.rank, "members": count,
@@ -507,7 +795,9 @@ def pooled_trajectories(case, pod, cfg, metadata, record):
         raise RuntimeError("The cohort changed since this fit was requested.")
     if metadata["sources"]["basis"]["sha256"] != record["cohort_basis_sha256"]:
         raise ValueError("This acquisition was projected onto a different basis than the cohort's.")
-    return [_trajectory(member, cfg) for member in load_members(case.cohort, pod.rank)]
+    members = (load_sweep_members(case.cohort_size, pod.rank) if case.cohort_size
+               else load_members(case.cohort, pod.rank))
+    return [_trajectory(member, cfg) for member in members]
 
 
 def main(argv=None):
@@ -518,9 +808,12 @@ def main(argv=None):
     fit.add_argument("case", choices=COHORT_CASES)
     fit.add_argument("--steps", type=int, help="SVI updates (default: the production recipe's).")
     fit.add_argument("--output-root", type=Path, help=f"Results root (default: {bd.RESULTS}).")
+    commands.add_parser("build-sweep", help="Build the cohort-size sweep's members and bases (cached).")
     args = parser.parse_args(argv)
     if args.command == "build":
         build()
+    elif args.command == "build-sweep":
+        build_sweep()
     else:
         fit_cohort(get_case(args.case), root=args.output_root, steps=args.steps)
 

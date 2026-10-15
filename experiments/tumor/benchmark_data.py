@@ -34,9 +34,9 @@ for _path in (str(ROOT), str(SCRIPT_DIR)):
         sys.path.insert(0, _path)
 
 from benchmark_cases import (  # noqa: E402
-    CASES, COHORT_CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION, OBSERVATION_MODELS,
-    REPORTED_CASES, LEARNED_TREND_CASES, SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, BenchmarkCase, PODSettings, describe,
-    get_case)
+    CASES, COHORT_CASES, COHORT_SWEEP_CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION,
+    OBSERVATION_MODELS, REPORTED_CASES, LEARNED_TREND_CASES, SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, BenchmarkCase,
+    PODSettings, describe, get_case)
 
 TUMORTWIN = ROOT.parent / "TumorTwin"
 PATIENT = "TNBC_demo_001"
@@ -75,6 +75,8 @@ DEFAULT_SEEDS = {
     # Population prior and partial pooling: likewise (seed 45 only for smoke runs; the cohort is built from its own
     # simulations).
     **{name: (48, 49, 50) for name in COHORT_CASES},
+    # Cohort-size sweep: acquisition 48 only (seeds differ only in scanner noise; seed 45 only for smoke runs).
+    **{name: (48,) for name in COHORT_SWEEP_CASES},
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048

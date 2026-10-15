@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import benchmark_cohort as bc  # noqa: E402
 import benchmark_data as bd  # noqa: E402
-from benchmark_cases import (CASES, COHORT_CASES, COHORT_DESIGN, PATIENT_DOSE_DAYS, TUTORIAL_TWIN,  # noqa: E402
-                             production_config)
+from benchmark_cases import (CASES, COHORT_CASES, COHORT_DESIGN, COHORT_SWEEP_CASES, COHORT_SWEEP_DESIGN,  # noqa: E402
+                             PATIENT_DOSE_DAYS, TUTORIAL_TWIN, PODSettings, describe, production_config)
 
 
 class CohortDesignTests(unittest.TestCase):
@@ -168,6 +168,105 @@ class CohortDesignTests(unittest.TestCase):
         np.testing.assert_allclose(arrays["mean_lengthscale"], mean[0], rtol=1e-6)
         expected = _ic_sigma(t, *(value[0] for value in mean), r, roundoff_nugget=True)
         np.testing.assert_allclose(initial["sigma"], expected, rtol=1e-5)
+
+
+SWEEP_SOURCE = "midcourse-reduced-trend-chemo-weekly-scans-learned-trend"
+
+
+class CohortSweepTests(unittest.TestCase):
+    def test_sweep_continues_the_declared_cohort(self):
+        """Members 0-7 of the sweep are the declared cohort's; later members repeat its dose modifications."""
+        declared, sweep = bc.member_parameters(), bc.member_parameters(COHORT_SWEEP_DESIGN)
+        self.assertEqual(sweep["values"].shape, (64, 3))
+        np.testing.assert_array_equal(sweep["values"][:8], declared["values"])
+        np.testing.assert_array_equal(sweep["centre_z"], declared["centre_z"])
+        for member in range(64):
+            np.testing.assert_array_equal(bc.dose_factors(member, COHORT_SWEEP_DESIGN), bc.dose_factors(member % 8))
+            np.testing.assert_array_equal(bc.scan_days(member, "weekly", COHORT_SWEEP_DESIGN),
+                                          bc.scan_days(member % 7, "weekly"))
+        modified = {size: sum(np.any(bc.dose_factors(m, COHORT_SWEEP_DESIGN) != 1.) for m in range(size))
+                    for size in COHORT_SWEEP_DESIGN["sizes"]}
+        self.assertEqual(modified, {4: 1, 8: 3, 16: 6, 32: 12, 64: 24})
+        self.assertNotEqual(bc.sweep_fingerprint(), bc.design_fingerprint())
+        self.assertEqual(bc.sweep_design()["cohort_design"], COHORT_SWEEP_DESIGN)
+        self.assertIn("cohort_sweep_", bc.sweep_basis_path(16).name)
+        self.assertTrue(bc.sweep_basis_path(16).name.endswith("_K16_basis.npz"))
+
+    def test_sweep_cases(self):
+        self.assertEqual(len(COHORT_SWEEP_CASES), 2 * len(COHORT_SWEEP_DESIGN["sizes"]))
+        fingerprints = set()
+        for name in COHORT_SWEEP_CASES:
+            case = CASES[name]
+            bc.check_target(case)
+            self.assertEqual((case.cohort, case.pod.source, case.pod.rank, case.pod.centering),
+                             ("weekly", "cohort_training", 4, "none"))
+            self.assertEqual(case.operator_prior_mean, "pooled" if name.endswith("-pooled") else "zero")
+            self.assertIn(f"-cohort{case.cohort_size}-", name)
+            recipe = describe(case)
+            self.assertEqual((recipe["cohort_size"], recipe["cohort_design"]), (case.cohort_size, COHORT_SWEEP_DESIGN))
+            fingerprints.add(recipe["recipe_fingerprint"])
+        self.assertEqual(len(fingerprints), len(COHORT_SWEEP_CASES))
+        self.assertNotIn("cohort_size", describe(CASES[SWEEP_SOURCE + "-cohort-pooled"]))
+        from dataclasses import replace
+        pooled = CASES[SWEEP_SOURCE + "-cohort16-pooled"]
+        for change in (dict(cohort_size=5), dict(cohort_size=True), dict(cohort="every8"),
+                       dict(operator_prior_mean="cohort"), dict(pod=replace(pooled.pod, rank=5))):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                replace(pooled, **change)
+
+    def test_gram_basis_is_observed_pod(self):
+        """The method of snapshots on sparse scans gives observed_pod's uncentred decoder, also for the first rows
+        of a larger scan matrix (a smaller cohort)."""
+        import scipy.sparse
+        rng = np.random.default_rng(3)
+        dense = rng.normal(size=(30, 400)) * (rng.uniform(size=(30, 400)) < .3)
+        dense[:, :40] = 0.
+        dense += np.outer(np.linspace(1., 3., 30), np.r_[np.zeros(40), np.sin(np.arange(360) / 9.)])
+        scans = scipy.sparse.csr_matrix(dense)
+        for count in (12, 30):
+            gram = dense[:count] @ dense[:count].T
+            eigenvalues, vectors = np.linalg.eigh(gram)
+            order = np.argsort(eigenvalues)[::-1]
+            D = bc._gram_basis(scans, eigenvalues[order], vectors[:, order], 4)
+            expected, shift, _ = bd.observed_pod(dense[:count], PODSettings(4, "cohort_training", "none"))
+            np.testing.assert_allclose(D, expected, atol=1e-10)
+            np.testing.assert_array_equal(shift, 0.)
+        with self.assertRaises(ValueError):
+            bc._gram_basis(scans, np.r_[1., 0., 0.], np.eye(3), 2)
+
+    def test_sweep_cases_use_their_own_cohort(self):
+        case = CASES[SWEEP_SOURCE + "-cohort16-pooled"]
+        built = {"design_fingerprint": "f" * 64, "files": {"members": {"sha256": "m", "path": "members.npz"},
+                                                            "K16_basis": {"sha256": "abc", "path": "K16.npz"},
+                                                            "K8_basis": {"sha256": "xyz", "path": "K8.npz"}},
+                 "sizes": {"16": {"scans": 263, "modes_above_threshold": 9, "singular_value_threshold": 1.5}}}
+        times = np.linspace(5., 119., 60)
+        members = [{"t_sampled": 5. + 7. * np.arange(17), "y": np.full((4, 17), float(k)), "input_times": times,
+                    "input_values": np.exp(-times / (k + 10.))} for k in range(16)]
+        cfg = production_config(case)
+        stored = np.arange(40.).reshape(10, 4)
+        with mock.patch.object(bc, "_sweep_built", return_value=built), \
+                mock.patch.object(bc, "_built", side_effect=AssertionError("the declared cohort was used")), \
+                mock.patch.object(bc, "load_sweep_members", return_value=members) as load, \
+                mock.patch.object(bd, "read_npz", return_value={"physical_matrix": stored}) as read:
+            record = bc.pooled_record(case)
+            self.assertEqual((record["members"], record["cohort_size"], record["cohort_basis_sha256"],
+                              record["solver"], record["members_sha256"]), (16, 16, "abc", "blocked", "m"))
+            trajectories = bc.pooled_trajectories(case, case.pod, cfg, {"sources": {"basis": {"sha256": "abc"}}},
+                                                  record)
+            load.assert_called_once_with(16, 4)
+            self.assertEqual(len(trajectories), 16)
+            D, shift, basis = bc.cohort_basis(case, case.pod)
+            read.assert_called_once_with(bc.sweep_basis_path(16))
+            np.testing.assert_array_equal(D, stored)
+            np.testing.assert_array_equal(shift, 0.)
+            self.assertEqual((basis["path"], basis["cohort_size"], basis["pooled_scans"]), ("K16.npz", 16, 263))
+        # The declared cohort's pooled record keeps its keys (its fits' recorded requests still match).
+        declared = {"members": [{}] * 8, "files": {"members": {"sha256": "m"}, "weekly_basis": {"sha256": "abc"}}}
+        with mock.patch.object(bc, "_built", return_value=declared):
+            record = bc.pooled_record(CASES[SWEEP_SOURCE + "-cohort-pooled"])
+        self.assertEqual(set(record), {"protocol", "rank", "members", "members_sha256", "cohort_basis_sha256",
+                                       "trajectory_order"})
 
 
 if __name__ == "__main__":

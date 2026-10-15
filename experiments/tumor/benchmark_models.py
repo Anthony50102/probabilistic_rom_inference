@@ -261,8 +261,10 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         # Partial pooling: the members' scans join this acquisition's (index 0), each with its own operator.
         trajectories += benchmark_cohort.pooled_trajectories(case, pod, cfg, data["metadata"],
                                                              cohort_prior["pooled_cohort"])
-    model, conditional, _, priors = build_model(rom, trajectories, cfg, row_maps=row_maps, prior_mean=prior_mean,
-                                                pooled=pooled)
+    model, conditional, _, priors = build_model(
+        rom, trajectories, cfg, row_maps=row_maps, prior_mean=prior_mean, pooled=pooled,
+        # The cohort-size sweep's records name the blocked solver; the declared cohort's fits used the stacked one.
+        pooled_solver=cohort_prior["pooled_cohort"].get("solver", "stacked") if pooled else "stacked")
     gamma2 = priors["gamma2"]
     guide, svi, state, losses, posterior_key, operator_key = _run_svi(model, cfg, total, folder, gamma2, {
         "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,

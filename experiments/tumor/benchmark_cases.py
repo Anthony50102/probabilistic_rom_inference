@@ -63,6 +63,12 @@ together with the cohort's scans, each patient with its own operator around a
 shared population operator, and learns how far patients' operators spread
 around it (partial pooling, ``operator_prior_mean="pooled"``).
 
+The cohort-size sweep (``COHORT_SWEEP_CASES``) repeats the weekly day-84 case
+with the first K = 4, 8, 16, 32 or 64 past patients of a 64-member cohort
+(``COHORT_SWEEP_DESIGN``; members 0-7 are the declared cohort's): their weekly
+scans give the basis, and ``*-cohort{K}-pooled`` fits the acquisition jointly
+with them (blocked partial-pooling solver), ``*-cohort{K}-basis`` alone.
+
 Observation models
 ------------------
 ``segmented`` (reported): every scan, including the baseline, adds Gaussian
@@ -120,6 +126,20 @@ COHORT_DESIGN = {
     "rank": 4,
     "input_sensitivity": TUTORIAL_TWIN["sensitivity"],
 }
+# Cohort-size sweep (TUMOR_TUTORIAL_SCHEDULE_CHEMO.md, "More past patients"), declared before any fit: the declared
+# cohort's draw continued to 64 members, weekly protocol only. Members 0-7 are COHORT_DESIGN's (same parameters, doses,
+# scan days and scan noise); member m has member (m mod 8)'s dose modification, so every block of eight has the
+# declared mix. The first K members (K in sizes) are the past patients of the cohort-K cases and their pooled noisy
+# weekly scans give the cohort-K basis. Partial pooling uses the blocked solver (core build_model pooled_solver).
+COHORT_SWEEP_DESIGN = {
+    **{key: COHORT_DESIGN[key] for key in ("parameter_seed", "log_sd", "dose_modifications", "span", "rank",
+                                           "input_sensitivity")},
+    "members": 64,
+    "strides": {"weekly": 7.},
+    "dose_modification_cycle": 8,
+    "sizes": (4, 8, 16, 32, 64),
+    "pooled_solver": "blocked",
+}
 OPERATOR_PRIOR_MEANS = ("zero", "cohort", "pooled")
 # Reduced-model structure: the operators a structured chemo ROM is fitted with (see benchmark_models.galerkin_row_maps).
 STRUCTURES = ("free", "galerkin", "galerkin_logistic")
@@ -174,6 +194,9 @@ class BenchmarkCase:
     # Centre of the operator prior: zero, the population operator fitted to the cohort's scans ("cohort"), or a
     # population operator learned jointly with the cohort members' own operators ("pooled": partial pooling).
     operator_prior_mean: str = "zero"
+    # Number of past patients from the cohort-size sweep (COHORT_SWEEP_DESIGN; their scans also give the basis);
+    # 0: the declared eight-member cohort (COHORT_DESIGN).
+    cohort_size: int = 0
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
@@ -197,12 +220,22 @@ class BenchmarkCase:
                                 and self.pod.rank <= COHORT_DESIGN["rank"]):
             raise ValueError("A cohort basis is the uncentred POD of segmented chemotherapy scans, "
                              f"at most rank {COHORT_DESIGN['rank']}.")
+        if isinstance(self.cohort_size, bool) or not isinstance(self.cohort_size, int):
+            raise ValueError("cohort_size is a whole number of past patients.")
+        if self.cohort_size and not (self.cohort in COHORT_SWEEP_DESIGN["strides"]
+                                     and self.cohort_size in COHORT_SWEEP_DESIGN["sizes"]
+                                     and self.pod.rank <= COHORT_SWEEP_DESIGN["rank"]):
+            raise ValueError(f"The cohort-size sweep has {COHORT_SWEEP_DESIGN['sizes']} past patients on the "
+                             f"{tuple(COHORT_SWEEP_DESIGN['strides'])} protocol, at most rank "
+                             f"{COHORT_SWEEP_DESIGN['rank']}.")
         if self.operator_prior_mean not in OPERATOR_PRIOR_MEANS:
             raise ValueError(f"Unknown operator prior mean: {self.operator_prior_mean}")
         if self.operator_prior_mean != "zero" and not (self.cohort and self.structure == "free"):
             raise ValueError("The population operator prior needs a cohort basis and the free ROM.")
         if self.operator_prior_mean == "pooled" and self.gp_noise_prior != "spectrum":
             raise ValueError("Partial pooling uses the spectrum noise prior (the cohort has no measurement record).")
+        if self.cohort_size and self.operator_prior_mean == "cohort":
+            raise ValueError("The cohort-size sweep has no population-operator fit; use zero or pooled.")
         if self.structure not in STRUCTURES:
             raise ValueError(f"Unknown reduced-model structure: {self.structure}")
         if self.structure != "free" and not (self.dose_days and self.pod.centering == "none"):
@@ -413,6 +446,20 @@ CASES.update({f"{source}-{arm}": replace(
                     "pooled": ("; fitted jointly with the cohort's scans, each patient's operator around a learned "
                                "population operator (partial pooling).")}[mean]))
     for source, protocol in COHORT_SOURCES.items() for arm, mean in COHORT_ARMS.items()})
+# Cohort-size sweep (declared before any fit; COHORT_SWEEP_DESIGN): the weekly day-84 case with the first K past
+# patients of the 64-member cohort, K in COHORT_SWEEP_DESIGN["sizes"]. "-cohort{K}-pooled" fits the acquisition jointly
+# with their scans (partial pooling); "-cohort{K}-basis" is the control, the acquisition alone on the same basis.
+COHORT_SWEEP_SOURCE = "midcourse-reduced-trend-chemo-weekly-scans-learned-trend"
+COHORT_SWEEP_ARMS = {"basis": "zero", "pooled": "pooled"}
+COHORT_SWEEP_CASES = tuple(f"{COHORT_SWEEP_SOURCE}-cohort{size}-{arm}"
+                           for size in COHORT_SWEEP_DESIGN["sizes"] for arm in COHORT_SWEEP_ARMS)
+CASES.update({f"{COHORT_SWEEP_SOURCE}-cohort{size}-{arm}": replace(
+    CASES[COHORT_SWEEP_SOURCE], name=f"{COHORT_SWEEP_SOURCE}-cohort{size}-{arm}", cohort="weekly", cohort_size=size,
+    operator_prior_mean=mean, pod=replace(CASES[COHORT_SWEEP_SOURCE].pod, source="cohort_training"),
+    description=(f"As {COHORT_SWEEP_SOURCE}, on the POD basis of the weekly scans of the first {size} past patients of "
+                 "the cohort-size sweep" + {"zero": " (zero-centred operator prior: the basis alone).",
+                                             "pooled": "; fitted jointly with their scans (partial pooling)."}[mean]))
+    for size in COHORT_SWEEP_DESIGN["sizes"] for arm, mean in COHORT_SWEEP_ARMS.items()})
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
 
@@ -459,6 +506,12 @@ DEFAULT_POD_PROVENANCE = {
                            "within the modes that clear the pooled scans' noise threshold. This acquisition's scans "
                            "are only projected onto it.")
        for source, protocol in COHORT_SOURCES.items() for arm in COHORT_ARMS},
+    **{f"{COHORT_SWEEP_SOURCE}-cohort{size}-{arm}": (
+        f"Uncentred POD of the noisy segmented weekly scans of the first {size} past patients of the cohort-size sweep "
+        f"(days 5-119; benchmark_cohort.py build-sweep), first {CASES[COHORT_SWEEP_SOURCE].pod.rank} modes: "
+        f"{COHORT_SWEEP_SOURCE}'s rank, checked against the pooled scans' noise threshold when the cohort is built. "
+        "This acquisition's scans are only projected onto it.")
+       for size in COHORT_SWEEP_DESIGN["sizes"] for arm in COHORT_SWEEP_ARMS},
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -572,9 +625,12 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
         config.pop("gp_trend_scale")
     if fields["cohort"]:
         # The cohort's declared design is part of the recipe (benchmark_cohort.py builds it from these values).
-        fields["cohort_design"] = COHORT_DESIGN
+        fields["cohort_design"] = COHORT_SWEEP_DESIGN if case.cohort_size else COHORT_DESIGN
     else:
         fields.pop("cohort")
+    if not fields["cohort_size"]:
+        # The declared eight-member cohort's recipes keep their recorded fingerprints.
+        fields.pop("cohort_size")
     if fields["operator_prior_mean"] == "zero":
         fields.pop("operator_prior_mean")
     if legacy:

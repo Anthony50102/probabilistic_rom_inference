@@ -153,10 +153,57 @@ class PartialPoolingTests(unittest.TestCase):
             for cfg in (replace(self.cfg, sigma_O=5.), replace(self.cfg, op_prior_mode="fixed")):
                 with self.assertRaises(ValueError):
                     build_model(_rom(), trajectories, cfg, pooled=True)
-            posterior = build_model(_rom(), trajectories, self.cfg, pooled=True)[1]
-            for which in (2, -1, "target", True):
-                with self.subTest(which=which), self.assertRaises(ValueError):
-                    _posterior(posterior, THETA, self.tau, which=which)
+            for solver in ("stacked", "blocked"):
+                posterior = build_model(_rom(), trajectories, self.cfg, pooled=True, pooled_solver=solver)[1]
+                for which in (2, -1, "target", True):
+                    with self.subTest(solver=solver, which=which), self.assertRaises(ValueError):
+                        _posterior(posterior, THETA, self.tau, which=which)
+            for cfg, kwargs in ((self.cfg, dict(pooled_solver="blocked")),
+                                (self.cfg, dict(pooled=True, pooled_solver="dense")),
+                                (replace(self.cfg, operator_solver="normal"), dict(pooled=True, pooled_solver="blocked"))):
+                with self.subTest(kwargs=kwargs, solver=cfg.operator_solver), self.assertRaises(ValueError):
+                    build_model(_rom(), trajectories, cfg, **kwargs)
+
+    def test_blocked_solver_is_the_stacked_gaussian(self):
+        """The blocked solver (each δ_k eliminated by its own QR, then M) gives the stacked system's evidence, its
+        gradient and every operator's posterior, for one to three trajectories."""
+        import jax
+        from numpyro.infer.util import log_density
+        t2 = np.linspace(1.5, 6.5, 16)
+        trajectories = _trajectories() + [dict(t_sampled=t2, snapshots_comp=np.stack(
+            [.7 * np.sin(.9 * t2) + 2.2, .5 * np.cos(1.1 * t2)]))]
+        theta = THETA + [(np.array([.9, .8]), np.array([1.2, .6]), np.array([2e-3, 1.5e-3]))]
+        with pipeline.precision_context(self.cfg):
+            for count in (1, 2, 3):
+                fitted, hypers = trajectories[:count], theta[:count]
+                built = {solver: build_model(_rom(), fitted, self.cfg, pooled=True, pooled_solver=solver)
+                         for solver in ("stacked", "blocked")}
+                values = {f"{kind}_{ic}_{i}": jnp.asarray(th[j][i]) for ic, th in enumerate(hypers)
+                          for j, kind in enumerate(KINDS) for i in range(2)}
+                values["log_tau_block"] = jnp.log(jnp.asarray(self.tau))
+                density = {solver: log_density(model[0], (), {}, values)[0] for solver, model in built.items()}
+                gradient = {solver: jax.grad(lambda v, m=model[0]: log_density(m, (), {}, v)[0])(values)
+                            for solver, model in built.items()}
+                with self.subTest(trajectories=count, quantity="evidence"):
+                    self.assertAlmostEqual(float(density["blocked"]), float(density["stacked"]),
+                                           delta=1e-9 * abs(float(density["stacked"])))
+                    for name, value in gradient["stacked"].items():
+                        np.testing.assert_allclose(gradient["blocked"][name], value, rtol=1e-7, atol=1e-9)
+                for which in ("mean", *range(count)):
+                    stacked = _posterior(built["stacked"][1], hypers, self.tau, which=which)
+                    blocked = _posterior(built["blocked"][1], hypers, self.tau, which=which)
+                    with self.subTest(trajectories=count, operator=which):
+                        np.testing.assert_allclose(blocked[0], stacked[0], rtol=1e-9, atol=1e-11)
+                        self.assertEqual(blocked[1].shape, stacked[1].shape)
+                        np.testing.assert_allclose(_covariance(blocked[1]), _covariance(stacked[1]),
+                                                   rtol=1e-8, atol=1e-13)
+                self.assertNotIn("solver", built["stacked"][3]["operator_prior"]["pooled"])
+                self.assertIn("blocked", built["blocked"][3]["operator_prior"]["pooled"]["solver"])
+            # As the export draws operators: the posterior inside an outer jit, default trajectory 0.
+            hypers = tuple(jnp.stack([jnp.asarray(th[j]) for th in theta]) for j in range(3))
+            posterior = built["blocked"][1]
+            inside = jax.jit(lambda th, tau: posterior(th, None, None, tau))(hypers, jnp.asarray(self.tau))
+            np.testing.assert_allclose(inside[0], _posterior(posterior, theta, self.tau)[0], rtol=1e-12, atol=1e-14)
 
 
 if __name__ == "__main__":

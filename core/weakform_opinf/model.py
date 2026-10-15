@@ -285,7 +285,7 @@ def power_likelihood_correction(u, alpha):
     return -0.5 * jnp.sum((alpha - 1.0) * jnp.log(2 * jnp.pi * u) + jnp.log(alpha))
 
 
-def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=False):
+def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=False, pooled_solver="stacked"):
     """Build the marginalised-O + weak-form NumPyro model.
 
     Parameters
@@ -327,6 +327,13 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         [M, δ⁽⁰⁾, …, δ⁽ᴷ⁻¹⁾] (trajectory k's design A [I, 0, …, I, …, 0]).
         Needs the nondimensional block-hierarchical prior; not available with
         row maps or a prior mean.
+    pooled_solver : {"stacked", "blocked"}
+        Partial pooling only. "stacked" (default, the first pooled fits): one
+        QR of the stacked system above, whose cost grows with the cube of the
+        number of trajectories. "blocked": the same Gaussian factored with each
+        δ⁽ᵏ⁾ eliminated by a QR of its own trajectory's rows before one QR for
+        M (:func:`evidence.pooled_evidence_qr`), linear in the number of
+        trajectories; equal up to rounding. Needs ``operator_solver='qr'``.
 
     Returns
     -------
@@ -404,6 +411,13 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         return A_D, y_D - mean_O @ A_D.T, S_D, A_W, y_W - mean_O @ A_W.T, S_W
 
     pooled = bool(pooled)
+    if pooled_solver not in ("stacked", "blocked"):
+        raise ValueError(f"pooled_solver must be 'stacked' or 'blocked'; got {pooled_solver!r}")
+    blocked = pooled_solver == "blocked"
+    if blocked and not pooled:
+        raise ValueError("pooled_solver='blocked' is for partial pooling (pooled=True)")
+    if blocked and cfg.operator_solver != "qr":
+        raise ValueError("The blocked partial-pooling solver factors the QR system (operator_solver='qr')")
     m_fit = m_total
     if pooled:
         if not (nondim and cfg.op_prior_mode == "block_hier"):
@@ -416,6 +430,8 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
             rule="partial pooling", trajectories=num_traj, target_trajectory=0,
             operators="O_k = M + delta_k; M ~ N(0, (kappa_M,b s_j)^2), delta_k ~ N(0, (kappa_delta,b s_j)^2)",
             log_tau_block=f"entries 0-{n_blocks - 1}: log kappa_M; {n_blocks}-{2 * n_blocks - 1}: log kappa_delta")
+        if blocked:
+            operator_prior["pooled"]["solver"] = "blocked: each delta_k eliminated by its own QR, then one QR for M"
 
     def _pooled_blocks(traj_blocks):
         """Trajectory k's rows in the stacked unknowns [M, δ⁽⁰⁾, …]: its design A placed as A [I, 0, …, I, …, 0]."""
@@ -432,6 +448,12 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         prec_M, log_cov_M = prior_prec_from_tau(kappa[:n_blocks])
         prec_d, log_cov_d = prior_prec_from_tau(kappa[n_blocks:])
         return jnp.concatenate([prec_M] + [prec_d] * num_traj), log_cov_M + num_traj * log_cov_d
+
+    def _pooled_prior_parts(kappa):
+        """The blocked solver's prior: precision of M, of every δ⁽ᵏ⁾, and log|prior cov| of all of them."""
+        prec_M, log_cov_M = prior_prec_from_tau(kappa[:n_blocks])
+        prec_d, log_cov_d = prior_prec_from_tau(kappa[n_blocks:])
+        return prec_M, prec_d, log_cov_M + num_traj * log_cov_d
 
     def _pooled_selector(which):
         """Map from the stacked unknowns to M (``"mean"``) or to trajectory k's operator M + δ⁽ᵏ⁾."""
@@ -590,6 +612,14 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         if cfg.mll_weight > 0:
             numpyro.factor("gp_mll", cfg.mll_weight * mll_total)
 
+        if pooled and blocked:
+            prec_M, prec_d, log_prior_cov = _pooled_prior_parts(kappa_block)
+            total_evidence = 0.0
+            for i in range(num_modes):
+                total_evidence = total_evidence + _ev.pooled_evidence_qr(
+                    traj_blocks, i, m_total, prec_M, prec_d, log_prior_cov, deriv_is_diag)
+            numpyro.factor("marg_O_evidence", total_evidence + correction)
+            return
         if pooled:
             traj_blocks = _pooled_blocks(traj_blocks)
         total_evidence = 0.0
@@ -665,7 +695,29 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
             C_all.append(R_i.T)
         return jnp.stack(mu_all), jnp.stack(C_all)
 
-    if pooled:
+    def _blocked_posterior(theta_stacked, gamma2, tau_block, index, population):
+        """The blocked solver's posterior of M (``population``) or of trajectory ``index``'s operator; the index
+        is traced, so one compilation serves every trajectory."""
+        gamma2 = gamma2_resolved if gamma2 is None else gamma2
+        kappa = jnp.ones(2 * n_blocks) if tau_block is None else tau_block
+        ells_all, sig2s_all, nus_all, *trend_all = theta_stacked
+        traj_blocks = [_build_blocks(ctx, ells_all[ic], sig2s_all[ic], nus_all[ic], gamma2,
+                                     *(t[ic] for t in trend_all))[0] for ic, ctx in enumerate(traj_ctx)]
+        prec_M, prec_d, _ = _pooled_prior_parts(kappa)
+        which = "mean" if population else index
+        moments = [_ev.pooled_posterior_qr(traj_blocks, i, m_total, prec_M, prec_d, deriv_is_diag, which)
+                   for i in range(num_modes)]
+        return jnp.stack([mean for mean, _ in moments]), jnp.stack([root for _, root in moments])
+
+    if pooled and blocked:
+        blocked_posterior = jax.jit(_blocked_posterior, static_argnames=("population",))
+
+        def posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None, which=0):
+            """As the stacked solver's posterior (``which``: 0 the target, k trajectory k, ``"mean"`` M)."""
+            _pooled_selector(which)  # validates which
+            population = isinstance(which, str)
+            return blocked_posterior(theta_stacked, gamma2, tau_block, 0 if population else which, population)
+    elif pooled:
         posterior_O_fn = jax.jit(pooled_posterior_O_fn, static_argnames=("which",))
 
     prior_info = dict(
