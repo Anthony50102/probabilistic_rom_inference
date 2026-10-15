@@ -93,9 +93,15 @@ process's trend: its prior is too tight for 8-12 scans, so the process
 treats the dose cycle as noise or bends sharply between scans. See "Fixing
 sparse scans".
 
-**Learning the trend's prior scale: declared, running.** The trend's prior
-scale becomes a learned Gaussian-process setting, on the weekly, every-8-day
-and 120-scan schedules. See "Learning the Gaussian process's trend scale".
+**Learning the trend's prior scale: one realistic schedule passes.** The
+trend's prior scale became a learned Gaussian-process setting, declared
+before the fits. Scans every 8 days to day 84 (11 scans) then pass: 13.6,
+12.8 and 17.8% at 1, 0.75 and 0.5x. Weekly scans to day 84 fail at 0.5x
+only (21.1%), and both schedules to day 57 still fail (worst arm 25-32%).
+The errors fall by 33-71%. The fits still learn about half
+the growth and kill rates, so they regrow too little after a cut, and their
+bands are 4-10 times as wide as with 120 scans. The dense control does not
+change. See "Learning the Gaussian process's trend scale".
 
 ## Design
 
@@ -1585,7 +1591,9 @@ against the noise-free truth:
 **3. Even good targets carry little information.** The tempering gives
 each mode about as many effective observations as the Gaussian process has
 degrees of freedom: 6-8 per mode on weekly scans to day 84. A rank-4 mode
-has 10 unknowns (c_i, four A entries, B_i and four N entries). Part of the
+has 9 unknowns: c_i, four A entries and four N entries. (An earlier version
+said 10, with a direct drug term B_i; the free model has no B on an
+uncentred basis, see `benchmark_cases.galerkin_operators`.) Part of the
 answer therefore comes from the operator prior, which is centred on zero.
 That fits the way c_1 and N_11 shrink towards zero in the tables above.
 
@@ -1661,7 +1669,9 @@ from its declared partner in one setting only.
   - A pass at 1x and 0.75x is possible.
   - At 0.5x a fail is more likely: the targets still carry 9-17% error,
     and each mode has 6-8 effective observations for 10 unknowns. The rest
-    comes from the operator prior, centred on zero.
+    comes from the operator prior, centred on zero. (Corrected after the
+    fits: 9 unknowns, not 10; the free model has no direct drug term B on an
+    uncentred basis. The reasoning is unchanged.)
 - **To day 57.** Probably fails: 8 scans, of which only 4 are treated. Even
   with 120 scans, the free model's regrowth after a cut from day 57 was too
   slow.
@@ -1691,6 +1701,107 @@ cd experiments/tumor
 conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo-weekly-scans-learned-trend   # 48-50
 # likewise every case in benchmark_cases.LEARNED_TREND_CASES
 ```
+
+### Results (each seed run once)
+
+**One realistic schedule now passes: scans every 8 days to day 84. The
+others still fail, though their errors fall by 33-71%.** All 15 fits
+finished with 64 of 64 draws. Median point-forecast error (%) over
+seeds 48-50; the bar is 18.9% on every scenario arm:
+
+| Data to | Scans, rank | Trend prior | 1x | 0.75x | 0.5x | Verdict |
+|---|---|---|---|---|---|---|
+| Day 84 | Weekly, 12, r4 | fixed (earlier) | 22.1 | 24.1 | 32.4 | fail |
+| | | learned | 13.6 | 16.1 | 21.1 | fail |
+| | Every 8 days, 11, r4 | fixed (earlier) | 47.2 | 32.9 | 27.0 | fail |
+| | | learned | 13.6 | 12.8 | 17.8 | **pass** |
+| | 120 even, r4 (control) | fixed (earlier) | 8.9 | 6.3 | 6.1 | pass |
+| | | learned | 8.9 | 6.4 | 6.1 | pass |
+| Day 57 | Weekly, 8, r3 | fixed (earlier) | 42.4 | 49.1 | 53.9 | fail |
+| | | learned | 20.1 | 26.7 | 32.1 | fail |
+| | Every 8 days, 8, r3 | fixed (earlier) | 39.2 | 47.6 | 54.4 | fail |
+| | | learned | 12.3 | 18.2 | 25.4 | fail |
+
+- **The pass is narrow but holds on every seed.** At 0.5x the three seeds
+  give 17.80, 17.80 and 17.78%. As before, on a fixed schedule the seeds
+  differ only in scanner noise, and they agree within 0.3 points
+  everywhere.
+- **Stress arms (not judged), 0.25x and 0x.** Day 84: weekly 26.7 and
+  32.1%, every 8 days 24.6 and 31.4%, control 7.0 and 8.0%. Day 57: weekly
+  34.8 and 34.8%, every 8 days 30.7 and 33.6%.
+- **For reference, 120 random scans** (the reported cases): 9.1, 6.9 and
+  6.7% from day 84; 16.6, 12.0 and 13.9% from day 57.
+
+What changed inside the fits (ranges over seeds 48-50). kappa_1 is mode 1's
+learned trend scale; 1 is the fixed prior. The dose effect is the share of
+the true day-119 difference between 0.5x and 1x that the forecast gets:
+
+| Data to | Scans | Trend prior | Training error | kappa_1: fit (data-only) | c_1 | N_11 | Dose effect at 0.5x | Day-119 burden / truth, 1x and 0.5x |
+|---|---|---|---|---|---|---|---|---|
+| Day 84 | Weekly | fixed | 18.2% | 1 | 0.09 | -0.15 to -0.14 | 0.06-0.07 | 0.80-0.82, 0.47-0.49 |
+| | | learned | 4.5% | 2.85-2.86 (3.83) | 0.68-0.69 | -0.73 | 0.38 | 0.85, 0.64 |
+| | Every 8 days | fixed | 23.3% | 1 | -0.02 | -0.04 | 0.02 | 1.21-1.22, 0.69 |
+| | | learned | 5.9% | 3.01-3.02 (3.28) | 0.77 | -0.65 | 0.33 | 0.95, 0.68 |
+| | 120 even | fixed | 1.2% | 1 | 2.24-2.25 | -0.95 | 0.73-0.74 | 1.03-1.04, 0.90 |
+| | | learned | 1.2% | 2.22 (3.12-3.13) | 2.25 | -0.95 | 0.75 | 1.04, 0.91 |
+| Day 57 | Weekly | fixed | 3.2% | 1 | 0.29 | -0.66 | 0.25 | 0.18, 0.22-0.23 |
+| | | learned | 2.3% | 3.53 (3.19) | 0.91-0.92 | -0.84 | 0.44 | 0.59-0.60, 0.50 |
+| | Every 8 days | fixed | 5.5% | 1 | 0.15 | -0.56 | 0.21 | 0.17-0.18, 0.20 |
+| | | learned | 2.4% | 4.15 (3.67-3.68) | 1.21-1.22 | -0.84 | 0.44 | 0.75, 0.56 |
+| | 120 random (reported) | fixed | 0.8% | 1 | 2.24-2.43 | -0.99 to -0.96 | 0.50-0.60 | 1.01-1.06, 0.70-0.75 |
+
+- **The learned scale lands where the data-only check pointed.** Mode 1's
+  kappa is 2.9-4.2 on the sparse schedules: a trend variance 8-17 times the
+  fixed one, close to the factor of 10 the check preferred. The other modes
+  stay between 0.3 and 1.7 (for example 0.39, 1.6 and 0.79 for modes 2-4,
+  weekly to day 84).
+- **The drug effect partly comes back.** To day 84 the training error falls
+  from 18-23% to 4.5-5.9%, and the dose effect from 0.02-0.07 to 0.33-0.38.
+  To day 57 the dose effect rises from 0.21-0.25 to 0.44.
+- **The growth and kill rates are still about half what the scans need.**
+  c_1 is 0.68-1.22 against 2.0-2.4 with dense scans, and N_11 is -0.65 to
+  -0.84 against -0.95 to -0.99. The forecasts therefore regrow too little
+  after a cut: at 0.5x the day-119 burden is 0.50-0.68 of the truth, against
+  0.70-0.91 with dense scans.
+- **Scans every 8 days now beat weekly scans.** To day 84 they tie at 1x
+  and win at 0.75x and 0.5x; to day 57 they win at every arm. Once the
+  Gaussian process can draw the dose cycle, scans at different points of the
+  cycle help, as idea 2 intended. Weekly scans still sit near the top of
+  every cycle.
+- **The bands are wide.** At day 119 the 5-95% band spans 0.73-1.15 times
+  the true burden from day 84, and 0.80-2.40 times from day 57. With 120
+  random scans it spans 0.10-0.18 and 0.19-0.25 times. From day 84 the bands
+  hold the truth at 1x and 0.75x all the time, and at 0.5x 91% (weekly) and
+  100% (every 8 days) of the time. From day 57 the 0.5x band holds it 24%
+  (weekly) and 98-99% (every 8 days) of the time.
+- **The Gaussian process still smooths heavily.** Mode 1's noise estimate
+  falls from about 290,000 to 77,000-92,000 times the scanner's (day 84),
+  and its lengthscale is 13-14 days, against 3.3 days with dense scans. The
+  trend's cumulative drug exposure now carries the steps.
+- **The control does not move**, as expected: dense scans fix the trend
+  whatever its prior. Its kappa_1 is 2.2.
+
+**Expectations against outcomes.**
+
+| Case | Expected | Outcome |
+|---|---|---|
+| Control | No change, within about 1 point | 8.9, 6.4 and 6.1%: within 0.1 points |
+| Weekly to day 84 | Errors fall and part of the drug effect comes back; a pass at 1x and 0.75x possible, a fail at 0.5x more likely | As expected: 13.6, 16.1 and 21.1%, fails at 0.5x only |
+| Every 8 days to day 84 | The same | Better than expected: passes at every arm, at 0.5x by 1.1 points |
+| To day 57 | Probably fails | Both fail. Errors fall by 22-29 points; every 8 days is under the bar at 1x and 0.75x and 25.4% at 0.5x |
+
+**What this means.** The trend's prior was the main reason the sparse fits
+learned no drug effect. With it learned, a realistic schedule (11 scans in
+84 days) passes the declared bar. What remains is a lack of information:
+each mode has 6-8 effective observations for 9 unknowns, and the operator
+prior pulls the growth and kill rates towards zero.
+
+The declared next step was a population prior "if no realistic schedule
+passes". One schedule now passes, so that trigger holds only for the three
+that still fail. The population prior is still the next idea in the agreed
+order, and it targets what is left: it centres the operator prior on rates
+learned from other patients instead of on zero. It will be declared before
+any fit.
 
 ## Open decisions
 
@@ -1726,8 +1837,15 @@ production modes blurred.
 The realistic-scan result bears on all of these choices. Every chemo result
 here assumes about 120 scans in the training window, far denser than
 clinical MRI. The declared fixes (known noise, scans every 8 days, two
-modes) did not change that. The options are open:
+modes) did not change that. A learned trend scale for the Gaussian process
+did, for one schedule: scans every 8 days to day 84 pass, narrowly and with
+wide bands. Weekly scans to day 84 and both schedules to day 57 still fail.
+The options are open:
 - state the dense-imaging assumption in the paper;
+- report the learned trend scale with scans every 8 days to day 84, and the
+  remaining failures;
+- a population prior learned from a virtual cohort of past patients (next
+  in the agreed order, to be declared first);
 - test the projected form on the realistic schedules, declared first;
 - move the example to a setting with frequent imaging.
 
@@ -1744,8 +1862,10 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/scan_schedule_error.png`, `figures/scan_sweep_burden.png`,
 `figures/sparse_fix_burden.png`, `figures/sparse_fix_error.png`,
 `figures/gp_mode1_seed48.png`, `figures/gp_trend_seed48.png`,
-`figures/gp_trend_seed45.png`, the band-coverage scripts, the smoothed-POD
-scripts and fits, the scan-schedule check, summary and sweep scripts, and
-the sparse-fix check, summary and Gaussian-process check scripts) are local
-session artifacts, not bundled with the repository:
+`figures/gp_trend_seed45.png`, `figures/learned_trend_burden.png`,
+`figures/learned_trend_error.png`, the band-coverage scripts, the
+smoothed-POD scripts and fits, the scan-schedule check, summary and sweep
+scripts, the sparse-fix check, summary and Gaussian-process check scripts,
+and the learned-trend summary script) are local session artifacts, not
+bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
