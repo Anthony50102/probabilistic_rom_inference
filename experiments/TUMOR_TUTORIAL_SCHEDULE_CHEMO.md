@@ -1984,6 +1984,173 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 # likewise every case in benchmark_cases.COHORT_CASES
 ```
 
+### Results (each seed run once)
+
+**The population prior passes one schedule, weekly scans to day 57 (8
+scans), one of the two with the least data. It fails the other three, and
+on both every-8-days schedules it makes the forecast much worse: 1.5-2.1
+times the true burden on day 119.** All 28 fits finished (4 population
+fits, 24 target fits), and every target fit has 64 of 64 draws. Median
+point-forecast error (%) over seeds 48-50; the bar is 18.9% on every
+scenario arm:
+
+| Data to | Scans, rank | Basis, prior centre | 1x | 0.75x | 0.5x | Verdict |
+|---|---|---|---|---|---|---|
+| Day 84 | Weekly, 12, r4 | own, zero (learned trend, earlier) | 13.6 | 16.1 | 21.1 | fail |
+| | | cohort, zero | 14.8 | 18.9 | 23.7 | fail |
+| | | cohort, M | 16.2 | 18.7 | 21.4 | fail |
+| | Every 8 days, 11, r4 | own, zero (earlier) | 13.6 | 12.8 | 17.8 | pass |
+| | | cohort, zero | 10.7 | 13.8 | 20.0 | fail |
+| | | cohort, M | 100.5 | 95.2 | 89.2 | fail |
+| Day 57 | Weekly, 8, r3 | own, zero (earlier) | 20.1 | 26.7 | 32.1 | fail |
+| | | cohort, zero | 25.4 | 31.5 | 35.6 | fail |
+| | | cohort, M | 11.1 | 10.6 | 12.1 | **pass** |
+| | Every 8 days, 8, r3 | own, zero (earlier) | 12.3 | 18.2 | 25.4 | fail |
+| | | cohort, zero | 8.7 | 15.5 | 23.0 | fail |
+| | | cohort, M | 45.0 | 43.6 | 45.4 | fail |
+
+- **The seeds agree within 0.9 points.** On a fixed schedule they differ
+  only in scanner noise.
+- **Stress arms (not judged), 0.25x and 0x.** Cohort basis alone: 28.6 and
+  33.1% (weekly to day 84), 26.7 and 33.0% (every 8 days to day 84), 36.7
+  and 34.9% (weekly to day 57), 28.2 and 31.1% (every 8 days to day 57).
+  Centred on M: 24.0 and 26.2%, 83.1 and 77.7%, 18.5 and 32.6%, 52.5 and
+  66.5%.
+
+**The population fits.** In-sample error is each member's scans replayed
+by M from its first scan, against its clean coefficients. The burden ratio
+is M's last-scan burden over the member's:
+
+| Population fit | In-sample error per member 0-7, % (median) | Last-scan burden ratio per member | M: c_1, N_11 |
+|---|---|---|---|
+| Weekly, r4 (day-84 targets) | 15.6, 31.8, 12.1, 5.6, 43.5, 5.7, 28.8, 18.0 (16.8) | 0.57, 0.34, 1.46, 1.23, 19.4, 0.84, 0.42, 3.81 | 0.033, -0.951 |
+| Every 8 days, r4 | 15.4, 20.8, 28.1, 19.5, 48.2, 14.0, 26.4, 15.0 (20.1) | 2.22, 0.59, 5.17, 2.50, 24.0, 2.17, 0.50, 3.46 | 0.016, -0.754 |
+| Weekly, r3 (day-57 targets) | 14.5, 29.9, 12.5, 6.0, 45.6, 5.0, 26.3, 19.0 (16.7) | 0.80, 0.42, 2.06, 1.58, 23.4, 1.13, 0.50, 5.14 | 0.045, -0.963 |
+| Every 8 days, r3 | 9.1, 28.2, 13.8, 9.3, 44.6, 4.6, 27.8, 22.0 (17.9) | 1.06, 0.44, 2.61, 1.78, 22.4, 1.36, 0.48, 6.10 | 0.020, -0.824 |
+
+- **One operator cannot fit eight tumours.** The worst fit is member 4, the
+  strongest responder (168 cells on day 119): M leaves it 19-24 times its
+  last scan. Members 1 and 6, who regrow after a cut, are under-predicted
+  (0.34-0.59). The every-8-days fits are worse: at rank 4 they over-predict
+  all five planned-course members, by 2.2-5.2 times.
+- **The two cohorts give different centres.** They are the same eight
+  patients scanned on different days, yet M's mode-1 drug term is -0.95
+  and -0.96 for weekly scans and -0.75 and -0.82 for every 8 days. Each
+  cohort has its own basis, so the numbers are not strictly comparable;
+  the forecasts below are.
+- **M grows in proportion to size.** Its constant source is almost zero
+  (c_1 0.016-0.045), and its linear part carries the growth (largest
+  growth rate 0.010-0.033 per day). The target's fits centred on zero do
+  the reverse: a constant source (c_1 0.55-1.22) and a linear part near
+  zero (largest rate 0.002-0.006 per day in the cohort basis). Across
+  eight tumours of different sizes, growth in proportion to size is the
+  law that fits. Within one patient's narrow range of sizes the two look
+  alike.
+- **Against the expectation:** median errors of 16.7-20.1% are at the top
+  of the guessed 5-20%, and the range is 4.6-48.2%. In three of the four
+  fits members 4, 1 and 6 are the worst, as guessed, but member 4 at
+  43-48% is well above the guess. In the every-8-days rank-4 fit, member 2
+  (28.1%) is second.
+
+What changed inside the target fits (ranges over seeds 48-50). tau is the
+learned prior width of each block (c, A, N), as a multiple of the default
+prior's scale. The dose effect is the share of the true day-119 difference
+between 0.5x and 1x that the forecast gets. c_1 and N_11 in the own basis
+are not strictly comparable with those in the cohort basis:
+
+| Data to | Scans | Basis, centre | Training error | c_1 | N_11 | tau (c, A, N) | Dose effect at 0.5x | Day-119 burden / truth, 1x and 0.5x | 0.5x band holds truth |
+|---|---|---|---|---|---|---|---|---|---|
+| Day 84 | Weekly | own, zero | 4.5% | 0.68-0.69 | -0.73 | 1.5, 1.2, 1.5 | 0.38 | 0.85, 0.64 | 91% |
+| | | cohort, zero | 4.7% | 0.55-0.56 | -0.72 | 1.2, 1.1, 1.6 | 0.43 | 0.74-0.75, 0.60-0.61 | 99% |
+| | | cohort, M | 6.0% | 0.27 | -0.95 | 0.64, 0.50, 0.031 | 0.57 | 0.75, 0.67 | 100% |
+| | Every 8 days | own, zero | 5.9% | 0.77 | -0.65 | 1.7, 1.1, 1.3 | 0.33 | 0.95, 0.68 | 100% |
+| | | cohort, zero | 6.0% | 0.65-0.66 | -0.63 | 1.4, 1.2, 1.4 | 0.36 | 0.85, 0.63 | 100% |
+| | | cohort, M | 14.9% | 0.11 | -0.75 | 0.47, 0.49, 0.015 | 1.27-1.28 | 2.13, 1.75-1.76 | 100% |
+| Day 57 | Weekly | own, zero | 2.3% | 0.91-0.92 | -0.84 | 0.98, 0.88, 1.4 | 0.44 | 0.59-0.60, 0.50 | 24% |
+| | | cohort, zero | 4.0% | 0.62-0.65 | -0.80 | 0.70, 0.84, 1.4 | 0.45 | 0.57-0.58, 0.49-0.50 | 18% |
+| | | cohort, M | 5.5% | 0.19 | -0.96 | 0.26, 0.36, 0.050 | 0.90-0.91 | 1.03-1.04, 0.95 | 100% |
+| | Every 8 days | own, zero | 2.4% | 1.21-1.22 | -0.84 | 1.3, 0.87, 1.3 | 0.44 | 0.75, 0.56 | 98-99% |
+| | | cohort, zero | 3.6% | 1.14-1.15 | -0.83 to -0.82 | 1.2, 0.75, 1.4 | 0.45 | 0.82-0.83, 0.59 | 52-53% |
+| | | cohort, M | 4.0% | 0.13 | -0.83 | 0.29, 0.43, 0.066 | 1.27 | 1.80-1.81, 1.47 | 100% |
+
+- **The target keeps the population's drug term.** Centred on M, the
+  learned width of the drug block falls to 0.015-0.067 (1.4-1.6 when
+  centred on zero). After the fact (`cohort_blocks.py`): every fit's drug
+  term N is within 1% of M's and its linear part within 5-29%; the
+  constant source moves most (c_1 from M's 0.02-0.05 to 0.11-0.27). The
+  whole operator stays 17-32% from M. The weak-form evidence from 8-12
+  scans does not demand a different drug term, so the learned width
+  shrinks until the two are equal, even where the fitted trajectory then
+  misses the scans (every 8 days to day 84).
+- **That helps when the population's drug term suits the target.** With
+  the weekly M (mode-1 drug term -0.96), weekly scans to day 57 get the
+  dose response right: the forecast has 0.90-0.91 of the true dose effect,
+  0.95-1.04 of the true day-119 burden on every scenario arm, and the 0.5x
+  band holds the truth all the time. The target's dense-scan fits in its
+  own basis learn -0.95 to -0.99. To day 84 the weekly M changes little:
+  0.5x stays at 21.4%, and 1x worsens to 16.2%, with the day-119 burden at
+  0.75 of the truth.
+- **It breaks the forecast when it does not.** With the every-8-days M
+  (mode-1 drug term -0.75 and -0.82) the pinned kill is too weak. To day
+  84 the fit cannot follow its own training scans (training error 14.9%,
+  against 6.0% centred on zero): it runs above them from day 45. After the
+  training window both every-8-days forecasts grow too fast, to 1.5-2.1
+  times the truth by day 119. The dose effect is overstated (1.27-1.28).
+- **M alone does not describe this patient** (after the fact,
+  `cohort_M_alone.py`, no fits). M run from the target's first scan has a
+  forecast error of 52-72% over the five arms and a training-window error
+  of 22-29%. It forecasts 0.21-0.45 of the true day-119 burden: the
+  cohort's tumours shrink much more than the target's, which grows and
+  spreads faster and responds less.
+- **The cohort basis alone moves the errors by -3.6 to +5.3 points.** It
+  helps every 8 days to day 57 on every arm and every 8 days to day 84 at
+  1x, and it hurts both weekly schedules on every arm. It turns the narrow
+  pass (every 8 days to day 84) into a narrow fail: 0.5x goes from 17.8 to
+  20.0%.
+- **The cohort basis halves the projection floor from day 57.** From day
+  84 the floor rises by 0.6-1.1 points (0.5x: 6.5 to 7.3-7.4%), because
+  the cohort basis keeps a little less of the target's scans. From day 57
+  it falls from 9.0-9.4 to 5.2-5.3% at 1x and from 13.6-14.1 to 7.9-8.0% at
+  0.5x. The target's own scans stop at day 57, but the cohort was scanned
+  to day 119, after cuts too, so its basis already holds the later shapes.
+  This is the basis loss found in "Why the draw band misses after cuts".
+  The forecast errors from day 57 do not follow: the fitted dynamics, not
+  the floor, dominate them (errors of 9-36% against floors of 5-8%).
+- **Bands.** Centred on M, the band holds the truth at every arm except the
+  stress arms of weekly scans to day 84 (74% and 54%). At day 119 the 5-95%
+  band spans 0.76-1.87 times the true burden at 0.5x and 0.96-2.40 times at
+  1x. Weekly scans to day 57 give 0.82 and 1.37-1.39.
+
+**Expectations against outcomes.**
+
+| Case | Expected | Outcome |
+|---|---|---|
+| Population fits | In-sample errors of 5-20%, largest for members 1, 6 and 4 | Medians 16.7-20.1%, range 4.6-48.2%; largest for 4 (44-48%), then 1 and 6 |
+| Cohort basis alone | Within a few points of the partners, no change of verdict | Within -3.6 to +5.3 points; one verdict changes (every 8 days to day 84: pass to fail, 0.5x 20.0%) |
+| Centred on M, weekly to day 84 | Errors at 0.5x fall; may pass | 0.5x unchanged (21.4%), 1x worse (16.2%); fails |
+| Centred on M, every 8 days to day 84 | Stays a pass | Fails badly: 100.5, 95.2 and 89.2% |
+| Centred on M, to day 57 | Uncertain, leaning fail, burden too low | Weekly passes (11.1, 10.6 and 12.1%) with the burden right; every 8 days fails with the burden too high (1.5-1.8 times) |
+
+**What this means.** A population prior can rescue the hardest schedule,
+but only by handing the target the population's drug response. The
+target's own 8-12 scans do not move it. Whether the forecast is then right
+depends on whether that one operator happens to suit this patient. Here it
+did for one cohort and failed badly for the other, though both hold the
+same eight patients. That is not robust enough to report as a fix.
+
+Two parts of this design are to blame, and both are fixable:
+- **M is one operator fitted to all eight members.** It fits them with
+  5-48% error, and it changes with the scan days.
+- **The target alone sets how far it may move from M.** With so few scans,
+  the learned width of the drug block collapses to almost zero.
+
+Idea 4, partial pooling, is the next in the agreed order and changes
+exactly these two parts. Each past patient gets their own operator around
+a shared mean, all fitted together with the target. The spread between the
+past patients then sets how far the target may move from the mean, instead
+of the target's own few scans. It needs new code and will be declared
+before any fit.
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -2021,12 +2188,15 @@ clinical MRI. The declared fixes (known noise, scans every 8 days, two
 modes) did not change that. A learned trend scale for the Gaussian process
 did, for one schedule: scans every 8 days to day 84 pass, narrowly and with
 wide bands. Weekly scans to day 84 and both schedules to day 57 still fail.
+A population prior from a virtual cohort passes weekly scans to day 57,
+but it breaks both every-8-days schedules, so it is not a robust fix.
 The options are open:
 - state the dense-imaging assumption in the paper;
 - report the learned trend scale with scans every 8 days to day 84, and the
   remaining failures;
-- a population prior learned from a virtual cohort of past patients
-  (declared, see "A population prior from past patients");
+- partial pooling of past patients' scans with the target (next in the
+  agreed order, to be declared; see "A population prior from past
+  patients");
 - test the projected form on the realistic schedules, declared first;
 - move the example to a setting with frequent imaging.
 
@@ -2044,9 +2214,11 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/sparse_fix_burden.png`, `figures/sparse_fix_error.png`,
 `figures/gp_mode1_seed48.png`, `figures/gp_trend_seed48.png`,
 `figures/gp_trend_seed45.png`, `figures/learned_trend_burden.png`,
-`figures/learned_trend_error.png`, the band-coverage scripts, the
+`figures/learned_trend_error.png`, `figures/cohort_prior_burden.png`,
+`figures/cohort_prior_error.png`, the band-coverage scripts, the
 smoothed-POD scripts and fits, the scan-schedule check, summary and sweep
 scripts, the sparse-fix check, summary and Gaussian-process check scripts,
-and the learned-trend summary script) are local session artifacts, not
+the learned-trend summary script, and the cohort data check, summary,
+M-alone and block scripts) are local session artifacts, not
 bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
