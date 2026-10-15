@@ -189,58 +189,69 @@ def per_mode_posterior_qr(traj_blocks, mode_i, m, prior_prec, deriv_is_diag):
 # -----------------------------------------------------------------------------
 # Partial pooling, blocked: O_k = M + δ_k, eliminating each δ_k by its own QR
 # -----------------------------------------------------------------------------
-def _pooled_qr_system(traj_blocks, mode_i, m, prec_M, prec_delta, deriv_is_diag):
+def _pooled_local(blocks, mode_i, m, root_delta, deriv_is_diag):
+    """One trajectory's part of mode i's partial-pooling system: one QR of [[W_k, W_k, z_k], [√prec_δ, 0, 0]] (its
+    whitened rows W_k (M + δ_k) ≈ z_k and δ_k's prior) gives δ_k's triangle R_kk, its coupling R_kM to M and
+    right-hand side c_k, M's rows [T_k, t_k], and the residual ρ_k left once δ_k and M are free."""
+    A_D, y_D, Sigma_D, A_W, y_W, Sigma_W = blocks
+    designs, observations = [], []
+    log_det_Sigma = 0.0
+    for A, y, covariance, diagonal in (
+            (A_D, y_D[mode_i], Sigma_D[mode_i], deriv_is_diag),
+            (A_W, y_W[mode_i], Sigma_W[mode_i], False)):
+        whitened, observed, log_det = _whiten_block(A, y, covariance, diagonal)
+        designs.append(whitened)
+        observations.append(observed)
+        log_det_Sigma = log_det_Sigma + log_det
+    W, z = jnp.vstack(designs), jnp.concatenate(observations)
+    system = jnp.vstack([jnp.hstack([W, W, z[:, None]]),
+                         jnp.hstack([root_delta, jnp.zeros((m, m + 1), dtype=W.dtype)])])
+    R = jnp.linalg.qr(system, mode="r")
+    # The last row is [0, 0, ρ_k]: the part of z_k that no choice of δ_k and M fits.
+    return dict(R_kk=R[:m, :m], R_kM=R[:m, m:2 * m], c=R[:m, 2 * m], rows_M=R[m:2 * m, m:],
+                quadratic=R[2 * m, 2 * m] ** 2,
+                log_det_precision=2 * jnp.sum(jnp.log(jnp.abs(jnp.diag(R[:m, :m])))),
+                log_det_Sigma=log_det_Sigma)
+
+
+def _pooled_qr_system(batches, mode_i, m, prec_M, prec_delta, deriv_is_diag):
     """Mode i's partial-pooling system, trajectory k's whitened rows W_k (M + δ_k) ≈ z_k with the priors
-    √prec_M M ≈ 0 and √prec_δ δ_k ≈ 0, factored with the unknowns ordered [δ_0, …, δ_K-1, M]: one QR of
-    [[W_k, W_k, z_k], [√prec_δ, 0, 0]] per trajectory gives δ_k's triangle (R_kk, its coupling R_kM to M and
-    right-hand side c_k), M's rows [T_k, t_k] and the residual ρ_k left once δ_k and M are free; one QR of all
-    M rows with M's prior gives (R_MM, d_M, ρ_M). The full triangular factor is block upper triangular with
-    diagonal blocks R_kk and R_MM, so this is the stacked system [M, δ_0, …] reordered (same Gaussian, same
-    evidence) at a cost linear, not cubic, in the number of trajectories."""
+    √prec_M M ≈ 0 and √prec_δ δ_k ≈ 0, factored with the unknowns ordered [δ_0, …, δ_K-1, M]: each trajectory's
+    QR (:func:`_pooled_local`, vmapped over a batch) eliminates its δ_k, then one QR of all M rows with M's prior
+    gives (R_MM, d_M, ρ_M). The full triangular factor is block upper triangular with diagonal blocks R_kk and
+    R_MM, so this is the stacked system [M, δ_0, …] reordered (same Gaussian, same evidence) at a cost linear, not
+    cubic, in the number of trajectories. ``batches``: block tuples as for the shared operator, each array with
+    a leading axis over a batch of trajectories of equal shapes; the trajectories' parts are returned
+    concatenated in batch order."""
     root_delta = jnp.diag(jnp.sqrt(prec_delta))
-    local, rows_M = [], []
-    quadratic = log_det_Sigma = log_det_precision = 0.0
-    n = 0
-    for A_D, y_D, Sigma_D, A_W, y_W, Sigma_W in traj_blocks:
-        designs, observations = [], []
-        for A, y, covariance, diagonal in (
-                (A_D, y_D[mode_i], Sigma_D[mode_i], deriv_is_diag),
-                (A_W, y_W[mode_i], Sigma_W[mode_i], False)):
-            whitened, observed, log_det = _whiten_block(A, y, covariance, diagonal)
-            designs.append(whitened)
-            observations.append(observed)
-            log_det_Sigma = log_det_Sigma + log_det
-            n = n + len(observed)
-        W, z = jnp.vstack(designs), jnp.concatenate(observations)
-        system = jnp.vstack([jnp.hstack([W, W, z[:, None]]),
-                             jnp.hstack([root_delta, jnp.zeros((m, m + 1), dtype=W.dtype)])])
-        R = jnp.linalg.qr(system, mode="r")
-        local.append((R[:m, :m], R[:m, m:2 * m], R[:m, 2 * m]))
-        rows_M.append(R[m:2 * m, m:])
-        # The last row is [0, 0, ρ_k]: the part of z_k that no choice of δ_k and M fits.
-        quadratic = quadratic + R[2 * m, 2 * m] ** 2
-        log_det_precision = log_det_precision + 2 * jnp.sum(jnp.log(jnp.abs(jnp.diag(R[:m, :m]))))
-    rows_M.append(jnp.hstack([jnp.diag(jnp.sqrt(prec_M)), jnp.zeros((m, 1), dtype=root_delta.dtype)]))
-    R = jnp.linalg.qr(jnp.vstack(rows_M), mode="r")
-    log_det_precision = log_det_precision + 2 * jnp.sum(jnp.log(jnp.abs(jnp.diag(R[:m, :m]))))
-    quadratic = quadratic + R[m, m] ** 2
-    return local, (R[:m, :m], R[:m, m]), quadratic, log_det_precision, log_det_Sigma, n
+    parts = [jax.vmap(lambda blocks: _pooled_local(blocks, mode_i, m, root_delta, deriv_is_diag))(blocks)
+             for blocks in batches]
+    local = {key: jnp.concatenate([part[key] for part in parts]) for key in parts[0]}
+    # Rows per trajectory: its derivative (A_D) and weak-form (A_W) rows.
+    n = sum(blocks[0].shape[0] * (blocks[0].shape[1] + blocks[3].shape[1]) for blocks in batches)
+    rows_M = jnp.vstack([local["rows_M"].reshape(-1, m + 1),
+                         jnp.hstack([jnp.diag(jnp.sqrt(prec_M)), jnp.zeros((m, 1), dtype=root_delta.dtype)])])
+    R = jnp.linalg.qr(rows_M, mode="r")
+    log_det_precision = (jnp.sum(local["log_det_precision"])
+                         + 2 * jnp.sum(jnp.log(jnp.abs(jnp.diag(R[:m, :m])))))
+    quadratic = jnp.sum(local["quadratic"]) + R[m, m] ** 2
+    return local, (R[:m, :m], R[:m, m]), quadratic, log_det_precision, jnp.sum(local["log_det_Sigma"]), n
 
 
-def pooled_evidence_qr(traj_blocks, mode_i, m, prec_M, prec_delta, log_prior_cov, deriv_is_diag):
-    """log p(y_i | θ, κ_M, κ_δ) of partial pooling for mode i (``traj_blocks`` as for the shared operator, one
+def pooled_evidence_qr(batches, mode_i, m, prec_M, prec_delta, log_prior_cov, deriv_is_diag):
+    """log p(y_i | θ, κ_M, κ_δ) of partial pooling for mode i (``batches`` as for :func:`_pooled_qr_system`, one
     m-column design per trajectory; ``log_prior_cov`` = log|Σ_M| + K log|Σ_δ|), by the blocked QR."""
     _, _, quadratic, log_det_precision, log_det_Sigma, n = _pooled_qr_system(
-        traj_blocks, mode_i, m, prec_M, prec_delta, deriv_is_diag)
+        batches, mode_i, m, prec_M, prec_delta, deriv_is_diag)
     return -0.5 * (quadratic + log_det_Sigma + log_prior_cov + log_det_precision + n * jnp.log(2 * jnp.pi))
 
 
-def pooled_posterior_qr(traj_blocks, mode_i, m, prec_M, prec_delta, deriv_is_diag, which):
-    """Posterior mean and square (m × m) covariance factor of M (``which="mean"``) or of trajectory ``which``'s
-    operator M + δ_which (an integer, possibly traced), from the blocked QR: μ_M = R_MM⁻¹ d_M,
-    μ_δ = R_kk⁻¹ (c_k − R_kM μ_M), and the factor [R_kk⁻¹, (I − R_kk⁻¹ R_kM) R_MM⁻¹] of M + δ_k reduced to a
-    square root by QR."""
-    local, (R_MM, d_M), *_ = _pooled_qr_system(traj_blocks, mode_i, m, prec_M, prec_delta, deriv_is_diag)
+def pooled_posterior_qr(batches, mode_i, m, prec_M, prec_delta, deriv_is_diag, which):
+    """Posterior mean and square (m × m) covariance factor of M (``which="mean"``) or of the operator M + δ of the
+    trajectory at position ``which`` (an integer, possibly traced) of the batches' concatenation, from the blocked
+    QR: μ_M = R_MM⁻¹ d_M, μ_δ = R_kk⁻¹ (c_k − R_kM μ_M), and the factor [R_kk⁻¹, (I − R_kk⁻¹ R_kM) R_MM⁻¹] of
+    M + δ_k reduced to a square root by QR."""
+    local, (R_MM, d_M), *_ = _pooled_qr_system(batches, mode_i, m, prec_M, prec_delta, deriv_is_diag)
     solve = jax.scipy.linalg.solve_triangular
     eye = jnp.eye(m, dtype=R_MM.dtype)
     mu_M = solve(R_MM, d_M, lower=False)
@@ -248,7 +259,7 @@ def pooled_posterior_qr(traj_blocks, mode_i, m, prec_M, prec_delta, deriv_is_dia
     if isinstance(which, str):
         mean, factor = mu_M, inverse_M
     else:
-        R_kk, R_kM, c_k = (jnp.stack(part)[which] for part in zip(*local))
+        R_kk, R_kM, c_k = (local[key][which] for key in ("R_kk", "R_kM", "c"))
         inverse_k = solve(R_kk, eye, lower=False)
         mean = mu_M + solve(R_kk, c_k - R_kM @ mu_M, lower=False)
         factor = jnp.hstack([inverse_k, inverse_M - inverse_k @ (R_kM @ inverse_M)])

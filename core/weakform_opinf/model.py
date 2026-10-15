@@ -21,6 +21,7 @@ selected per experiment and the cost is one extra GP-only fit.
 
 from __future__ import annotations
 
+import functools
 import time
 
 import numpy as np
@@ -212,6 +213,24 @@ def _sample_gp_hypers(locs, cfg):
     return theta
 
 
+def _sample_gp_hypers_joint(locs, cfg):
+    """The priors of :func:`_sample_gp_hypers` with every trajectory and mode in
+    one (num_traj, num_modes) site per kind, independent entries; returns the
+    tuple (ells, sig2s, nus[, kappas]) of those arrays."""
+    r = cfg.num_modes
+    ell_locs = jnp.asarray([[loc["log_ell_loc"]] * r for loc in locs])
+    ell_scales = jnp.asarray([[loc["log_ell_scale"]] * r for loc in locs])
+    sig2_locs = jnp.stack([jnp.asarray(loc["log_sig2_locs"]) for loc in locs])
+    nu_locs = jnp.stack([jnp.asarray(loc["log_nu_locs"]) for loc in locs])
+    theta = (numpyro.sample("lengthscale", dist.LogNormal(ell_locs, ell_scales).to_event(2)),
+             numpyro.sample("variance", dist.LogNormal(sig2_locs, cfg.sig2_prior_scale).to_event(2)),
+             numpyro.sample("noise", dist.LogNormal(nu_locs, cfg.nu_prior_scale).to_event(2)))
+    if cfg.gp_trend_scale == "learned":
+        theta += (numpyro.sample("trend_scale", dist.LogNormal(
+            jnp.zeros_like(nu_locs), cfg.hier_tau_scale).to_event(2)),)
+    return theta
+
+
 def data_only_gp_fit(trajectories, time_evals, cfg):
     """GP hyperparameters fitted to the data alone (float64): the MAP of their
     priors times the GP marginal likelihood, without the operator evidence.
@@ -334,6 +353,12 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         δ⁽ᵏ⁾ eliminated by a QR of its own trajectory's rows before one QR for
         M (:func:`evidence.pooled_evidence_qr`), linear in the number of
         trajectories; equal up to rounding. Needs ``operator_solver='qr'``.
+        Its program does not grow with the number of trajectories: those with
+        equal shapes (number of training times, inputs) are computed as one
+        vmapped batch, and the GP hyperparameters are sampled as one
+        (num_traj, num_modes) site per kind ("lengthscale", "variance",
+        "noise", and "trend_scale" when learned) instead of one scalar site
+        per trajectory and mode (same priors, independent entries).
 
     Returns
     -------
@@ -431,7 +456,9 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
             operators="O_k = M + delta_k; M ~ N(0, (kappa_M,b s_j)^2), delta_k ~ N(0, (kappa_delta,b s_j)^2)",
             log_tau_block=f"entries 0-{n_blocks - 1}: log kappa_M; {n_blocks}-{2 * n_blocks - 1}: log kappa_delta")
         if blocked:
-            operator_prior["pooled"]["solver"] = "blocked: each delta_k eliminated by its own QR, then one QR for M"
+            operator_prior["pooled"]["solver"] = ("blocked: each delta_k eliminated by its own QR (trajectories of "
+                                                  "equal shapes in one vmapped batch), then one QR for M")
+            operator_prior["pooled"]["gp_hyperparameter_sites"] = "one (num_traj, num_modes) site per kind"
 
     def _pooled_blocks(traj_blocks):
         """Trajectory k's rows in the stacked unknowns [M, δ⁽⁰⁾, …]: its design A placed as A [I, 0, …, I, …, 0]."""
@@ -576,9 +603,56 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         """Sample per-trajectory, per-mode GP hypers (list per traj of (ells, sig2s, nus))."""
         return _sample_gp_hypers([ctx["locs"] for ctx in traj_ctx], cfg)
 
+    if blocked:
+        # Trajectories of equal shapes form a batch (in order of first appearance) whose constants are stacked along
+        # a leading axis; position[k] is trajectory k's place in the batches' concatenation.
+        groups = {}
+        for ic, ctx in enumerate(traj_ctx):
+            inputs = ctx["inputs_eval"]
+            groups.setdefault((ctx["n_train"], None if inputs is None else tuple(inputs.shape)), []).append(ic)
+        batches = []
+        for (n_train, _), members in groups.items():
+            constants = []
+            for ic in members:
+                ctx = traj_ctx[ic]
+                feature_map, variances = _gp.trajectory_trend(trajectories[ic], cfg)
+                entry = dict(gp=_gp.gp_conditional_arrays(trajectories[ic]["t_sampled"], time_evals[ic], feature_map),
+                             y_obs=ctx["y_obs"], wpsi=ctx["tf"]["wpsi"], wpsi_dot=ctx["tf"]["wpsi_dot"],
+                             weak_slack=jnp.asarray(ctx["weak_slack"]))
+                if variances is not None:
+                    entry["feature_variances"] = jnp.asarray(variances)
+                if ctx["inputs_eval"] is not None:
+                    entry["inputs_eval"] = ctx["inputs_eval"]
+                if tempered:
+                    entry["alpha"] = ctx["alpha"]
+                constants.append(entry)
+            batches.append(dict(index=np.asarray(members), n_train=n_train,
+                                constants=jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *constants)))
+        position = np.empty(num_traj, dtype=int)
+        position[np.concatenate([batch["index"] for batch in batches])] = np.arange(num_traj)
+        position_jnp = jnp.asarray(position)
+        operator_prior["pooled"]["batches"] = [dict(training_times=int(batch["n_train"]),
+                                                    trajectories=len(batch["index"])) for batch in batches]
+
+    def _batched_blocks(theta, gamma2):
+        """Every batch's _build_blocks output (blocks, states, mll, correction), vmapped over its trajectories;
+        ``theta`` holds (num_traj, num_modes) hyperparameter arrays."""
+        out = []
+        for batch in batches:
+            def one(constants, ells, sig2s, nus, *trend, n_train=batch["n_train"]):
+                ctx = dict(y_obs=constants["y_obs"], tf=dict(wpsi=constants["wpsi"], wpsi_dot=constants["wpsi_dot"]),
+                           weak_slack=constants["weak_slack"], inputs_eval=constants.get("inputs_eval"),
+                           alpha=constants.get("alpha"), n_train=n_train,
+                           batch_gp=functools.partial(_gp.gp_batch, constants["gp"], jitter_rel=cfg.gp_jitter_rel,
+                                                      feature_variances=constants.get("feature_variances")))
+                blocks, Xs, mll, correction = _build_blocks(ctx, ells, sig2s, nus, gamma2, *trend)
+                return blocks, Xs, mll, jnp.asarray(correction, dtype=Xs.dtype)
+            out.append(jax.vmap(one)(batch["constants"], *(t[batch["index"]] for t in theta)))
+        return out
+
     def model(gamma2=None):
         gamma2 = gamma2_resolved if gamma2 is None else gamma2
-        theta = _sample_hypers()
+        theta = _sample_gp_hypers_joint([ctx["locs"] for ctx in traj_ctx], cfg) if blocked else _sample_hypers()
 
         if cfg.op_prior_mode == "block_hier":
             log_tau = numpyro.sample(
@@ -597,6 +671,23 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
             prior_prec = inv_prec_vec
             log_prior_cov = -jnp.sum(jnp.log(inv_prec_vec))
 
+        if blocked:
+            batched = _batched_blocks(theta, gamma2)
+            for batch, (_, Xs, _, _) in zip(batches, batched):
+                for j, ic in enumerate(batch["index"]):
+                    for i in range(num_modes):
+                        numpyro.deterministic(f"X_{ic}_{i}", Xs[j, i])
+            if cfg.mll_weight > 0:
+                numpyro.factor("gp_mll", cfg.mll_weight * sum(jnp.sum(mll) for _, _, mll, _ in batched))
+            prec_M, prec_d, log_prior_cov = _pooled_prior_parts(kappa_block)
+            batch_blocks = [blocks for blocks, *_ in batched]
+            total_evidence = 0.0
+            for i in range(num_modes):
+                total_evidence = total_evidence + _ev.pooled_evidence_qr(
+                    batch_blocks, i, m_total, prec_M, prec_d, log_prior_cov, deriv_is_diag)
+            numpyro.factor("marg_O_evidence", total_evidence + sum(jnp.sum(c) for *_, c in batched))
+            return
+
         traj_blocks = []
         mll_total = 0.0
         correction = 0.0
@@ -612,14 +703,6 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         if cfg.mll_weight > 0:
             numpyro.factor("gp_mll", cfg.mll_weight * mll_total)
 
-        if pooled and blocked:
-            prec_M, prec_d, log_prior_cov = _pooled_prior_parts(kappa_block)
-            total_evidence = 0.0
-            for i in range(num_modes):
-                total_evidence = total_evidence + _ev.pooled_evidence_qr(
-                    traj_blocks, i, m_total, prec_M, prec_d, log_prior_cov, deriv_is_diag)
-            numpyro.factor("marg_O_evidence", total_evidence + correction)
-            return
         if pooled:
             traj_blocks = _pooled_blocks(traj_blocks)
         total_evidence = 0.0
@@ -700,12 +783,10 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         is traced, so one compilation serves every trajectory."""
         gamma2 = gamma2_resolved if gamma2 is None else gamma2
         kappa = jnp.ones(2 * n_blocks) if tau_block is None else tau_block
-        ells_all, sig2s_all, nus_all, *trend_all = theta_stacked
-        traj_blocks = [_build_blocks(ctx, ells_all[ic], sig2s_all[ic], nus_all[ic], gamma2,
-                                     *(t[ic] for t in trend_all))[0] for ic, ctx in enumerate(traj_ctx)]
+        batch_blocks = [blocks for blocks, *_ in _batched_blocks(tuple(theta_stacked), gamma2)]
         prec_M, prec_d, _ = _pooled_prior_parts(kappa)
-        which = "mean" if population else index
-        moments = [_ev.pooled_posterior_qr(traj_blocks, i, m_total, prec_M, prec_d, deriv_is_diag, which)
+        which = "mean" if population else position_jnp[index]
+        moments = [_ev.pooled_posterior_qr(batch_blocks, i, m_total, prec_M, prec_d, deriv_is_diag, which)
                    for i in range(num_modes)]
         return jnp.stack([mean for mean, _ in moments]), jnp.stack([root for _, root in moments])
 

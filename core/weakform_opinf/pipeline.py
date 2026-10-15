@@ -30,7 +30,16 @@ from core.bayesian_opinf import generate_rom_predictions
 
 def _stack_theta(post, num_traj, num_modes):
     """Stack posterior hyper-samples into (S, num_traj, num_modes) arrays: (ℓ, σ², ν),
-    plus the input-trend sd multipliers κ when they were learned."""
+    plus the input-trend sd multipliers κ when they were learned. Models that
+    sample one (num_traj, num_modes) site per kind (the blocked partial-pooling
+    solver) already have that layout."""
+    if "lengthscale" in post:
+        kinds = ("lengthscale", "variance", "noise") + (("trend_scale",) if "trend_scale" in post else ())
+        for kind in kinds:
+            if jnp.shape(post[kind])[-2:] != (num_traj, num_modes):
+                raise ValueError(f"Posterior site {kind!r} is not (num_traj, num_modes) = ({num_traj}, {num_modes})")
+        return tuple(jnp.asarray(post[kind]) for kind in kinds)
+
     def g(kind):
         cols = []
         for ic in range(num_traj):

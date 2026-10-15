@@ -25,6 +25,17 @@ def _rom():
         operators=operators, operator_matrix=np.zeros((2, 6)), _assemble_data_matrix=assemble))
 
 
+def _input_rom():
+    """Two-mode cAN ROM with one input (5 columns in three blocks), as the chemo fits'."""
+    def assemble(states, inputs=None):
+        q1, q2 = states
+        u = jnp.atleast_2d(inputs)[0]
+        return jnp.column_stack([jnp.ones(states.shape[1]), q1, q2, u * q1, u * q2])
+    operators = [SimpleNamespace(entries=np.zeros(shape)) for shape in ((2,), (2, 2), (2, 2))]
+    return SimpleNamespace(model=SimpleNamespace(
+        operators=operators, operator_matrix=np.zeros((2, 5)), _assemble_data_matrix=assemble))
+
+
 def _trajectories():
     t0, t1 = np.linspace(2., 6., 15), np.linspace(1., 7., 18)
     return [dict(t_sampled=t0, snapshots_comp=np.stack([np.sin(t0) + 2., np.cos(t0)])),
@@ -44,7 +55,7 @@ def _evidence(model, theta, tau):
 
 
 def _posterior(posterior, theta, tau, **kwargs):
-    hypers = tuple(jnp.stack([jnp.asarray(th[j]) for th in theta]) for j in range(3))
+    hypers = tuple(jnp.stack([jnp.asarray(th[j]) for th in theta]) for j in range(len(theta[0])))
     mean, root = posterior(hypers, None, None, jnp.asarray(tau), **kwargs)
     return np.asarray(mean), np.asarray(root)
 
@@ -164,31 +175,36 @@ class PartialPoolingTests(unittest.TestCase):
                 with self.subTest(kwargs=kwargs, solver=cfg.operator_solver), self.assertRaises(ValueError):
                     build_model(_rom(), trajectories, cfg, **kwargs)
 
-    def test_blocked_solver_is_the_stacked_gaussian(self):
-        """The blocked solver (each δ_k eliminated by its own QR, then M) gives the stacked system's evidence, its
-        gradient and every operator's posterior, for one to three trajectories."""
+    def _compare_solvers(self, rom, cfg, trajectories, theta, kinds=KINDS):
+        """The blocked solver against the stacked one for the first 1, 2, … trajectories: evidence, its gradient
+        (the blocked model's (num_traj, num_modes) sites against the stacked model's scalar sites) and every
+        operator's posterior. Returns the last blocked model's prior record."""
         import jax
         from numpyro.infer.util import log_density
-        t2 = np.linspace(1.5, 6.5, 16)
-        trajectories = _trajectories() + [dict(t_sampled=t2, snapshots_comp=np.stack(
-            [.7 * np.sin(.9 * t2) + 2.2, .5 * np.cos(1.1 * t2)]))]
-        theta = THETA + [(np.array([.9, .8]), np.array([1.2, .6]), np.array([2e-3, 1.5e-3]))]
-        with pipeline.precision_context(self.cfg):
-            for count in (1, 2, 3):
+        r = cfg.num_modes
+        with pipeline.precision_context(cfg):
+            for count in range(1, len(trajectories) + 1):
                 fitted, hypers = trajectories[:count], theta[:count]
-                built = {solver: build_model(_rom(), fitted, self.cfg, pooled=True, pooled_solver=solver)
+                built = {solver: build_model(rom, fitted, cfg, pooled=True, pooled_solver=solver)
                          for solver in ("stacked", "blocked")}
-                values = {f"{kind}_{ic}_{i}": jnp.asarray(th[j][i]) for ic, th in enumerate(hypers)
-                          for j, kind in enumerate(KINDS) for i in range(2)}
-                values["log_tau_block"] = jnp.log(jnp.asarray(self.tau))
-                density = {solver: log_density(model[0], (), {}, values)[0] for solver, model in built.items()}
-                gradient = {solver: jax.grad(lambda v, m=model[0]: log_density(m, (), {}, v)[0])(values)
+                values = {"stacked": {f"{kind}_{ic}_{i}": jnp.asarray(th[j][i]) for ic, th in enumerate(hypers)
+                                      for j, kind in enumerate(kinds) for i in range(r)},
+                          "blocked": {kind: jnp.stack([jnp.asarray(th[j]) for th in hypers])
+                                      for j, kind in enumerate(kinds)}}
+                for site in values.values():
+                    site["log_tau_block"] = jnp.log(jnp.asarray(self.tau))
+                density = {solver: log_density(model[0], (), {}, values[solver])[0] for solver, model in built.items()}
+                gradient = {solver: jax.grad(lambda v, m=model[0]: log_density(m, (), {}, v)[0])(values[solver])
                             for solver, model in built.items()}
                 with self.subTest(trajectories=count, quantity="evidence"):
                     self.assertAlmostEqual(float(density["blocked"]), float(density["stacked"]),
                                            delta=1e-9 * abs(float(density["stacked"])))
-                    for name, value in gradient["stacked"].items():
-                        np.testing.assert_allclose(gradient["blocked"][name], value, rtol=1e-7, atol=1e-9)
+                    np.testing.assert_allclose(gradient["blocked"]["log_tau_block"],
+                                               gradient["stacked"]["log_tau_block"], rtol=1e-7, atol=1e-9)
+                    for j, kind in enumerate(kinds):
+                        stacked = np.array([[gradient["stacked"][f"{kind}_{ic}_{i}"] for i in range(r)]
+                                            for ic in range(count)])
+                        np.testing.assert_allclose(gradient["blocked"][kind], stacked, rtol=1e-7, atol=1e-9)
                 for which in ("mean", *range(count)):
                     stacked = _posterior(built["stacked"][1], hypers, self.tau, which=which)
                     blocked = _posterior(built["blocked"][1], hypers, self.tau, which=which)
@@ -200,10 +216,54 @@ class PartialPoolingTests(unittest.TestCase):
                 self.assertNotIn("solver", built["stacked"][3]["operator_prior"]["pooled"])
                 self.assertIn("blocked", built["blocked"][3]["operator_prior"]["pooled"]["solver"])
             # As the export draws operators: the posterior inside an outer jit, default trajectory 0.
-            hypers = tuple(jnp.stack([jnp.asarray(th[j]) for th in theta]) for j in range(3))
+            stacked_hypers = tuple(jnp.stack([jnp.asarray(th[j]) for th in theta]) for j in range(len(kinds)))
             posterior = built["blocked"][1]
-            inside = jax.jit(lambda th, tau: posterior(th, None, None, tau))(hypers, jnp.asarray(self.tau))
+            inside = jax.jit(lambda th, tau: posterior(th, None, None, tau))(stacked_hypers, jnp.asarray(self.tau))
             np.testing.assert_allclose(inside[0], _posterior(posterior, theta, self.tau)[0], rtol=1e-12, atol=1e-14)
+            # The model's sites: one (num_traj, num_modes) array per kind, and every trajectory's GP states.
+            trace = handlers.trace(handlers.substitute(built["blocked"][0], data=values["blocked"])).get_trace()
+            samples = {name for name, site in trace.items() if site["type"] == "sample" and not site["is_observed"]}
+            self.assertEqual(samples, {*kinds, "log_tau_block"})
+            self.assertEqual({name for name, site in trace.items() if site["type"] == "deterministic"},
+                             {f"X_{ic}_{i}" for ic in range(len(trajectories)) for i in range(r)})
+            np.testing.assert_allclose(trace["X_3_1"]["value"],
+                                       handlers.trace(handlers.substitute(built["stacked"][0], data=values["stacked"]))
+                                       .get_trace()["X_3_1"]["value"], rtol=1e-12, atol=1e-12)
+        return built["blocked"][3]
+
+    def test_blocked_solver_is_the_stacked_gaussian(self):
+        """The blocked solver (each δ_k eliminated by its own QR, then M) gives the stacked system's evidence, its
+        gradient and every operator's posterior, for one to four trajectories; trajectories 1 and 3 have equally
+        many training times, so they form one vmapped batch."""
+        t2, t3 = np.linspace(1.5, 6.5, 16), np.linspace(.5, 6., 18)
+        trajectories = _trajectories() + [
+            dict(t_sampled=t2, snapshots_comp=np.stack([.7 * np.sin(.9 * t2) + 2.2, .5 * np.cos(1.1 * t2)])),
+            dict(t_sampled=t3, snapshots_comp=np.stack([.9 * np.cos(.8 * t3) + 2.4, .6 * np.sin(1.2 * t3)]))]
+        theta = THETA + [(np.array([.9, .8]), np.array([1.2, .6]), np.array([2e-3, 1.5e-3])),
+                         (np.array([1.2, .7]), np.array([1.8, .5]), np.array([1.5e-3, 2.5e-3]))]
+        info = self._compare_solvers(_rom(), self.cfg, trajectories, theta)
+        self.assertEqual(info["operator_prior"]["pooled"]["batches"],
+                         [dict(training_times=15, trajectories=1), dict(training_times=18, trajectories=2),
+                          dict(training_times=16, trajectories=1)])
+
+    def test_blocked_solver_with_inputs_and_learned_trend(self):
+        """As above for the chemo fits' setting: a state-input block, the input-aware GP with learned trend scales
+        and tempering; trajectories 1 and 3 (16 scans) form one batch, as past patients with equal scan counts."""
+        cfg = replace(self.cfg, gp_input_trend=True, gp_trend_scale="learned")
+        table = dict(times=np.linspace(0., 8., 161), values=np.exp(-(np.linspace(0., 8., 161) % 2.)))
+        trajectories = []
+        for k, (t0, t1, n) in enumerate(((1., 4.5, 12), (1., 7., 16), (1.5, 7., 17), (1.25, 7., 16))):
+            t = np.linspace(t0, t1, n)
+            grid = np.linspace(t0, t1, cfg.num_eval_points)
+            trajectories.append(dict(
+                t_sampled=t, snapshots_comp=np.stack([2. + .3 * k + np.sin(.8 * t + k), .5 * np.cos(1.1 * t - k)]),
+                inputs_eval=np.interp(grid, table["times"], table["values"])[None], input_table=table))
+        theta = [tuple(np.asarray(v) for v in hyp) for hyp in (
+            ([.7, .9], [1.5, .8], [1e-3, 2e-3], [1.3, .7]), ([1.1, .6], [2.5, .4], [3e-3, 1e-3], [.8, 1.6]),
+            ([.9, .8], [1.2, .6], [2e-3, 1.5e-3], [1.1, .9]), ([1.2, .7], [1.8, .5], [1.5e-3, 2.5e-3], [.6, 1.2]))]
+        info = self._compare_solvers(_input_rom(), cfg, trajectories, theta, KINDS + ("trend_scale",))
+        self.assertEqual([batch["training_times"] for batch in info["operator_prior"]["pooled"]["batches"]],
+                         [12, 16, 17])
 
 
 if __name__ == "__main__":

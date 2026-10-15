@@ -2601,6 +2601,54 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 # likewise every case in benchmark_cases.COHORT_SWEEP_CASES
 ```
 
+### Amendment before any sweep fit: the blocked solver in batches
+
+**What happened.** The K = 64 smoke run was stopped at 23 GB of memory,
+before its first update. A stage profile on the smoke data showed why. The
+program was written out once per past patient, so compiling it took
+1.7 minutes at K = 8 and 14 minutes at K = 16, growing about as K^3.3. At
+K = 64 that is about 16 hours and well over 16 GB. The updates themselves
+were fast (13 and 41 ms each).
+
+**The change.** Past patients with the same number of scans (12, 16 or 17)
+are now computed together as one batch, so the program has at most three
+batches whatever K is. The Gaussian-process settings (length scale,
+variance, noise and trend scale) are drawn as one array over patients and
+modes, not one number per patient and mode. The model, its priors, the
+equations and the approximation (an independent normal for each log
+setting) are unchanged. Only the blocked solver changes, and only the
+sweep uses it.
+
+**Checks.**
+- Tests: the evidence, its gradient and every posterior equal the earlier
+  (stacked) solver's to rounding, for one to four patients. This also holds
+  with the drug input, the learned trend scale and tempering
+  (`core/weakform_opinf/tests/test_partial_pooling.py`).
+- The real K = 8 data (seed 48), at that fit's mean settings: in float64,
+  the log density agrees to 2e-16 and the gradients to 1e-12. In float32,
+  as the fits run, they agree to rounding (log density 2e-6).
+- Fits that do not use the blocked solver are unchanged. Three updates of
+  four existing fits give the same parameters bit for bit. The printed loss
+  differs by 1-4 units in the last place from run to run, as it did before.
+- What does change is the random stream: the starting point and each
+  update's noise are drawn differently, as with another fit seed. So the
+  K = 8 rerun checks the stacked K = 8 fits only up to such differences.
+
+**New profile** (development seed 45, 20 updates; not a result):
+
+| K | Compile | Peak memory | Per update | 12000 updates |
+|---|---|---|---|---|
+| 8 | 6 s | 2.6 GB | 13 ms | 2.6 min |
+| 16 | 6 s | 2.6 GB | 29 ms | 5.7 min |
+| 64 | 8 s | 3.5 GB | 171 ms | 34 min |
+
+A K = 64 smoke run through the whole pipeline (fit, export and
+evaluation) took 7.5 minutes and peaked at 3.7 GB. One K = 64 fit
+therefore takes about 40 minutes. That is under the declared 4 hours, so
+K = 64 runs. It stays below 4 GB, so it need not run alone; it is queued
+last, at most two fits at a time. No sweep fit had run when this was
+written.
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
