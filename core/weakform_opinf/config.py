@@ -49,6 +49,10 @@ class WeakFormConfig:
     """Marginalize a Gaussian trend in time and integrated scalar input."""
     gp_noise_prior: str = "spectrum"
     """'measurement' uses supplied projected measurement variances for noise priors."""
+    gp_trend_scale: str = "fixed"
+    """Input-trend coefficient prior sd per mode. 'fixed' (default, every earlier
+    experiment): sd(y_i), the SD of mode i's observations across the scans. 'learned': κ_i sd(y_i)
+    with log κ_i ~ N(0, hier_tau_scale²), a GP hyperparameter fitted with ℓ, σ², ν."""
 
     # ── Weak-form test functions ─────────────────────────────────────────
     window_size: int = 20
@@ -143,6 +147,9 @@ class WeakFormConfig:
         _one_of("op_prior_mode", self.op_prior_mode, {"block_hier", "fixed"})
         _one_of("operator_solver", self.operator_solver, {"normal", "qr"})
         _one_of("gp_noise_prior", self.gp_noise_prior, {"spectrum", "measurement"})
+        _one_of("gp_trend_scale", self.gp_trend_scale, {"fixed", "learned"})
+        if self.gp_trend_scale == "learned" and not self.gp_input_trend:
+            raise ValueError("gp_trend_scale='learned' needs the input trend (gp_input_trend=True)")
         _one_of("precision", self.precision, {"default", "float32", "float64"})
         _one_of("infer", self.infer, {"svi", "nuts"})
         _one_of("weak_slack", self.weak_slack, {"grid", "support", "legacy"})

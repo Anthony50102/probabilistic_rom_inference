@@ -48,11 +48,17 @@ def _checked_steps(steps, default):
     return total
 
 
+# Production settings added after earlier fits were recorded, at the values those fits used.
+LATER_CONFIG_DEFAULTS = {"gp_trend_scale": "fixed"}
+
+
 def _same_request(path, requested):
     """Refuse to reuse or resume a fit that was started with different settings."""
     if not path.exists():
         return
     recorded = bd.read_json(path)
+    if "production_config" in recorded:
+        recorded["production_config"] = {**LATER_CONFIG_DEFAULTS, **recorded["production_config"]}
     changed = {key: (recorded.get(key), value) for key, value in requested.items() if recorded.get(key) != value}
     if changed:
         raise ValueError(f"{path.parent} was started with different settings {changed} (recorded, requested); "
@@ -314,10 +320,12 @@ def _export_production(folder, cfg, gamma2, observations, guide, svi, state, con
         "mean_tau_block": mean_tau, "posterior_key": np.asarray(posterior_key),
         "operator_root_key": np.asarray(operator_key),
     }
+    if len(theta) == 4:
+        arrays.update(gp_trend_scale_samples=np.asarray(theta[3]), mean_trend_scale=mean_hypers[3])
     arrays = canonical_layout(arrays, cfg.operators, r)
     bd.write_npz(folder / "operators.npz", **arrays)
     # Native initial-state rule: GP posterior sd at t0 from the mean hyperparameters, 500 draws.
-    sigma = _ic_sigma(observations["t_sampled"], *(value[0] for value in mean_hypers), r,
+    sigma = _ic_sigma(observations["t_sampled"], *(value[0] for value in mean_hypers[:3]), r,
                       roundoff_nugget=cfg.gp_jitter_rel is None)
     epsilon = np.random.default_rng(cfg.seed).standard_normal((PRODUCTION_DRAWS, r))
     draws = np.broadcast_to(observations["q0"], (PRODUCTION_DRAWS, r))

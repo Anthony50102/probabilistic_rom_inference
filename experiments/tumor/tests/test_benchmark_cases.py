@@ -6,7 +6,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 
-from benchmark_cases import (CASES, LEGACY_PODS, PATIENT_DOSE_DAYS, REPORTED_CASES, SCAN_SCHEDULE_CASES,
+from benchmark_cases import (CASES, LEARNED_TREND_CASES, LEGACY_PODS, PATIENT_DOSE_DAYS, REPORTED_CASES,
+                             SCAN_SCHEDULE_CASES,
                              SPARSE_FIX_CASES, PODSettings, describe, galerkin_operators, get_case, production_config,
                              regular_scan_days, stride_scan_days, _adapter)
 from core.weakform_opinf import WeakFormConfig
@@ -22,7 +23,7 @@ class BenchmarkCaseTests(unittest.TestCase):
                                                             "midcourse-regimen-chemo", "midcourse-galerkin-chemo",
                                                             "midcourse-logistic-chemo", "midcourse-regimen-trend-chemo",
                                                             "midcourse-logistic-trend-chemo"} | set(SCAN_SCHEDULE_CASES)
-                         | set(SPARSE_FIX_CASES))
+                         | set(SPARSE_FIX_CASES) | set(LEARNED_TREND_CASES))
         self.assertEqual(CASES["untreated-growth"].dose_days, ())
         self.assertEqual(CASES["untreated-growth"].prediction_end, 90.)
         single, multi = CASES["single-dose-chemo"], CASES["multi-dose-chemo"]
@@ -63,6 +64,8 @@ class BenchmarkCaseTests(unittest.TestCase):
                 self.assertEqual(cfg.gp_noise_prior, case.gp_noise_prior)
                 self.assertEqual(case.gp_noise_prior == "measurement",
                                  name in SPARSE_FIX_CASES and "known-noise" in name)
+                self.assertEqual(cfg.gp_trend_scale, case.gp_trend_scale)
+                self.assertEqual(case.gp_trend_scale == "learned", name in LEARNED_TREND_CASES)
                 self.assertEqual(cfg.operator_solver, "qr")
                 self.assertEqual(cfg.precision, "default")
                 self.assertEqual(cfg.num_steps, 12000)
@@ -225,6 +228,22 @@ class BenchmarkCaseTests(unittest.TestCase):
             replace(CASES["midcourse-reduced-trend-chemo"], gp_noise_prior="oracle")
         with self.assertRaises(ValueError):
             replace(get_case("multi-dose-chemo", "oracle_masked"), gp_noise_prior="measurement")
+
+    def test_learned_trend_cases_change_only_the_trend_scale(self):
+        self.assertEqual(len(LEARNED_TREND_CASES), 5)
+        for name in LEARNED_TREND_CASES:
+            with self.subTest(case=name):
+                case, source = CASES[name], CASES[name.removesuffix("-learned-trend")]
+                self.assertEqual(case.gp_trend_scale, "learned")
+                self.assertEqual(source.gp_noise_prior, "spectrum")
+                self.assertEqual(replace(case, name=source.name, description=source.description,
+                                         gp_trend_scale="fixed"), source)
+                self.assertEqual(production_config(case).gp_trend_scale, "learned")
+                self.assertEqual(describe(case)["gp_trend_scale"], "learned")
+                self.assertNotIn("gp_trend_scale", describe(source))
+        for value in ("free", "learned"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                replace(CASES["multi-dose-chemo"], gp_trend_scale=value)
 
     def test_segmented_scans_fit_their_own_POD(self):
         case = CASES["multi-dose-chemo"]

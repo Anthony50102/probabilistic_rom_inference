@@ -35,7 +35,7 @@ for _path in (str(ROOT), str(SCRIPT_DIR)):
 
 from benchmark_cases import (  # noqa: E402
     CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION, OBSERVATION_MODELS, REPORTED_CASES,
-    SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, BenchmarkCase, PODSettings, describe, get_case)
+    LEARNED_TREND_CASES, SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, BenchmarkCase, PODSettings, describe, get_case)
 
 TUMORTWIN = ROOT.parent / "TumorTwin"
 PATIENT = "TNBC_demo_001"
@@ -69,6 +69,8 @@ DEFAULT_SEEDS = {
     **{name: (48, 49, 50) for name in SCAN_SCHEDULE_CASES},
     # Sparse-scan fixes: likewise (seed 45 also checked the measurement-noise formula, scans only, no fit).
     **{name: (48, 49, 50) for name in SPARSE_FIX_CASES},
+    # Learned trend scale: likewise (the diagnosis behind it fitted GPs alone to acquisitions 45 and 48, no ROM fit).
+    **{name: (48, 49, 50) for name in LEARNED_TREND_CASES},
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048

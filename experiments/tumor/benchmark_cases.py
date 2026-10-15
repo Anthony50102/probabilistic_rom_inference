@@ -46,6 +46,11 @@ at different points of the weekly dose cycle; ``-r2`` keeps two POD modes. The
 120-scan ``regular-scans-known-noise`` control checks the noise prior on dense
 scans.
 
+The learned-trend cases (``LEARNED_TREND_CASES``) repeat the weekly, every-8-day
+and (mid-course) 120-scan schedules with the default noise prior but learn the
+input-aware GP's trend-coefficient prior scale with the other GP hyperparameters
+(``gp_trend_scale="learned"``) instead of fixing it at each mode's observed spread.
+
 Observation models
 ------------------
 ``segmented`` (reported): every scan, including the baseline, adds Gaussian
@@ -126,6 +131,9 @@ class BenchmarkCase:
     # Centre of each mode's GP noise prior: 1% of the mode's variance ("spectrum") or the scans' known measurement
     # noise ("measurement", benchmark_data.scan_noise_variances).
     gp_noise_prior: str = "spectrum"
+    # Prior sd of the input-aware GP's trend coefficients: each mode's observed spread ("fixed") or that spread times a
+    # multiplier learned with the other GP hyperparameters ("learned", WeakFormConfig.gp_trend_scale).
+    gp_trend_scale: str = "fixed"
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
@@ -134,6 +142,10 @@ class BenchmarkCase:
             raise ValueError(f"Unknown GP noise prior: {self.gp_noise_prior}")
         if self.gp_noise_prior == "measurement" and self.observation != "segmented":
             raise ValueError("The measurement-noise prior is derived from segmented scans.")
+        if self.gp_trend_scale not in ("fixed", "learned"):
+            raise ValueError(f"Unknown GP trend scale: {self.gp_trend_scale}")
+        if self.gp_trend_scale == "learned" and not self.input_aware_gp:
+            raise ValueError("A learned trend scale needs the input-aware GP's trend.")
         if self.observation == "segmented" and self.pod.source != "observed_training":
             raise ValueError("Segmented acquisitions fit their POD to the noisy training scans "
                              "(observed_training); simulation bases belong to the oracle_masked design.")
@@ -310,6 +322,19 @@ def _sparse_fix_case(base: str, schedule: str, known_noise: bool, rank: int, suf
 SPARSE_FIX_CASES = tuple(f"{base}-{design[-1]}" for base, designs in SPARSE_FIX_DESIGNS.items() for design in designs)
 CASES.update({f"{base}-{design[-1]}": _sparse_fix_case(base, *design)
               for base, designs in SPARSE_FIX_DESIGNS.items() for design in designs})
+
+# Learned trend scale (declared after the sparse-fix diagnosis, before any fit): the same acquisitions as the weekly,
+# every-8-day and (mid-course) 120-scan cases with the default noise prior; only the GP trend's prior scale is learned.
+LEARNED_TREND_SOURCES = {
+    "midcourse-reduced-trend-chemo": ("weekly-scans", "every8-scans", "regular-scans"),
+    "reduced-regimen-trend-chemo": ("weekly-scans", "every8-scans"),
+}
+LEARNED_TREND_CASES = tuple(f"{base}-{source}-learned-trend"
+                            for base, sources in LEARNED_TREND_SOURCES.items() for source in sources)
+CASES.update({f"{base}-{source}-learned-trend": replace(
+    CASES[f"{base}-{source}"], name=f"{base}-{source}-learned-trend", gp_trend_scale="learned",
+    description=f"As {base}-{source}; the GP trend's prior scale is learned with the other GP hyperparameters.")
+    for base, sources in LEARNED_TREND_SOURCES.items() for source in sources})
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
 
@@ -349,6 +374,8 @@ DEFAULT_POD_PROVENANCE = {
                                f"the weekly schedule's rank {rank}, which also clears the scan-noise threshold here "
                                "on acquisitions 45 and 48-50 (checked on the scans alone, before any fit)."))
        for base, designs in SPARSE_FIX_DESIGNS.items() for schedule, _, rank, suffix in designs},
+    **{f"{base}-{source}-learned-trend": f"As {base}-{source} (the same acquisitions and basis; not reselected)."
+       for base, sources in LEARNED_TREND_SOURCES.items() for source in sources},
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -434,7 +461,7 @@ def production_config(case: BenchmarkCase, pod: PODSettings | None = None):
         return replace(cfg, num_modes=settings.rank)
     operators = STRUCTURED_OPERATORS.get(case.structure) or galerkin_operators(case, settings)
     return replace(cfg, num_modes=settings.rank, operators=operators, gp_input_trend=case.input_aware_gp,
-                   gp_noise_prior=case.gp_noise_prior)
+                   gp_noise_prior=case.gp_noise_prior, gp_trend_scale=case.gp_trend_scale)
 
 
 def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
@@ -456,6 +483,10 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
     if fields["gp_noise_prior"] == "spectrum":
         # Likewise for recipes from before the measurement-noise prior.
         fields.pop("gp_noise_prior")
+    if fields["gp_trend_scale"] == "fixed":
+        # And from before the learned trend scale, whose config field is likewise left out.
+        fields.pop("gp_trend_scale")
+        config.pop("gp_trend_scale")
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")

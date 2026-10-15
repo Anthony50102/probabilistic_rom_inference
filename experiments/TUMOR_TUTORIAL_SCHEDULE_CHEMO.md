@@ -93,6 +93,10 @@ process's trend: its prior is too tight for 8-12 scans, so the process
 treats the dose cycle as noise or bends sharply between scans. See "Fixing
 sparse scans".
 
+**Learning the trend's prior scale: declared, running.** The trend's prior
+scale becomes a learned Gaussian-process setting, on the weekly, every-8-day
+and 120-scan schedules. See "Learning the Gaussian process's trend scale".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -1591,6 +1595,101 @@ process found a third one (sharp bends). Timing alone cannot help while the
 Gaussian process smooths the cycle away. The next declared test therefore
 loosens the trend's prior; see "Learning the Gaussian process's trend
 scale".
+
+## Learning the Gaussian process's trend scale (rule declared before any fit)
+
+**Why.** "Why the fixes fail" found that the input-aware Gaussian process's
+trend prior is too tight for 8-12 scans. The process then explains the dose
+cycle with noise or sharp bends, and the regression gets poor targets. The
+scans themselves prefer a looser trend. In the data-only check, of the
+factors tried (1, 10, 100 and 1,000), the marginal likelihood was highest
+at 10 times the prior variance, about 3 times the SD. Fixing a factor of 10
+after seeing that check would be tuning, so the factor is learned instead,
+like the other Gaussian-process settings.
+
+**Change: one setting, `gp_trend_scale="learned"`** (`WeakFormConfig`).
+- **Before (`"fixed"`, every earlier fit).** Each trend coefficient of mode
+  i (the constant, the straight line and the cumulative drug exposure) has
+  prior SD sd(y_i): the SD of mode i's observations across the scans.
+- **Now.** The prior SD is kappa_i * sd(y_i). kappa_i is one new
+  Gaussian-process hyperparameter per mode, with log kappa_i ~ N(0, 3^2):
+  a factor of 20 either way at one SD. This is the width the operator
+  block scales already use (`hier_tau_scale`).
+- **Where it is fitted.** With the lengthscale, variance and noise of the
+  same mode, in both places those are fitted:
+  - the data-only fit that sets the tempering;
+  - the main fit.
+- **Check.** kappa_i = 1 gives back the fixed model exactly (unit tests in
+  `core/weakform_opinf/tests/test_trend_scale.py`).
+- **Unchanged.** Everything else: the default noise prior, the acquisitions,
+  bases and ranks, and the training steps.
+
+**Design.** Five cases (`benchmark_cases.LEARNED_TREND_CASES`). Each repeats
+a declared case with the same acquisitions, and only the trend's prior
+changes. The known-noise prior is not carried over: each case then differs
+from its declared partner in one setting only.
+
+| Case | Scans | Rank | Fixed-trend partner (median 1 / 0.75 / 0.5x) |
+|---|---|---|---|
+| `midcourse-reduced-trend-chemo-weekly-scans-learned-trend` | weekly to day 84 (12) | 4 | 22.1 / 24.1 / 32.4 |
+| `midcourse-reduced-trend-chemo-every8-scans-learned-trend` | every 8 days to day 84 (11) | 4 | 47.2 / 32.9 / 27.0 |
+| `midcourse-reduced-trend-chemo-regular-scans-learned-trend` | 120 evenly spaced to day 84 (control) | 4 | 8.9 / 6.3 / 6.1 |
+| `reduced-regimen-trend-chemo-weekly-scans-learned-trend` | weekly to day 57 (8) | 3 | 42.4 / 49.1 / 53.9 |
+| `reduced-regimen-trend-chemo-every8-scans-learned-trend` | every 8 days to day 57 (8) | 3 | 39.2 / 47.6 / 54.4 |
+
+**Rule.** As in "Realistic scan schedules":
+1. **Runs.** Seeds 48-50, each run once. Nothing is tuned.
+2. **Metric and arms.** The same metric. Scenario arms are 1, 0.75 and 0.5x;
+   0.25x and 0x are stress arms, reported and not judged.
+3. **Bar.** A case passes on its split if every scenario arm's median is at
+   most 18.9%.
+4. **Also reported.**
+   - The learned kappa (main fit, and the data-only fit) and the tempering's
+     effective observations per mode.
+   - The training-window error, the day-119 burden and the share of the
+     true dose effect.
+   - How often the 0.5x and 1x bands hold the truth, and their widths.
+   - Mode 1's drug coefficient, c_1 and N_11, and the Gaussian process's
+     lengthscale and noise.
+
+**Expectations, written before any fit.**
+- **Control (120 scans).** No change: within about 1 point of 8.9, 6.3 and
+  6.1%. With dense scans, the scale made no difference to the targets in the
+  data-only check.
+- **Weekly and every 8 days, to day 84.**
+  - Part of the drug effect should come back, and the errors should fall.
+  - A pass at 1x and 0.75x is possible.
+  - At 0.5x a fail is more likely: the targets still carry 9-17% error,
+    and each mode has 6-8 effective observations for 10 unknowns. The rest
+    comes from the operator prior, centred on zero.
+- **To day 57.** Probably fails: 8 scans, of which only 4 are treated. Even
+  with 120 scans, the free model's regrowth after a cut from day 57 was too
+  slow.
+
+**Disclosures.**
+- **The diagnosis used data.** It fitted Gaussian processes alone (no ROM)
+  to the scans of evaluation seed 48 and development seed 45. It scored the
+  targets against seed 48's noise-free training-window states. No forecast
+  was computed.
+- **Smoke run.** A smoke run checked the code end to end on development
+  seed 45 (`midcourse-reduced-trend-chemo-weekly-scans-learned-trend`). It
+  used 20 training updates instead of 12,000, so the main fit's kappa barely
+  moved from 1. The data-only fit, which only sets the tempering, ran in
+  full and gave kappa = 3.8, 0.33, 1.5 and 0.61 for modes 1-4. It printed forecast errors of 21.8, 24.8 and 29.8% (1, 0.75 and
+  0.5x). These are not results and set nothing.
+- **Seeds are near-replicates.** On a fixed schedule, seeds 45 and 48-50
+  differ only in scanner noise. Seed agreement here shows robustness to
+  noise, not to scan timing or to another tumour.
+
+If no realistic schedule passes, the next step is a population prior on the
+tumour-wide growth and kill rates, learned from a virtual cohort. It will be
+declared separately.
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo-weekly-scans-learned-trend   # 48-50
+# likewise every case in benchmark_cases.LEARNED_TREND_CASES
+```
 
 ## Open decisions
 

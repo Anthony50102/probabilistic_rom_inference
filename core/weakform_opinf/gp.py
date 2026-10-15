@@ -119,9 +119,12 @@ def make_gp_conditional(time_sampled, jitter_rel=1e-4, *,
         if feature_map is None:
             batch = jax.vmap(_single_gp_conditional)
         else:
-            def batch(ells, sig2s, nus, observations):
+            def batch(ells, sig2s, nus, observations, trend_scales=None):
+                # trend_scales multiply the coefficient prior sds (variances by their squares).
+                variances = (feature_variances_jnp if trend_scales is None
+                             else feature_variances_jnp * trend_scales ** 2)
                 return jax.vmap(_single_gp_conditional)(
-                    ells, sig2s, nus, observations, feature_variances_jnp)
+                    ells, sig2s, nus, observations, variances)
         return _single_gp_conditional, batch
 
     return _make
@@ -145,7 +148,7 @@ def trajectory_gp_conditional(trajectory, cfg):
         trajectory["t_sampled"], jitter_rel=cfg.gp_jitter_rel, **kwargs)
 
 
-def effective_dof(trajectory, cfg, ells, sig2s, nus):
+def effective_dof(trajectory, cfg, ells, sig2s, nus, trend_scales=None):
     """Effective degrees of freedom df_i = tr K_i (K_i + ν_i I)⁻¹ of each mode's
     GP smoother at the training times: the number of independent pieces of
     information its posterior mean (and every derivative or weak-form row built
@@ -158,7 +161,10 @@ def effective_dof(trajectory, cfg, ells, sig2s, nus):
         from .features import input_trend_features
         table = trajectory["input_table"]
         H = input_trend_features(t, t, table["times"], table["values"])["train"]
-        trend = H @ H.T, np.var(trajectory["snapshots_comp"], axis=1) + 1e-12
+        variances = np.var(trajectory["snapshots_comp"], axis=1) + 1e-12
+        if trend_scales is not None:
+            variances = variances * np.asarray(trend_scales, dtype=float) ** 2
+        trend = H @ H.T, variances
     out = []
     for i, (ell, sig2, nu) in enumerate(zip(*(np.asarray(x, dtype=float) for x in (ells, sig2s, nus)))):
         K = sig2 * np.exp(-sq / (2.0 * ell ** 2))

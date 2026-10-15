@@ -29,14 +29,16 @@ from core.bayesian_opinf import generate_rom_predictions
 
 
 def _stack_theta(post, num_traj, num_modes):
-    """Stack posterior hyper-samples into (S, num_traj, num_modes) arrays."""
+    """Stack posterior hyper-samples into (S, num_traj, num_modes) arrays: (ℓ, σ², ν),
+    plus the input-trend sd multipliers κ when they were learned."""
     def g(kind):
         cols = []
         for ic in range(num_traj):
             cols.append(jnp.stack(
                 [post[f"{kind}_{ic}_{i}"] for i in range(num_modes)], axis=-1))
         return jnp.stack(cols, axis=1)   # (S, num_traj, num_modes)
-    return g("lengthscale"), g("variance"), g("noise")
+    learned = "trend_scale_0_0" in post
+    return (g("lengthscale"), g("variance"), g("noise")) + ((g("trend_scale"),) if learned else ())
 
 
 def _ic_sigma(t_sampled, ells_m, sig2s_m, nus_m, num_modes, roundoff_nugget=False):
@@ -131,7 +133,7 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
               f"{float(losses[-1]):.2f}  ({time.time() - t0:.1f}s)")
 
     # ── Sample O from its closed-form conditional per θ-sample ───────────
-    ells_s, sig2s_s, nus_s = _stack_theta(post, num_traj, num_modes)
+    ells_s, sig2s_s, nus_s, *trend_s = _stack_theta(post, num_traj, num_modes)
     tau_block_s = (jnp.exp(jnp.asarray(post["log_tau_block"]))
                    if "log_tau_block" in post else None)
     sigma_O_j = None if cfg.sigma_O is None else jnp.asarray(cfg.sigma_O)
@@ -147,7 +149,7 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
 
     O_samples = []
     for s in range(npost):
-        theta_s = (ells_s[s], sig2s_s[s], nus_s[s])
+        theta_s = (ells_s[s], sig2s_s[s], nus_s[s]) + tuple(t[s] for t in trend_s)
         tau_s = None if tau_block_s is None else tau_block_s[s]
         O_samples.append(np.asarray(_draw_O(theta_s, keys[s], tau_s)))
     O_samples = np.stack(O_samples)
@@ -156,7 +158,7 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
         print(f"  ‖O‖ median={np.median(op_norms):.1f}")
 
     mean_hypers = tuple(np.asarray(s).mean(0)
-                        for s in (ells_s, sig2s_s, nus_s))
+                        for s in (ells_s, sig2s_s, nus_s, *trend_s))
     per_target = _predict_targets(prepared, cfg, O_samples, mean_hypers)
     agg = _aggregate_targets(prepared.eval_targets, per_target)
     runtime = time.time() - t0
@@ -168,6 +170,7 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
         gp_lengthscale_samples=np.asarray(ells_s),
         gp_variance_samples=np.asarray(sig2s_s),
         gp_noise_samples=np.asarray(nus_s), gp_prior_info=prior_info,
+        **({"gp_trend_scale_samples": np.asarray(trend_s[0])} if trend_s else {}),
         op_norm_median=float(np.median(op_norms)),
         runtime=runtime, num_modes=num_modes,
         basis=prepared.basis, rom=rom, training_span=prepared.training_span,
@@ -202,11 +205,12 @@ def _predict_targets(prepared, cfg, O_samples, mean_hypers):
                 _, batch = trajectory_gp_conditional(trajectory, cfg)(
                     np.asarray([tgt.t_pred[0]]))
                 state_covariance = batch(
-                    *(jnp.asarray(h) for h in hypers),
-                    jnp.asarray(trajectory["snapshots_comp"]))[3]
+                    *(jnp.asarray(h) for h in hypers[:3]),
+                    jnp.asarray(trajectory["snapshots_comp"]),
+                    *(jnp.asarray(h) for h in hypers[3:]))[3]
                 sig_ic = np.sqrt(np.maximum(np.asarray(state_covariance[:, 0, 0]), 0.))
             else:
-                sig_ic = _ic_sigma(tgt.t_sampled, *hypers, cfg.num_modes,
+                sig_ic = _ic_sigma(tgt.t_sampled, *hypers[:3], cfg.num_modes,
                                    roundoff_nugget=cfg.gp_jitter_rel is None)
             eps_ic = rng_ic.standard_normal((npost, cfg.num_modes))
             state0_samples = (state0_samples

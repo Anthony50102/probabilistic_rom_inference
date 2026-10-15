@@ -184,7 +184,8 @@ def _prior_locs(trajectory, cfg):
 
 def _sample_gp_hypers(locs, cfg):
     """Per-trajectory, per-mode GP hyperparameters (ℓ, σ², ν) drawn from their
-    priors; a list over trajectories of (ells, sig2s, nus) stacks."""
+    priors; a list over trajectories of (ells, sig2s, nus) stacks, plus the
+    input-trend sd multipliers κ when ``cfg.gp_trend_scale == 'learned'``."""
     theta = []
     for ic, loc in enumerate(locs):
         ells = jnp.stack([
@@ -199,7 +200,13 @@ def _sample_gp_hypers(locs, cfg):
             numpyro.sample(f"noise_{ic}_{i}",
                            dist.LogNormal(loc["log_nu_locs"][i], cfg.nu_prior_scale))
             for i in range(cfg.num_modes)])
-        theta.append((ells, sig2s, nus))
+        if cfg.gp_trend_scale == "learned":
+            kappas = jnp.stack([
+                numpyro.sample(f"trend_scale_{ic}_{i}", dist.LogNormal(0.0, cfg.hier_tau_scale))
+                for i in range(cfg.num_modes)])
+            theta.append((ells, sig2s, nus, kappas))
+        else:
+            theta.append((ells, sig2s, nus))
     return theta
 
 
@@ -207,7 +214,7 @@ def data_only_gp_fit(trajectories, time_evals, cfg):
     """GP hyperparameters fitted to the data alone (float64): the MAP of their
     priors times the GP marginal likelihood, without the operator evidence.
     Returns a list over trajectories of (ells, sig2s, nus) arrays and the
-    optimiser's convergence record."""
+    optimiser's convergence record (with the trend multipliers κ when learned)."""
     from jax.flatten_util import ravel_pytree
     from numpyro.infer import init_to_median
     from numpyro.infer.util import initialize_model
@@ -221,8 +228,8 @@ def data_only_gp_fit(trajectories, time_evals, cfg):
 
         def gp_model():
             total = 0.0
-            for (ells, sig2s, nus), batch, y in zip(_sample_gp_hypers(locs, cfg), batches, observations):
-                total = total + jnp.sum(batch(ells, sig2s, nus, y)[4])
+            for th, batch, y in zip(_sample_gp_hypers(locs, cfg), batches, observations):
+                total = total + jnp.sum(batch(*th[:3], y, *th[3:])[4])
             if cfg.mll_weight > 0:
                 numpyro.factor("gp_mll", cfg.mll_weight * total)
 
@@ -239,8 +246,9 @@ def data_only_gp_fit(trajectories, time_evals, cfg):
                        options={"maxiter": 5000})
         # Positive hyperparameters are optimised as logarithms.
         hyp = {k: np.exp(np.asarray(v, dtype=float)) for k, v in unravel(jnp.asarray(fit.x)).items()}
+    kinds = ("lengthscale", "variance", "noise") + (("trend_scale",) if cfg.gp_trend_scale == "learned" else ())
     theta = [tuple(np.array([hyp[f"{kind}_{ic}_{i}"] for i in range(cfg.num_modes)])
-                   for kind in ("lengthscale", "variance", "noise"))
+                   for kind in kinds)
              for ic in range(len(trajectories))]
     return theta, dict(converged=bool(fit.success), iterations=int(fit.nit))
 
@@ -262,7 +270,7 @@ def tempering_exponents(trajectories, time_evals, num_rows, cfg):
                 df=[d.tolist() for d in df], rows=[int(n) for n in num_rows],
                 data_only_gp=dict(fit, seconds=round(time.time() - started, 2),
                                   **{k: [th[j].tolist() for th in theta]
-                                     for j, k in enumerate(("ell", "sig2", "nu"))}))
+                                     for j, k in enumerate(("ell", "sig2", "nu", "trend_scale")[:len(theta[0])])}))
     return alpha, info
 
 
@@ -420,11 +428,12 @@ def build_model(rom, trajectories, cfg, row_maps=None):
         blocks = (f_X, mu_zs, Sigma_D, wpsi @ f_X, -(Xs @ wpsi_dot.T), Sigma_W)
         return blocks, correction
 
-    def _build_blocks(ctx, ells, sig2s, nus, gamma2):
+    def _build_blocks(ctx, ells, sig2s, nus, gamma2, trend_scales=None):
         """Per-trajectory (A_D, y_D, Sigma_D, A_W, y_W, Sigma_W), states, mll
         and the power-likelihood correction (0 for the slack rule)."""
+        extra = () if trend_scales is None else (trend_scales,)
         Xs, mu_zs, K_posts_Z, K_posts_X, mlls = ctx["batch_gp"](
-            ells, sig2s, nus, ctx["y_obs"])
+            ells, sig2s, nus, ctx["y_obs"], *extra)
         f_X = rom.model._assemble_data_matrix(Xs, inputs=ctx["inputs_eval"])
         if tempered:
             blocks, correction = _tempered_blocks(ctx, Xs, f_X, mu_zs, K_posts_Z, K_posts_X, sig2s, ells)
@@ -486,8 +495,8 @@ def build_model(rom, trajectories, cfg, row_maps=None):
         mll_total = 0.0
         correction = 0.0
         for ic, ctx in enumerate(traj_ctx):
-            ells, sig2s, nus = theta[ic]
-            blocks, Xs, mll, corr = _build_blocks(ctx, ells, sig2s, nus, gamma2)
+            ells, sig2s, nus, *trend = theta[ic]
+            blocks, Xs, mll, corr = _build_blocks(ctx, ells, sig2s, nus, gamma2, *trend)
             traj_blocks.append(blocks)
             mll_total = mll_total + mll
             correction = correction + corr
@@ -513,7 +522,7 @@ def build_model(rom, trajectories, cfg, row_maps=None):
     @jax.jit
     def posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None):
         """Closed-form O posterior given θ. ``theta_stacked`` is
-        (ells, sig2s, nus) each shaped (num_traj, num_modes)."""
+        (ells, sig2s, nus[, trend_scales]) each shaped (num_traj, num_modes)."""
         gamma2 = gamma2_resolved if gamma2 is None else gamma2
         if nondim:
             kappa_block = jnp.ones(n_blocks) if tau_block is None else tau_block
@@ -524,11 +533,11 @@ def build_model(rom, trajectories, cfg, row_maps=None):
         else:
             prior_prec_vec, _ = prior_prec_from_tau(tau_block)
 
-        ells_all, sig2s_all, nus_all = theta_stacked
+        ells_all, sig2s_all, nus_all, *trend_all = theta_stacked
         traj_blocks = []
         for ic, ctx in enumerate(traj_ctx):
             blocks, _, _, _ = _build_blocks(
-                ctx, ells_all[ic], sig2s_all[ic], nus_all[ic], gamma2)
+                ctx, ells_all[ic], sig2s_all[ic], nus_all[ic], gamma2, *(t[ic] for t in trend_all))
             traj_blocks.append(blocks)
 
         mu_all, C_all = [], []
@@ -555,4 +564,7 @@ def build_model(rom, trajectories, cfg, row_maps=None):
         num_traj=num_traj, m_total=m_total, n_blocks=n_blocks,
         operator_prior=operator_prior, gamma2=gamma2_resolved, closure=closure_info,
     )
+    if cfg.gp_trend_scale == "learned":
+        prior_info["trend_scale"] = dict(rule="learned", sd="kappa_i * sd(y_i)",
+                                         log_kappa_prior=["normal", 0.0, float(cfg.hier_tau_scale)])
     return model, posterior_O_fn, time_evals, prior_info

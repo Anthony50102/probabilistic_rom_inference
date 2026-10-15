@@ -180,7 +180,8 @@ class CommandLineTests(unittest.TestCase):
                                             "midcourse-regimen-trend-chemo": (48, 49, 50),
                                             "midcourse-logistic-trend-chemo": (48, 49, 50),
                                             **{name: (48, 49, 50) for name in bd.SCAN_SCHEDULE_CASES},
-                                            **{name: (48, 49, 50) for name in bd.SPARSE_FIX_CASES}})
+                                            **{name: (48, 49, 50) for name in bd.SPARSE_FIX_CASES},
+                                            **{name: (48, 49, 50) for name in bd.LEARNED_TREND_CASES}})
         self.assertEqual(bd.LEGACY_SEEDS, {"untreated-growth": (42, 43, 44), "single-dose-chemo": (45, 46, 47),
                                            "multi-dose-chemo": (48, 49, 50)})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name)) for name in bd.DEFAULT_SEEDS},
@@ -211,7 +212,12 @@ class CommandLineTests(unittest.TestCase):
                                  "reduced-regimen-trend-chemo": {
                                      "weekly-scans-known-noise": 3, "every8-scans": 3, "every8-scans-known-noise": 3,
                                      "every8-scans-known-noise-r2": 2}}.items()
-                             for suffix, rank in ranks.items()}})
+                             for suffix, rank in ranks.items()},
+                          **{f"{base}-{source}-learned-trend": f"segmented_observed_none_r{rank}"
+                             for base, ranks in {"midcourse-reduced-trend-chemo": {
+                                 "weekly-scans": 4, "every8-scans": 4, "regular-scans": 4},
+                                 "reduced-regimen-trend-chemo": {"weekly-scans": 3, "every8-scans": 3}}.items()
+                             for source, rank in ranks.items()}})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.REPORTED_CASES},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})
