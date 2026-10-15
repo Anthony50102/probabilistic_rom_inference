@@ -34,8 +34,9 @@ for _path in (str(ROOT), str(SCRIPT_DIR)):
         sys.path.insert(0, _path)
 
 from benchmark_cases import (  # noqa: E402
-    CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION, OBSERVATION_MODELS, REPORTED_CASES,
-    LEARNED_TREND_CASES, SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, BenchmarkCase, PODSettings, describe, get_case)
+    CASES, COHORT_CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION, OBSERVATION_MODELS,
+    REPORTED_CASES, LEARNED_TREND_CASES, SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, BenchmarkCase, PODSettings, describe,
+    get_case)
 
 TUMORTWIN = ROOT.parent / "TumorTwin"
 PATIENT = "TNBC_demo_001"
@@ -71,6 +72,8 @@ DEFAULT_SEEDS = {
     **{name: (48, 49, 50) for name in SPARSE_FIX_CASES},
     # Learned trend scale: likewise (the diagnosis behind it fitted GPs alone to acquisitions 45 and 48, no ROM fit).
     **{name: (48, 49, 50) for name in LEARNED_TREND_CASES},
+    # Population prior: likewise (seed 45 only for the smoke run; the cohort is built from its own simulations).
+    **{name: (48, 49, 50) for name in COHORT_CASES},
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048
@@ -658,7 +661,7 @@ def _training_fields(case, seed, source):
 
 
 def _segmented_acquisition(case, seed, pod, source, geometry, folder):
-    """Segmented scans, their POD (saved to basis.npz) and the reduced observations."""
+    """Segmented scans, their POD (saved to basis.npz, or the cohort's basis) and the reduced observations."""
     times, clean, last_knot = _training_fields(case, seed, source)
     tissue = np.asarray(geometry["breast_mask"], dtype=bool).reshape(-1)
     shape = tuple(int(n) for n in geometry["grid_shape"])
@@ -674,26 +677,36 @@ def _segmented_acquisition(case, seed, pod, source, geometry, folder):
         lesion_voxels.append(int(lesion.sum()))
         false_positives.append(int(np.sum(lesion & (clean[j] <= 0.))))
         missed2 += float(np.sum(clean[j][~lesion]**2))
-    D, shift, singular_values = observed_pod(scans, pod)
-    threshold = noise_threshold(noise_sd, lesion_voxels)
-    resolved = int(np.sum(singular_values > threshold))
-    if pod.rank > resolved:
-        raise ValueError(f"Declared POD rank {pod.rank} exceeds the {resolved} modes above the scan-noise threshold "
-                         f"{threshold:.3g}; the extra modes would be pure noise.")
-    y, clean_q = D.T @ (scans - shift).T, D.T @ (clean - shift).T
-    write_npz(folder / "basis.npz", physical_matrix=D, physical_shift=shift, singular_values=singular_values,
-              source_training_times=times)
-    energy = singular_values**2
+    if case.cohort:
+        import benchmark_cohort
+        D, shift, cohort_basis = benchmark_cohort.cohort_basis(case, pod)
+        y, clean_q = D.T @ (scans - shift).T, D.T @ (clean - shift).T
+        pod_record = {
+            "basis": "virtual cohort (benchmark_cohort.py); this acquisition's scans are only projected",
+            "cohort_basis": cohort_basis,
+            "basis_captured_scan_energy": float(np.sum(y**2) / np.sum(scans**2))}
+    else:
+        D, shift, singular_values = observed_pod(scans, pod)
+        threshold = noise_threshold(noise_sd, lesion_voxels)
+        resolved = int(np.sum(singular_values > threshold))
+        if pod.rank > resolved:
+            raise ValueError(f"Declared POD rank {pod.rank} exceeds the {resolved} modes above the scan-noise "
+                             f"threshold {threshold:.3g}; the extra modes would be pure noise.")
+        y, clean_q = D.T @ (scans - shift).T, D.T @ (clean - shift).T
+        write_npz(folder / "basis.npz", physical_matrix=D, physical_shift=shift, singular_values=singular_values,
+                  source_training_times=times)
+        energy = singular_values**2
+        pod_record = {
+            "singular_value_threshold": threshold, "modes_above_threshold": resolved,
+            "threshold_rule": "Gavish-Donoho optimal hard threshold for the known noise level, n = mean lesion voxels",
+            "basis_cumulative_energy": float(energy[:pod.rank].sum() / energy.sum())}
     return times, y, clean_q, D, shift, {
         "observation_model": "segmented", "noise_sd": noise_sd,
         "noise_sd_rule": "noise_level x range of the noise-free training fields",
         "noisy_voxels": "every breast-tissue voxel of every scan, including the first", "detection": rule,
         "reported_cellularity": f"clipped to [0, {THETA:g}] inside the segmented lesion, zero elsewhere",
         "noise_sha256": noise_sha.hexdigest(), "latest_source_day_used": last_knot,
-        "lesion_voxels_per_scan": lesion_voxels,
-        "singular_value_threshold": threshold, "modes_above_threshold": resolved,
-        "threshold_rule": "Gavish-Donoho optimal hard threshold for the known noise level, n = mean lesion voxels",
-        "basis_cumulative_energy": float(energy[:pod.rank].sum() / energy.sum()),
+        "lesion_voxels_per_scan": lesion_voxels, **pod_record,
         "evaluation_only": {
             "false_positive_voxels_per_scan": false_positives,
             "missed_field_energy_percent": 100 * float(np.sqrt(missed2 / np.sum(clean**2))),
@@ -799,8 +812,10 @@ def prepare(case, seed, pod=None, root=None, log=print) -> Path:
             times, y, clean_q, D, shift, acquisition = _segmented_acquisition(
                 case, seed, pod, history, geometry, folder)
             basis_path = None
+            basis_file = acquisition["cohort_basis"]["path"] if case.cohort else folder / "basis.npz"
         else:
             D, shift, basis_path = chemo_basis(case, pod, log)
+            basis_file = basis_path
             times, y, clean_q, acquisition = _chemo_observations(case, seed, history, D, shift)
         volume = float(np.prod(geometry["spacing"]))
         inputs = _training_inputs(case)
@@ -811,8 +826,7 @@ def prepare(case, seed, pod=None, root=None, log=print) -> Path:
         }
         for arm, strength in arms(case).items():
             references[arm] = _chemo_reference(case, strength, D, shift, basis_path, log)
-        sources = {"training_history": file_record(chemo_history_path(case)),
-                   "basis": file_record(basis_path or folder / "basis.npz")}
+        sources = {"training_history": file_record(chemo_history_path(case)), "basis": file_record(basis_file)}
         sources.update({f"future_branch_{arm}": file_record(chemo_branch_path(case, strength))
                         for arm, strength in arms(case).items() if strength != case.training_strength})
     else:
@@ -843,7 +857,9 @@ def prepare(case, seed, pod=None, root=None, log=print) -> Path:
         "arms": arms(case), "acquisition": acquisition, "voxel_volume": volume, "sources": sources,
         "observations_sha256": digest(folder / "observations.npz"),
         "observation_model": case.observation,
-        "POD_fitted_on": ("noisy segmented training scans of this acquisition" if segmented else
+        "POD_fitted_on": ("noisy segmented scans of a virtual cohort of past patients (benchmark_cohort.py); this "
+                          "acquisition's scans are only projected" if case.cohort else
+                          "noisy segmented training scans of this acquisition" if segmented else
                           "noisy training observations" if not case.dose_days else
                           f"clean training-regimen history on days {case.training_span[0]:g}-"
                           f"{case.training_span[1]:g} ({pod.source})"),

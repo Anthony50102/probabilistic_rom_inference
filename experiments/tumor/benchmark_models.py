@@ -158,25 +158,68 @@ def _load_svi(path, template):
     return jax.tree_util.tree_unflatten(tree, restored), int(arrays["steps"]), arrays["losses"]
 
 
+def _run_svi(model, cfg, total, folder, gamma2, start_record, log):
+    """The production SVI (AutoNormal guide, clipped Adam), checkpointed every PRODUCTION_CHUNK updates and resumed
+    from the latest checkpoint; ``start_record`` is written to fit_start.json on a fresh start. Returns the guide,
+    SVI object and final state, the losses and the posterior/operator export keys."""
+    import jax
+    import jax.numpy as jnp
+    from jax import random
+    from numpyro.infer import SVI, Trace_ELBO, autoguide
+    from numpyro.infer.initialization import init_to_median
+    from numpyro.optim import ClippedAdam
+    guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
+    svi = SVI(model, guide, ClippedAdam(step_size=cfg.learning_rate), loss=Trace_ELBO())
+    remaining, init_key = random.split(random.PRNGKey(cfg.seed))
+    remaining, posterior_key = random.split(remaining)
+    _, operator_key = random.split(remaining)
+    state = svi.init(init_key, gamma2=gamma2)
+
+    checkpoints = folder / "checkpoints"
+    done, losses = 0, np.empty(0, dtype=np.float32)
+    existing = sorted(checkpoints.glob("step*.npz"))
+    if existing:
+        state, done, losses = _load_svi(existing[-1], state)
+        if len(losses) != done or done > total:
+            raise ValueError(f"Inconsistent production checkpoint {existing[-1]}.")
+        log(f"  resuming production SVI at update {done}")
+    else:
+        bd.write_json(folder / "fit_start.json", start_record)
+
+    @jax.jit
+    def step(current, unused):
+        return svi.update(current, gamma2=gamma2)
+
+    for left in range(done, total, PRODUCTION_CHUNK):
+        length = min(PRODUCTION_CHUNK, total - left)
+        state, chunk = jax.lax.scan(step, state, jnp.arange(length))
+        losses = np.r_[losses, np.asarray(chunk)]
+        _save_svi(checkpoints / f"step{left + length:05d}.npz", state, losses, left + length)
+        log(f"  production SVI {left + length}/{total}: loss {float(losses[-1]):.6g}")
+    bd.write_npz(folder / "losses.npz", losses=losses)
+    return guide, svi, state, losses, posterior_key, operator_key
+
+
 def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     """Run the production SVI and export 500 operator/initial-state posterior draws."""
     pod = case.pod if pod is None else pod
     folder = production_directory(case, seed, pod, root)
     cfg = production_config(case, pod)
     total = _checked_steps(steps, cfg.num_steps)
-    _same_request(folder / "fit_start.json", {"planned_updates": total, "production_config": asdict(cfg)})
+    requested = {"planned_updates": total, "production_config": asdict(cfg)}
+    cohort_prior = {}
+    if case.operator_prior_mean == "cohort":
+        import benchmark_cohort
+        # The population operator's file and fit; resuming with a different one is refused.
+        cohort_prior = {"cohort_prior": benchmark_cohort.prior_record(case, pod, root)}
+        requested.update(cohort_prior)
+    _same_request(folder / "fit_start.json", requested)
     if (folder / "result.json").exists():
         return bd.read_json(folder / "result.json")
     data = bd.load(case, seed, pod, root, references=False)
     observations = data["observations"]
 
-    import jax
-    import jax.numpy as jnp
-    from jax import random
     import numpyro
-    from numpyro.infer import SVI, Trace_ELBO, autoguide
-    from numpyro.infer.initialization import init_to_median
-    from numpyro.optim import ClippedAdam
     from core.weakform_opinf import build_model
     _require_float32()
     numpyro.set_platform("cpu")
@@ -204,42 +247,19 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         if np.any(basis["physical_shift"] != 0.):
             raise ValueError("The Galerkin structure needs an uncentred POD basis.")
         row_maps = galerkin_row_maps(case.structure, rom, basis["physical_matrix"], cfg.num_modes)
-    model, conditional, _, priors = build_model(rom, trajectories, cfg, row_maps=row_maps)
+    prior_mean = None
+    if cohort_prior:
+        prior_mean = benchmark_cohort.prior_mean(case, pod, root, data["metadata"], cohort_prior["cohort_prior"],
+                                                 full_run=total == cfg.num_steps)
+    model, conditional, _, priors = build_model(rom, trajectories, cfg, row_maps=row_maps, prior_mean=prior_mean)
     gamma2 = priors["gamma2"]
-    guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
-    svi = SVI(model, guide, ClippedAdam(step_size=cfg.learning_rate), loss=Trace_ELBO())
-    remaining, init_key = random.split(random.PRNGKey(cfg.seed))
-    remaining, posterior_key = random.split(remaining)
-    _, operator_key = random.split(remaining)
-    state = svi.init(init_key, gamma2=gamma2)
-
-    checkpoints = folder / "checkpoints"
-    done, losses = 0, np.empty(0, dtype=np.float32)
-    existing = sorted(checkpoints.glob("step*.npz"))
-    if existing:
-        state, done, losses = _load_svi(existing[-1], state)
-        if len(losses) != done or done > total:
-            raise ValueError(f"Inconsistent production checkpoint {existing[-1]}.")
-        log(f"  resuming production SVI at update {done}")
-    else:
-        bd.write_json(folder / "fit_start.json", {
-            "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
-            "production_config": asdict(cfg),
-            "planned_updates": total, "observations_sha256": data["metadata"]["observations_sha256"],
-            "inputs": "Reduced training observations and (chemo) the training exposure table only.",
-            "ODE_calls_in_objective": 0, "thread_environment": benchmark_environment.current(), **noise_prior})
-
-    @jax.jit
-    def step(current, unused):
-        return svi.update(current, gamma2=gamma2)
-
-    for left in range(done, total, PRODUCTION_CHUNK):
-        length = min(PRODUCTION_CHUNK, total - left)
-        state, chunk = jax.lax.scan(step, state, jnp.arange(length))
-        losses = np.r_[losses, np.asarray(chunk)]
-        _save_svi(checkpoints / f"step{left + length:05d}.npz", state, losses, left + length)
-        log(f"  production SVI {left + length}/{total}: loss {float(losses[-1]):.6g}")
-    bd.write_npz(folder / "losses.npz", losses=losses)
+    guide, svi, state, losses, posterior_key, operator_key = _run_svi(model, cfg, total, folder, gamma2, {
+        "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
+        "production_config": asdict(cfg),
+        "planned_updates": total, "observations_sha256": data["metadata"]["observations_sha256"],
+        "inputs": "Reduced training observations and (chemo) the training exposure table only.",
+        "ODE_calls_in_objective": 0, "thread_environment": benchmark_environment.current(), **noise_prior,
+        **cohort_prior}, log)
     exported = _export_production(folder, cfg, gamma2, observations, guide, svi, state, conditional,
                                   posterior_key, operator_key)
     complete = bool(np.isfinite(losses).all() and np.isfinite(exported["O_point"]).all())
@@ -253,7 +273,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         "finite_operator_draws": int(np.isfinite(exported["O_samples"]).all(axis=(1, 2)).sum()),
         "operators_sha256": bd.digest(folder / "operators.npz"),
         "initial_conditions_sha256": bd.digest(folder / "initial_conditions.npz"),
-        "production_config": asdict(cfg), "prior_info": priors, **noise_prior,
+        "production_config": asdict(cfg), "prior_info": priors, **noise_prior, **cohort_prior,
         "point_definition": "Conditional operator mean at the mean of 500 GP/tau draws; observed initial state.",
         "runtime_seconds": time.monotonic() - started, "ODE_calls_in_objective": 0,
         "thread_environment": benchmark_environment.current(),

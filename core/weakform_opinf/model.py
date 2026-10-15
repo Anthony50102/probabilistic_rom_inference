@@ -283,7 +283,7 @@ def power_likelihood_correction(u, alpha):
     return -0.5 * jnp.sum((alpha - 1.0) * jnp.log(2 * jnp.pi * u) + jnp.log(alpha))
 
 
-def build_model(rom, trajectories, cfg, row_maps=None):
+def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
     """Build the marginalised-O + weak-form NumPyro model.
 
     Parameters
@@ -307,6 +307,13 @@ def build_model(rom, trajectories, cfg, row_maps=None):
         structural zeros, or a projected term whose rate is learned); see
         :func:`structured_rows` for their prior scales. Needs the nondimensional
         prior. None (default): θ_i = O_i.
+    prior_mean : optional (num_modes, m) array
+        Centre M of the Gaussian operator prior (default zero), e.g. an
+        operator fitted to other trajectories in the same basis and input
+        units. The prior scales are unchanged, so the block multipliers κ_b
+        set how far O may move from M. Exact for the linear-Gaussian
+        evidence: the rows are fitted to y − A Mᵢ and Mᵢ is added back to the
+        posterior mean. Not available with row maps.
 
     Returns
     -------
@@ -361,6 +368,24 @@ def build_model(rom, trajectories, cfg, row_maps=None):
             row_maps, block_id, col_scale, operator_prior, rom, trajectories, num_modes)
         P_rows, k_rows = jnp.asarray(P_np), P_np.shape[2]
         theta_block_jnp, theta_scale_jnp = jnp.asarray(theta_block), jnp.asarray(theta_scale)
+
+    centred = prior_mean is not None
+    if centred:
+        if structured:
+            raise ValueError("A prior mean is not supported with structured operator rows")
+        mean_np = np.asarray(prior_mean, dtype=float)
+        if mean_np.shape != (num_modes, m_total) or not np.isfinite(mean_np).all():
+            raise ValueError(f"prior_mean must be a finite ({num_modes}, {m_total}) array")
+        mean_O = jnp.asarray(mean_np)
+        operator_prior["mean"] = dict(rule="given", max_abs=float(np.abs(mean_np).max()),
+                                      row_norms=np.linalg.norm(mean_np, axis=1).tolist())
+
+    def _centre(blocks):
+        """Rows y ≈ A Oᵢ refitted as y − A Mᵢ ≈ A (Oᵢ − Mᵢ), so the zero-mean evidence applies."""
+        if not centred:
+            return blocks
+        A_D, y_D, S_D, A_W, y_W, S_W = blocks
+        return A_D, y_D - mean_O @ A_D.T, S_D, A_W, y_W - mean_O @ A_W.T, S_W
 
     def _structured_mode(traj_blocks, i, kappa_block):
         """Mode i's design blocks in its coefficients θ_i, their prior precision and log|prior cov|."""
@@ -437,7 +462,7 @@ def build_model(rom, trajectories, cfg, row_maps=None):
         f_X = rom.model._assemble_data_matrix(Xs, inputs=ctx["inputs_eval"])
         if tempered:
             blocks, correction = _tempered_blocks(ctx, Xs, f_X, mu_zs, K_posts_Z, K_posts_X, sig2s, ells)
-            return blocks, Xs, jnp.sum(mlls), correction
+            return _centre(blocks), Xs, jnp.sum(mlls), correction
         n_eval = f_X.shape[0]
         I_eval = jnp.eye(n_eval)
 
@@ -467,7 +492,7 @@ def build_model(rom, trajectories, cfg, row_maps=None):
         if weakform_is_diag:
             Sigma_W = jax.vmap(lambda S: jnp.diag(jnp.diag(S)))(Sigma_W)
 
-        return (f_X, mu_zs, Sigma_D, A_weak, weak_obs, Sigma_W), Xs, jnp.sum(mlls), 0.0
+        return _centre((f_X, mu_zs, Sigma_D, A_weak, weak_obs, Sigma_W)), Xs, jnp.sum(mlls), 0.0
 
     def _sample_hypers():
         """Sample per-trajectory, per-mode GP hypers (list per traj of (ells, sig2s, nus))."""
@@ -551,6 +576,8 @@ def build_model(rom, trajectories, cfg, row_maps=None):
             else:
                 mi, Ci = posterior_fn(
                     traj_blocks, i, m_total, prior_prec_vec, deriv_is_diag)
+                if centred:
+                    mi = mi + mean_O[i]
             mu_all.append(mi)
             C_all.append(Ci)
         return jnp.stack(mu_all), jnp.stack(C_all)

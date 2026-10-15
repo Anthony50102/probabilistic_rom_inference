@@ -51,6 +51,15 @@ and (mid-course) 120-scan schedules with the default noise prior but learn the
 input-aware GP's trend-coefficient prior scale with the other GP hyperparameters
 (``gp_trend_scale="learned"``) instead of fixing it at each mode's observed spread.
 
+The population-prior cases (``COHORT_CASES``) repeat the four sparse
+learned-trend cases on the POD basis of a virtual cohort of past patients
+(``COHORT_DESIGN``, built by ``benchmark_cohort.py``): eight virtual patients
+with the target's anatomy, varied growth, diffusion and drug sensitivity, three
+of them with a dose modification, scanned through the whole course on the same
+imaging protocol. ``*-cohort-basis`` keeps the zero-centred operator prior;
+``*-cohort-prior`` centres it on the operator fitted to all the cohort's scans
+(``operator_prior_mean="cohort"``).
+
 Observation models
 ------------------
 ``segmented`` (reported): every scan, including the baseline, adds Gaussian
@@ -87,6 +96,28 @@ HISTORICAL_DOSE_DAYS = (20., 40., 60., 80., 100.)
 PATIENT_DOSE_DAYS = tuple(35. + 7. * week for week in range(12))
 # TumorTwin TNBC tutorial, Levenberg-Marquardt fit to MRIs 1-2 ("Best parameters": d, k, sensitivity).
 TUTORIAL_TWIN = {"diffusion": .0965, "growth_rate": .0521, "sensitivity": .23}
+# Virtual cohort of past patients for the population-prior cases (TUMOR_TUTORIAL_SCHEDULE_CHEMO.md, "A population
+# prior from past patients"), declared before any fit; benchmark_cohort.py builds it. Every member has the target's
+# anatomy and baseline tumour (as TumorTwin's TNBC demo patients do) and completed the course: twelve weekly doses
+# from day 35, scans from day 5 to 119 on the target's imaging protocol, at a member-specific offset (member index
+# mod the scan stride) in days from day 5, so their scans fall at different points of the weekly dose cycle. log k,
+# log D and log sensitivity are the population centre plus log_sd times a standard normal; the centre is itself drawn
+# once from that spread around the tutorial twin, so the target is a typical member rather than the median. Three
+# members (37.5%) had a neuropathy dose modification: one dose held, then 75% (grade 2) or 50% (grade 3) for the
+# rest. Scanner and segmentation are the target's (noise_level x the member's own field range); scan noise is drawn
+# from default_rng([parameter_seed, member, stride]). The ROM input of every member is in the target's units:
+# alpha(t) = input_sensitivity x sum of the given dose fractions x exp(-0.7 (t - dose day)).
+COHORT_DESIGN = {
+    "members": 8,
+    "parameter_seed": 101,
+    "log_sd": .3,
+    "dose_modifications": ((1, 7, .75), (4, 5, .75), (6, 6, .5)),  # (member, held dose index 0-11, later fraction)
+    "span": (5., 119.),
+    "strides": {"weekly": 7., "every8": 8.},
+    "rank": 4,
+    "input_sensitivity": TUTORIAL_TWIN["sensitivity"],
+}
+OPERATOR_PRIOR_MEANS = ("zero", "cohort")
 # Reduced-model structure: the operators a structured chemo ROM is fitted with (see benchmark_models.galerkin_row_maps).
 STRUCTURES = ("free", "galerkin", "galerkin_logistic")
 STRUCTURED_OPERATORS = {"galerkin": "AN", "galerkin_logistic": "AHN"}
@@ -101,7 +132,7 @@ class PODSettings:
     def __post_init__(self):
         if isinstance(self.rank, bool) or not isinstance(self.rank, int) or self.rank < 1:
             raise ValueError("POD rank must be a positive integer.")
-        if self.source not in ("observed_training", "nominal_training", "matched_training"):
+        if self.source not in ("observed_training", "nominal_training", "matched_training", "cohort_training"):
             raise ValueError(f"Unknown POD training source: {self.source}")
         if self.centering not in ("mean", "none"):
             raise ValueError(f"Unknown POD centering: {self.centering}")
@@ -134,6 +165,11 @@ class BenchmarkCase:
     # Prior sd of the input-aware GP's trend coefficients: each mode's observed spread ("fixed") or that spread times a
     # multiplier learned with the other GP hyperparameters ("learned", WeakFormConfig.gp_trend_scale).
     gp_trend_scale: str = "fixed"
+    # Past patients' imaging protocol ("weekly", "every8"; COHORT_DESIGN) whose pooled scans give the POD basis
+    # (pod.source "cohort_training"); empty: the acquisition's own scans.
+    cohort: str = ""
+    # Centre of the operator prior: zero, or the population operator fitted to the cohort's scans ("cohort").
+    operator_prior_mean: str = "zero"
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
@@ -146,9 +182,21 @@ class BenchmarkCase:
             raise ValueError(f"Unknown GP trend scale: {self.gp_trend_scale}")
         if self.gp_trend_scale == "learned" and not self.input_aware_gp:
             raise ValueError("A learned trend scale needs the input-aware GP's trend.")
-        if self.observation == "segmented" and self.pod.source != "observed_training":
+        if self.observation == "segmented" and self.pod.source != (
+                "cohort_training" if self.cohort else "observed_training"):
             raise ValueError("Segmented acquisitions fit their POD to the noisy training scans "
-                             "(observed_training); simulation bases belong to the oracle_masked design.")
+                             "(observed_training), or to a virtual cohort's (cohort_training, with a cohort); "
+                             "simulation bases belong to the oracle_masked design.")
+        if self.cohort and self.cohort not in COHORT_DESIGN["strides"]:
+            raise ValueError(f"Unknown cohort imaging protocol: {self.cohort}")
+        if self.cohort and not (self.observation == "segmented" and self.dose_days and self.pod.centering == "none"
+                                and self.pod.rank <= COHORT_DESIGN["rank"]):
+            raise ValueError("A cohort basis is the uncentred POD of segmented chemotherapy scans, "
+                             f"at most rank {COHORT_DESIGN['rank']}.")
+        if self.operator_prior_mean not in OPERATOR_PRIOR_MEANS:
+            raise ValueError(f"Unknown operator prior mean: {self.operator_prior_mean}")
+        if self.operator_prior_mean == "cohort" and not (self.cohort and self.structure == "free"):
+            raise ValueError("The population operator prior needs a cohort basis and the free ROM.")
         if self.structure not in STRUCTURES:
             raise ValueError(f"Unknown reduced-model structure: {self.structure}")
         if self.structure != "free" and not (self.dose_days and self.pod.centering == "none"):
@@ -335,6 +383,25 @@ CASES.update({f"{base}-{source}-learned-trend": replace(
     CASES[f"{base}-{source}"], name=f"{base}-{source}-learned-trend", gp_trend_scale="learned",
     description=f"As {base}-{source}; the GP trend's prior scale is learned with the other GP hyperparameters.")
     for base, sources in LEARNED_TREND_SOURCES.items() for source in sources})
+# Population prior from past patients (declared before any fit): the four sparse learned-trend cases, with the POD
+# basis of a virtual cohort's scans on the same imaging protocol (COHORT_DESIGN) instead of the target's own, at the
+# same rank. "-cohort-basis" keeps the zero-centred operator prior (the control: the basis alone); "-cohort-prior"
+# centres it on the population operator fitted to the cohort (benchmark_cohort.fit_cohort).
+COHORT_SOURCES = {
+    "midcourse-reduced-trend-chemo-weekly-scans-learned-trend": "weekly",
+    "midcourse-reduced-trend-chemo-every8-scans-learned-trend": "every8",
+    "reduced-regimen-trend-chemo-weekly-scans-learned-trend": "weekly",
+    "reduced-regimen-trend-chemo-every8-scans-learned-trend": "every8",
+}
+COHORT_ARMS = {"cohort-basis": "zero", "cohort-prior": "cohort"}
+COHORT_CASES = tuple(f"{source}-{arm}" for source in COHORT_SOURCES for arm in COHORT_ARMS)
+CASES.update({f"{source}-{arm}": replace(
+    CASES[source], name=f"{source}-{arm}", cohort=protocol, operator_prior_mean=mean,
+    pod=replace(CASES[source].pod, source="cohort_training"),
+    description=(f"As {source}, on the POD basis of a virtual cohort's {protocol} scans"
+                 + ("; operator prior centred on the cohort's population operator." if mean == "cohort" else
+                    " (zero-centred operator prior).")))
+    for source, protocol in COHORT_SOURCES.items() for arm, mean in COHORT_ARMS.items()})
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
 
@@ -376,6 +443,11 @@ DEFAULT_POD_PROVENANCE = {
        for base, designs in SPARSE_FIX_DESIGNS.items() for schedule, _, rank, suffix in designs},
     **{f"{base}-{source}-learned-trend": f"As {base}-{source} (the same acquisitions and basis; not reselected)."
        for base, sources in LEARNED_TREND_SOURCES.items() for source in sources},
+    **{f"{source}-{arm}": (f"Uncentred POD of the virtual cohort's noisy segmented {protocol} scans (8 past patients, "
+                           f"days 5-119; benchmark_cohort.py), first {CASES[source].pod.rank} modes: {source}'s rank, "
+                           "within the modes that clear the pooled scans' noise threshold. This acquisition's scans "
+                           "are only projected onto it.")
+       for source, protocol in COHORT_SOURCES.items() for arm in COHORT_ARMS},
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -487,6 +559,13 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
         # And from before the learned trend scale, whose config field is likewise left out.
         fields.pop("gp_trend_scale")
         config.pop("gp_trend_scale")
+    if fields["cohort"]:
+        # The cohort's declared design is part of the recipe (benchmark_cohort.py builds it from these values).
+        fields["cohort_design"] = COHORT_DESIGN
+    else:
+        fields.pop("cohort")
+    if fields["operator_prior_mean"] == "zero":
+        fields.pop("operator_prior_mean")
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")

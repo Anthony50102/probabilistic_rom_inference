@@ -6,8 +6,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 
-from benchmark_cases import (CASES, LEARNED_TREND_CASES, LEGACY_PODS, PATIENT_DOSE_DAYS, REPORTED_CASES,
-                             SCAN_SCHEDULE_CASES,
+from benchmark_cases import (CASES, COHORT_CASES, COHORT_DESIGN, LEARNED_TREND_CASES, LEGACY_PODS, PATIENT_DOSE_DAYS,
+                             REPORTED_CASES, SCAN_SCHEDULE_CASES, TUTORIAL_TWIN,
                              SPARSE_FIX_CASES, PODSettings, describe, galerkin_operators, get_case, production_config,
                              regular_scan_days, stride_scan_days, _adapter)
 from core.weakform_opinf import WeakFormConfig
@@ -23,7 +23,7 @@ class BenchmarkCaseTests(unittest.TestCase):
                                                             "midcourse-regimen-chemo", "midcourse-galerkin-chemo",
                                                             "midcourse-logistic-chemo", "midcourse-regimen-trend-chemo",
                                                             "midcourse-logistic-trend-chemo"} | set(SCAN_SCHEDULE_CASES)
-                         | set(SPARSE_FIX_CASES) | set(LEARNED_TREND_CASES))
+                         | set(SPARSE_FIX_CASES) | set(LEARNED_TREND_CASES) | set(COHORT_CASES))
         self.assertEqual(CASES["untreated-growth"].dose_days, ())
         self.assertEqual(CASES["untreated-growth"].prediction_end, 90.)
         single, multi = CASES["single-dose-chemo"], CASES["multi-dose-chemo"]
@@ -65,7 +65,7 @@ class BenchmarkCaseTests(unittest.TestCase):
                 self.assertEqual(case.gp_noise_prior == "measurement",
                                  name in SPARSE_FIX_CASES and "known-noise" in name)
                 self.assertEqual(cfg.gp_trend_scale, case.gp_trend_scale)
-                self.assertEqual(case.gp_trend_scale == "learned", name in LEARNED_TREND_CASES)
+                self.assertEqual(case.gp_trend_scale == "learned", name in LEARNED_TREND_CASES + COHORT_CASES)
                 self.assertEqual(cfg.operator_solver, "qr")
                 self.assertEqual(cfg.precision, "default")
                 self.assertEqual(cfg.num_steps, 12000)
@@ -244,6 +244,37 @@ class BenchmarkCaseTests(unittest.TestCase):
         for value in ("free", "learned"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 replace(CASES["multi-dose-chemo"], gp_trend_scale=value)
+
+    def test_cohort_cases_change_only_the_basis_and_prior_centre(self):
+        self.assertEqual(len(COHORT_CASES), 8)
+        for name in COHORT_CASES:
+            with self.subTest(case=name):
+                case = CASES[name]
+                source = CASES[name.removesuffix("-cohort-basis").removesuffix("-cohort-prior")]
+                self.assertIn(source.name, LEARNED_TREND_CASES)
+                self.assertEqual(case.cohort, "every8" if "-every8-" in name else "weekly")
+                self.assertEqual(case.operator_prior_mean, "cohort" if name.endswith("-prior") else "zero")
+                self.assertEqual(case.pod, replace(source.pod, source="cohort_training"))
+                self.assertEqual(replace(case, name=source.name, description=source.description, pod=source.pod,
+                                         cohort="", operator_prior_mean="zero"), source)
+                self.assertEqual(production_config(case), production_config(source))
+                recipe = describe(case)
+                self.assertEqual(recipe["cohort_design"], COHORT_DESIGN)
+                self.assertEqual("operator_prior_mean" in recipe, name.endswith("-prior"))
+                self.assertNotEqual(recipe["recipe_fingerprint"], describe(source)["recipe_fingerprint"])
+                self.assertNotIn("cohort", describe(source))
+                self.assertNotIn("operator_prior_mean", describe(source))
+                self.assertEqual({key: getattr(case, key) for key in TUTORIAL_TWIN}, TUTORIAL_TWIN)
+        self.assertEqual(COHORT_DESIGN["input_sensitivity"], TUTORIAL_TWIN["sensitivity"])
+        weekly = CASES["midcourse-reduced-trend-chemo-weekly-scans-learned-trend-cohort-prior"]
+        source = CASES["midcourse-reduced-trend-chemo-weekly-scans-learned-trend"]
+        for change in (dict(cohort="monthly"), dict(cohort="weekly"), dict(pod=replace(weekly.pod, rank=5)),
+                       dict(pod=replace(weekly.pod, centering="mean")), dict(operator_prior_mean="median"),
+                       dict(structure="galerkin"), dict(pod=replace(weekly.pod, source="observed_training"))):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                replace(weekly if "cohort" not in change or change["cohort"] != "weekly" else source, **change)
+        with self.assertRaises(ValueError):
+            replace(source, operator_prior_mean="cohort")
 
     def test_segmented_scans_fit_their_own_POD(self):
         case = CASES["multi-dose-chemo"]
