@@ -103,6 +103,23 @@ the growth and kill rates, so they regrow too little after a cut, and their
 bands are 4-10 times as wide as with 120 scans. The dense control does not
 change. See "Learning the Gaussian process's trend scale".
 
+**Past patients: a population prior and partial pooling, two of four
+schedules at best.** Both use a virtual cohort of eight past patients on
+the same anatomy, scanned through their whole course, and both were
+declared before their fits.
+- A population prior (the target centred on one operator fitted to the
+  cohort) passes weekly scans to day 57. It makes both every-8-days
+  schedules much worse.
+- Partial pooling gives every patient their own operator around a shared
+  mean, all fitted together. It passes both weekly schedules, to day 84 for
+  the first time (7.2, 8.4 and 10.8%), and its bands always hold the truth.
+  It fails both every-8-days schedules (worst arm 21-22%).
+- In both, the target takes the cohort's whole-tumour growth and kill. That
+  suits it with the weekly cohort and not with the every-8-days cohort.
+
+No version passes all four realistic schedules. See "A population prior
+from past patients" and "Partial pooling of past patients".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -2302,6 +2319,196 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 # likewise every case in benchmark_cases.POOLED_CASES
 ```
 
+### Results (each seed run once)
+
+**Partial pooling passes two of the four schedules, both with weekly
+scans. It passes to day 84 (7.2, 8.4 and 10.8% at 1, 0.75 and 0.5x), which
+no earlier idea passed, and to day 57 (12.4, 12.0 and 15.1%). It fails
+both every-8-days schedules, so by the declared reading it is not a fix for
+realistic imaging.** Its bands hold the truth at all times on every arm of
+every schedule, the failures and the stress arms included. All 12 fits
+finished, and every arm has 64 of 64 draws. Median point-forecast error
+(%) over seeds 48-50; the bar is 18.9% on every scenario arm:
+
+| Data to | Scans, rank | Basis, prior centre | 1x | 0.75x | 0.5x | Verdict |
+|---|---|---|---|---|---|---|
+| Day 84 | Weekly, 12, r4 | own, zero (learned trend, earlier) | 13.6 | 16.1 | 21.1 | fail |
+| | | cohort, zero (the control, earlier) | 14.8 | 18.9 | 23.7 | fail |
+| | | cohort, M fixed (earlier) | 16.2 | 18.7 | 21.4 | fail |
+| | | cohort, partial pooling | 7.2 | 8.4 | 10.8 | **pass** |
+| | Every 8 days, 11, r4 | own, zero (earlier) | 13.6 | 12.8 | 17.8 | pass |
+| | | cohort, zero (earlier) | 10.7 | 13.8 | 20.0 | fail |
+| | | cohort, M fixed (earlier) | 100.5 | 95.2 | 89.2 | fail |
+| | | cohort, partial pooling | 21.4 | 19.0 | 17.5 | fail |
+| Day 57 | Weekly, 8, r3 | own, zero (earlier) | 20.1 | 26.7 | 32.1 | fail |
+| | | cohort, zero (earlier) | 25.4 | 31.5 | 35.6 | fail |
+| | | cohort, M fixed (earlier) | 11.1 | 10.6 | 12.1 | pass |
+| | | cohort, partial pooling | 12.4 | 12.0 | 15.1 | **pass** |
+| | Every 8 days, 8, r3 | own, zero (earlier) | 12.3 | 18.2 | 25.4 | fail |
+| | | cohort, zero (earlier) | 8.7 | 15.5 | 23.0 | fail |
+| | | cohort, M fixed (earlier) | 45.0 | 43.6 | 45.4 | fail |
+| | | cohort, partial pooling | 14.3 | 16.2 | 22.4 | fail |
+
+- **The seeds agree within 0.3 points.**
+- **Against the direct control** (the same basis, the target fitted
+  alone), pooling lowers the error on eight of the twelve scenario arms,
+  including 0.5x on every schedule. It raises it on the 1x and 0.75x arms
+  of both every-8-days schedules: from 10.7 to 21.4% and from 13.8 to 19.0%
+  to day 84, and from 8.7 to 14.3% and from 15.5 to 16.2% to day 57.
+- **Stress arms (not judged), 0.25x and 0x:** 13.8 and 17.2% (weekly to day
+  84), 17.4 and 18.8% (every 8 days to day 84), 24.8 and 43.4% (weekly to
+  day 57), 34.1 and 53.3% (every 8 days to day 57). From day 57 the
+  forecast without drug regrows too fast: on day 119 it is 1.26 and
+  1.37-1.38 times the true burden at 0x.
+
+**Run note.** The first launch ran six fits at once. A pooled fit needs
+about 3.7 GB of memory, so the machine ran short of memory and disk, and I
+stopped the launch. One fit had reached 2,000 of its 12,000 updates. None
+had finished or been evaluated, and nothing from them was looked at. Their
+partial folders were deleted, and all 12 fits were then run from scratch,
+two at a time. A fit took 7.2-11.2 minutes, plus 6-8 minutes of
+evaluation. The declared estimate, about 4 minutes, was timed with one fit
+running alone.
+
+**The pooled fits** (ranges over seeds 48-50). κ is a multiple of the
+column scales, which come from all nine patients. "Target from M" is
+‖X_target − X_M‖ / ‖X_M‖ for each block X:
+
+| Data to, scans | κ_M (c, A, N) | κ_δ (c, A, N) | κ_δ,N 5-95% | M: c_1, N_11 | Fixed centre (population prior): c_1, N_11 | ‖M − M_fixed‖ / ‖M_fixed‖ | Target from M (c, A, N) |
+|---|---|---|---|---|---|---|---|
+| Day 84, weekly | 0.24, 5.5, 2.5 | 0.034, 0.57, 0.010 | 0.001-0.030 | 0.063, -0.84 | 0.033, -0.95 | 0.55 | 4, 8, 0% |
+| Day 84, every 8 days | 0.20, 6.1, 2.0 | 0.023-0.024, 0.75, 0.004 | 0.0004-0.011 | 0.037, -0.69 | 0.016, -0.75 | 0.46 | 2, 8, 0% |
+| Day 57, weekly | 0.24, 4.0, 3.4 | 0.045, 0.23, 0.018 | 0.002-0.058 | 0.056-0.057, -0.93 | 0.045, -0.96 | 0.41 | 4, 2, 0% |
+| Day 57, every 8 days | 0.19, 5.4, 3.2 | 0.036, 0.24, 0.016 | 0.001-0.054 | 0.029, -0.88 | 0.020, -0.82 | 0.52 | 3, 1, 0% |
+
+- **The spread of the drug block collapsed again, against the
+  expectation.** κ_δ,N is 0.004-0.018, below even the population prior's
+  0.015-0.067. The spread between patients went into the linear block A
+  (κ_δ 0.23-0.75) and a little into the constant source c (0.023-0.045).
+  Every member's drug term equals M's (distance 0.00 in every fit), and so
+  does the target's.
+- **Every patient's operator is close to M.** The members' differ from it
+  by 0-11% in A, 1-25% in c and 0% in N. The target's differs by 1-8%, 2-4%
+  and 0%, and by 0-2% over the whole operator. Member 4, the strongest
+  responder, is furthest from M in every fit, in c (13-25%) or in A (11%).
+  Members 1 and 6 are not among the furthest.
+- **M is not the population prior's fixed centre.** The two differ by
+  41-55%. M still changes with the scan days, as the fixed centre did: its
+  mode-1 drug term is -0.84 for weekly scans and -0.69 for every 8 days at
+  rank 4 (-0.93 and -0.88 at rank 3).
+
+**The members' in-sample errors** (%), each member's scans replayed from
+their first scan by their own operator M + δ_k and by M alone (seed 48;
+the seeds agree within 0.4 points):
+
+| Pooled fit | Own operator, members 0-7 (median) | M alone (median) | Population fit, earlier (median) |
+|---|---|---|---|
+| Day 84, weekly (r4) | 6.0, 9.6, 7.2, 4.2, 31.5, 6.4, 8.0, 11.5 (7.6) | 6.5, 25.1, 14.7, 13.6, 50.2, 7.6, 23.6, 27.2 (19.2) | 16.8 |
+| Day 84, every 8 days (r4) | 8.4, 12.4, 8.9, 6.0, 19.5, 6.2, 7.1, 8.1 (8.2) | 16.3, 21.0, 29.7, 19.5, 51.9, 14.7, 20.4, 20.3 (20.3) | 20.1 |
+| Day 57, weekly (r3) | 10.0, 14.9, 8.5, 5.1, 57.9, 4.1, 17.1, 20.4 (12.4) | 8.2, 23.6, 14.0, 13.6, 53.2, 6.8, 20.9, 26.9 (17.4) | 16.7 |
+| Day 57, every 8 days (r3) | 8.5, 13.1, 8.0, 6.6, 56.2, 4.8, 17.2, 20.1 (10.8) | 6.3, 21.5, 16.2, 14.7, 50.7, 7.3, 21.1, 25.4 (18.7) | 17.9 |
+
+- With their own operators, the median error falls to 7.6-8.2% at rank 4
+  and 10.8-12.4% at rank 3, from 17-20% for M alone or for the population
+  fits. Six of the eight members are under 10% at rank 4, but only three
+  or four at rank 3.
+- **Member 4 is still badly fitted:** 20-58%, and it ends at 9-37 times its
+  last scan. At rank 3 its own operator does worse than M alone (56-58%
+  against 51-53%), and so does member 0's (8.5-10.0% against 6.3-8.2%).
+  The fit matches each member's smoothed scans in the weak form, not their
+  replayed trajectory, so a member's own operator need not replay better.
+
+**The target fits** (ranges over seeds 48-50). The dose effect is the
+share of the true day-119 difference between 0.5x and 1x that the forecast
+gets. The band width is the 5-95% band's width on day 119, as a share of
+the true burden:
+
+| Data to | Scans | Training error | c_1 | N_11 | Dose effect at 0.5x | Day-119 burden / truth, 1x and 0.5x | 1x band: holds truth, width | 0.5x band: holds truth, width |
+|---|---|---|---|---|---|---|---|---|
+| Day 84 | Weekly | 3.3% | 0.06 | -0.84 | 0.78 | 0.93, 0.86-0.87 | 100%, 0.70-0.71 | 100%, 0.61-0.62 |
+| | Every 8 days | 5.7% | 0.04 | -0.69 | 0.74-0.75 | 1.08-1.09, 0.93-0.94 | 100%, 0.86 | 100%, 0.70 |
+| Day 57 | Weekly | 6.4% | 0.06 | -0.93 | 0.97 | 0.99-1.00, 0.98 | 100%, 1.06 | 100%, 0.83 |
+| | Every 8 days | 4.9% | 0.03 | -0.88 | 1.08-1.09 | 1.18, 1.12 | 100%, 1.16 | 100%, 0.99 |
+
+- **The target is forecast with M, run from its own scans.** Its operator
+  is within 0-2% of M.
+- **On the weekly schedules M suits the target.** To day 84 the forecast
+  gets 0.78 of the true dose effect (0.38 with the learned trend alone,
+  0.57 with the fixed centre) and 0.86-0.93 of the true day-119 burden. To
+  day 57 it gets 0.97 of the dose effect and 0.98-1.00 of the burden.
+- **On the every-8-days schedules it does not.** To day 84, M's kill is
+  weaker (drug term -0.69, against -0.84 weekly), so on the full course the
+  forecast does not fall enough. It ends at 1.08-1.09 times the true
+  burden, and its largest errors are at 1x and 0.75x. From day 57 every arm
+  grows too fast: 1.12-1.18 times the truth on day 119 on the scenario
+  arms, and the dose effect is overstated (1.08-1.09).
+- **The bands hold the truth at all times,** on every arm of every
+  schedule, stress arms included. Against the expectation, they are
+  narrower than with the fixed centre, or about the same. On day 119 they
+  are 0.61-0.99 of the true burden wide at 0.5x (fixed centre 0.76-1.87)
+  and 0.70-1.16 at 1x (fixed centre 0.96-2.40).
+
+**After the fact: what pooling learned about the patients**
+(`pooled_members_check.py`, no fits; seeds 48 and 50 agree). The members
+differ in growth rate (0.025-0.069 per day), in drug sensitivity
+(0.24-0.45) and in three dose cuts. The ROM's input carries each member's
+doses but not their sensitivity, so only δ_k can carry it.
+- **In every pooled fit, the nine patients' whole-tumour (mode-1) entries
+  come out almost the same:** c_1 within 0.004, N_11 within 0.0001 and
+  A_11 within 0.0006-0.0055 per day.
+- **The members' true net rates are far more spread.** Under the full
+  course, growth minus sensitivity times the mean exposure (ignoring
+  crowding) runs from -0.068 to -0.001 per day, a spread of 0.067. Their
+  fitted net mode-1 rates (A_11 plus N_11 times the mean input) span only
+  0.0006-0.0055 per day. They do not follow the true ones either: the
+  correlation across the members is -0.31 to +0.08.
+- **So pooling learned a common centre and how each member's shape
+  changes, but not that the patients grow and respond at different
+  rates.** Why the members' 14-17 scans each do not set their own rates was
+  not tested.
+
+**Expectations against outcomes.**
+
+| Item | Expected | Outcome |
+|---|---|---|
+| Members, own operators | Most under 10%, well below the population fits' 5-48% | Medians 7.6-8.2% at rank 4 (6 of 8 under 10%) and 10.8-12.4% at rank 3 (3-4 of 8); member 4 still 20-58% |
+| Furthest from M | Members 4, 1 and 6 | Member 4 in every fit; not 1 and 6. All are close: A 0-11%, c 1-25%, N 0% |
+| Spread of the drug block, κ_δ,N | Well above 0.015-0.067 | 0.004-0.018, lower still; the target's drug term is M's |
+| Weekly to day 84 | 0.5x may pass; uncertain | Passes on every arm: 7.2, 8.4 and 10.8% |
+| Every 8 days to day 84 | Near the control (0.5x 20.0%); a narrow call | 0.5x better (17.5%), but 1x 21.4% and 0.75x 19.0%: fails |
+| Weekly to day 57 | Near the fixed centre's pass, perhaps a little worse | Passes, a little worse: 12.4, 12.0 and 15.1% (fixed centre 11.1, 10.6 and 12.1%) |
+| Every 8 days to day 57 | Much better than 45%, leaning fail at 0.5x | 14.3, 16.2 and 22.4%: fails at 0.5x |
+| Bands | Wider than with the fixed centre | Narrower or about the same; they hold the truth at all times on every arm |
+
+**What this means.**
+- **Partial pooling is the strongest of the declared sparse-scan ideas,
+  but not a fix.** It passes two of the four schedules, including weekly
+  scans to day 84 for the first time, and its bands always hold the truth.
+  It fails both every-8-days schedules, so by the declared reading it is
+  not a fix for realistic imaging.
+- **It fixed the first problem named in the declaration, not the second.**
+  M is now the centre of nine patients' own operators, not one compromise
+  operator, and the members are fitted better. But the spread between the
+  patients' drug terms was again learned as almost zero. After the fact,
+  the patients share practically the same whole-tumour growth and kill. So
+  the target is again forecast with the cohort's average rates. That suits
+  it with the weekly cohort and not with the every-8-days cohort, and
+  nothing in the target's own 8-12 scans decides which.
+- **No one version passes everywhere.** Across all the declared ideas,
+  three of the four schedules have a version that passes: weekly scans to
+  day 84 with pooling, every 8 days to day 84 with the learned trend alone,
+  and weekly scans to day 57 with the fixed centre or with pooling. No
+  version passes more than two, and every 8 days to day 57 has none.
+  Choosing a version per schedule after seeing the results would not be an
+  honest fix.
+- **Seeds.** Seeds 48-50 differ only in scanner noise, and every idea has
+  now used them. Any claim for pooling would need a confirmation on another
+  virtual target, declared first.
+
+This completes the agreed order: ideas 1, 2 and 5, then the population
+prior, then partial pooling. No further sparse-scan fit is planned. What
+to report is an open decision.
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -2341,12 +2548,15 @@ did, for one schedule: scans every 8 days to day 84 pass, narrowly and with
 wide bands. Weekly scans to day 84 and both schedules to day 57 still fail.
 A population prior from a virtual cohort passes weekly scans to day 57,
 but it breaks both every-8-days schedules, so it is not a robust fix.
-The options are open:
+Partial pooling of the past patients' scans with the target passes both
+weekly schedules, to day 84 for the first time, and its bands always hold
+the truth. It fails both every-8-days schedules, so it is not a fix either.
+No version passes more than two of the four schedules, and every 8 days to
+day 57 has none. The agreed list of ideas is done. The options are open:
 - state the dense-imaging assumption in the paper;
-- report the learned trend scale with scans every 8 days to day 84, and the
-  remaining failures;
-- partial pooling of past patients' scans with the target (declared, being
-  run; see "Partial pooling of past patients");
+- report the sparse-scan results as a limitation: the learned trend scale
+  (one schedule passes) and partial pooling (both weekly schedules pass),
+  beside the failures;
 - test the projected form on the realistic schedules, declared first;
 - move the example to a setting with frequent imaging.
 
@@ -2365,10 +2575,12 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/gp_mode1_seed48.png`, `figures/gp_trend_seed48.png`,
 `figures/gp_trend_seed45.png`, `figures/learned_trend_burden.png`,
 `figures/learned_trend_error.png`, `figures/cohort_prior_burden.png`,
-`figures/cohort_prior_error.png`, the band-coverage scripts, the
+`figures/cohort_prior_error.png`, `figures/pooled_burden.png`,
+`figures/pooled_error.png`, the band-coverage scripts, the
 smoothed-POD scripts and fits, the scan-schedule check, summary and sweep
 scripts, the sparse-fix check, summary and Gaussian-process check scripts,
-the learned-trend summary script, and the cohort data check, summary,
-M-alone and block scripts) are local session artifacts, not
+the learned-trend summary script, the cohort data check, summary,
+M-alone and block scripts, and the pooled summary and member-check
+scripts) are local session artifacts, not
 bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
