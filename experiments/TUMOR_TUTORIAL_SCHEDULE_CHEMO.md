@@ -114,11 +114,21 @@ declared before their fits.
   mean, all fitted together. It passes both weekly schedules, to day 84 for
   the first time (7.2, 8.4 and 10.8%), and its bands always hold the truth.
   It fails both every-8-days schedules (worst arm 21-22%).
-- In both, the target takes the cohort's whole-tumour growth and kill. That
-  suits it with the weekly cohort and not with the every-8-days cohort.
+- In both, the target takes the cohort's drug term (how it responds to
+  the dose). That suits it with the weekly cohort and not with the
+  every-8-days cohort. *Corrected after the cohort-size sweep; this point
+  first said the target takes the cohort's whole-tumour growth and kill.
+  With pooling its growth is its own.*
 
 No version passes all four realistic schedules. See "A population prior
 from past patients" and "Partial pooling of past patients".
+
+**More past patients: no steady gain.** Pooling with 4, 8, 16, 32 and 64
+past patients (weekly scans to day 84, seed 48, declared before the fits)
+beats the new patient alone at every K. The error is lowest at K = 8-16
+(6.2, 6.7 and 10.4% at K = 16) and back near K = 4 by K = 64 (11.6, 13.9
+and 19.0%). Every patient shares the cohort's drug term, and with more
+patients everyone is fitted worse. See "More past patients".
 
 ## Design
 
@@ -2057,12 +2067,15 @@ is M's last-scan burden over the member's:
   the forecasts below are.
 - **M grows in proportion to size.** Its constant source is almost zero
   (c_1 0.016-0.045), and its linear part carries the growth (largest
-  growth rate 0.010-0.033 per day). The target's fits centred on zero do
+  growth rate 0.023-0.029 per day). The target's fits centred on zero do
   the reverse: a constant source (c_1 0.55-1.22) and a linear part near
-  zero (largest rate 0.002-0.006 per day in the cohort basis). Across
+  zero (largest rate 0.003-0.007 per day in the cohort basis). Across
   eight tumours of different sizes, growth in proportion to size is the
   law that fits. Within one patient's narrow range of sizes the two look
-  alike.
+  alike. *Corrected after the cohort-size sweep: the script read the
+  wrong columns for the linear part (see the correction at the end of
+  "More past patients"). The two rates first read 0.010-0.033 and
+  0.002-0.006.*
 - **Against the expectation:** median errors of 16.7-20.1% are at the top
   of the guessed 5-20%, and the range is 4.6-48.2%. In three of the four
   fits members 4, 1 and 6 are the worst, as guessed, but member 4 at
@@ -2093,7 +2106,8 @@ are not strictly comparable with those in the cohort basis:
 - **The target keeps the population's drug term.** Centred on M, the
   learned width of the drug block falls to 0.015-0.067 (1.4-1.6 when
   centred on zero). After the fact (`cohort_blocks.py`): every fit's drug
-  term N is within 1% of M's and its linear part within 5-29%; the
+  term N is within 1% of M's and its linear part within 6-29%
+  (*corrected as above; first read 5-29%*); the
   constant source moves most (c_1 from M's 0.02-0.05 to 0.11-0.27). The
   whole operator stays 17-32% from M. The weak-form evidence from 8-12
   scans does not demand a different drug term, so the learned width
@@ -2372,14 +2386,15 @@ running alone.
 
 **The pooled fits** (ranges over seeds 48-50). κ is a multiple of the
 column scales, which come from all nine patients. "Target from M" is
-‖X_target − X_M‖ / ‖X_M‖ for each block X:
+‖X_target − X_M‖ / ‖X_M‖ for each block X (its A column is corrected
+after the cohort-size sweep; it first read 8, 8, 2 and 1%):
 
 | Data to, scans | κ_M (c, A, N) | κ_δ (c, A, N) | κ_δ,N 5-95% | M: c_1, N_11 | Fixed centre (population prior): c_1, N_11 | ‖M − M_fixed‖ / ‖M_fixed‖ | Target from M (c, A, N) |
 |---|---|---|---|---|---|---|---|
-| Day 84, weekly | 0.24, 5.5, 2.5 | 0.034, 0.57, 0.010 | 0.001-0.030 | 0.063, -0.84 | 0.033, -0.95 | 0.55 | 4, 8, 0% |
-| Day 84, every 8 days | 0.20, 6.1, 2.0 | 0.023-0.024, 0.75, 0.004 | 0.0004-0.011 | 0.037, -0.69 | 0.016, -0.75 | 0.46 | 2, 8, 0% |
-| Day 57, weekly | 0.24, 4.0, 3.4 | 0.045, 0.23, 0.018 | 0.002-0.058 | 0.056-0.057, -0.93 | 0.045, -0.96 | 0.41 | 4, 2, 0% |
-| Day 57, every 8 days | 0.19, 5.4, 3.2 | 0.036, 0.24, 0.016 | 0.001-0.054 | 0.029, -0.88 | 0.020, -0.82 | 0.52 | 3, 1, 0% |
+| Day 84, weekly | 0.24, 5.5, 2.5 | 0.034, 0.57, 0.010 | 0.001-0.030 | 0.063, -0.84 | 0.033, -0.95 | 0.55 | 4, 9-10, 0% |
+| Day 84, every 8 days | 0.20, 6.1, 2.0 | 0.023-0.024, 0.75, 0.004 | 0.0004-0.011 | 0.037, -0.69 | 0.016, -0.75 | 0.46 | 2, 9, 0% |
+| Day 57, weekly | 0.24, 4.0, 3.4 | 0.045, 0.23, 0.018 | 0.002-0.058 | 0.056-0.057, -0.93 | 0.045, -0.96 | 0.41 | 4, 4, 0% |
+| Day 57, every 8 days | 0.19, 5.4, 3.2 | 0.036, 0.24, 0.016 | 0.001-0.054 | 0.029, -0.88 | 0.020, -0.82 | 0.52 | 3, 4, 0% |
 
 - **The spread of the drug block collapsed again, against the
   expectation.** κ_δ,N is 0.004-0.018, below even the population prior's
@@ -2388,10 +2403,15 @@ column scales, which come from all nine patients. "Target from M" is
   Every member's drug term equals M's (distance 0.00 in every fit), and so
   does the target's.
 - **Every patient's operator is close to M.** The members' differ from it
-  by 0-11% in A, 1-25% in c and 0% in N. The target's differs by 1-8%, 2-4%
+  by 1-12% in A, 1-25% in c and 0% in N. The target's differs by 4-10%, 2-4%
   and 0%, and by 0-2% over the whole operator. Member 4, the strongest
-  responder, is furthest from M in every fit, in c (13-25%) or in A (11%).
-  Members 1 and 6 are not among the furthest.
+  responder, is furthest from M in every fit, in c (13-25%) or in A (12%).
+  No other member is furthest in every fit; the order of the rest changes
+  with the fit and the block. *Corrected after the cohort-size sweep: the
+  A distances first read 0-11%, 1-8% and 11%, and this point ended
+  "Members 1 and 6 are not among the furthest". With the right columns,
+  member 1 is second or third in A at rank 3, and member 6 is third in A
+  at rank 4.*
 - **M is not the population prior's fixed centre.** The two differ by
   41-55%. M still changes with the scan days, as the fixed centre did: its
   mode-1 drug term is -0.84 for weekly scans and -0.69 for every 8 days at
@@ -2430,12 +2450,18 @@ the true burden:
 | Day 57 | Weekly | 6.4% | 0.06 | -0.93 | 0.97 | 0.99-1.00, 0.98 | 100%, 1.06 | 100%, 0.83 |
 | | Every 8 days | 4.9% | 0.03 | -0.88 | 1.08-1.09 | 1.18, 1.12 | 100%, 1.16 | 100%, 0.99 |
 
-- **The target is forecast with M, run from its own scans.** Its operator
-  is within 0-2% of M.
-- **On the weekly schedules M suits the target.** To day 84 the forecast
-  gets 0.78 of the true dose effect (0.38 with the learned trend alone,
-  0.57 with the fixed centre) and 0.86-0.93 of the true day-119 burden. To
-  day 57 it gets 0.97 of the dose effect and 0.98-1.00 of the burden.
+- **The target shares M's drug term; the rest of its operator is its
+  own.** Its operator is within 0-2% of M, with the same drug term. The
+  small rest matters: forecast with M alone, the target would be 57% off
+  at 1x (weekly to day 84, seed 48), not 7.1%
+  (`cohort_size_M_forecast.py`). *Corrected after the cohort-size sweep;
+  this point first read "The target is forecast with M, run from its own
+  scans."*
+- **On the weekly schedules the cohort's drug term suits the target.** To
+  day 84 the forecast gets 0.78 of the true dose effect (0.38 with the
+  learned trend alone, 0.57 with the fixed centre) and 0.86-0.93 of the
+  true day-119 burden. To day 57 it gets 0.97 of the dose effect and
+  0.98-1.00 of the burden.
 - **On the every-8-days schedules it does not.** To day 84, M's kill is
   weaker (drug term -0.69, against -0.84 weekly), so on the full course the
   forecast does not fall enough. It ends at 1.08-1.09 times the true
@@ -2453,26 +2479,41 @@ the true burden:
 differ in growth rate (0.025-0.069 per day), in drug sensitivity
 (0.24-0.45) and in three dose cuts. The ROM's input carries each member's
 doses but not their sensitivity, so only δ_k can carry it.
-- **In every pooled fit, the nine patients' whole-tumour (mode-1) entries
-  come out almost the same:** c_1 within 0.004, N_11 within 0.0001 and
-  A_11 within 0.0006-0.0055 per day.
-- **The members' true net rates are far more spread.** Under the full
-  course, growth minus sensitivity times the mean exposure (ignoring
-  crowding) runs from -0.068 to -0.001 per day, a spread of 0.067. Their
-  fitted net mode-1 rates (A_11 plus N_11 times the mean input) span only
-  0.0006-0.0055 per day. They do not follow the true ones either: the
-  correlation across the members is -0.31 to +0.08.
-- **So pooling learned a common centre and how each member's shape
-  changes, but not that the patients grow and respond at different
-  rates.** Why the members' 14-17 scans each do not set their own rates was
-  not tested.
+- **In every pooled fit, the nine patients' whole-tumour (mode-1) source
+  and drug entries come out almost the same** (c_1 within 0.004, N_11
+  within 0.0001), **but their growth entries differ.** A_11 spans
+  0.007-0.023 per day across the nine patients. Across the members it
+  follows the true growth rate (correlation with log k +0.89 to +0.94),
+  not the drug sensitivity (-0.34 to 0.00).
+- **The members' fitted net rates follow the true ones, squeezed.** Under
+  the full course, growth minus sensitivity times the mean exposure
+  (ignoring crowding) runs from -0.068 to -0.001 per day, a spread of
+  0.067. The fitted net mode-1 rates (A_11 plus N_11 times the mean input)
+  follow it (correlation +0.71 to +0.91) but span only 0.006-0.021 per
+  day. A_11 carries the differences in growth; no mode-1 entry carries
+  those in sensitivity. Replayed over their scans with their own
+  operators, the members' net rates (change of log burden per day,
+  against the clean scans') tell the same story: correlation +0.59 on
+  seeds 48 and 50, spanning 0.026 per day against the true 0.040
+  (`cohort_size_member_rates.py`).
+- **So pooling learned that the patients grow at different rates.** What
+  it shares is the drug term, so each patient's response to a change of
+  dose is the cohort's. Why the drug term's spread collapses was not
+  tested.
+- *Corrected after the cohort-size sweep.* The first version of
+  `pooled_members_check.py` read the wrong column for A_11 (A_12, how
+  mode 2 feeds mode 1). It reported A_11 within 0.0006-0.0055 per day,
+  fitted net rates spanning 0.0006-0.0055 per day and correlations of
+  -0.31 to +0.08, and concluded: "So pooling learned a common centre and
+  how each member's shape changes, but not that the patients grow and
+  respond at different rates." That conclusion was wrong.
 
 **Expectations against outcomes.**
 
 | Item | Expected | Outcome |
 |---|---|---|
 | Members, own operators | Most under 10%, well below the population fits' 5-48% | Medians 7.6-8.2% at rank 4 (6 of 8 under 10%) and 10.8-12.4% at rank 3 (3-4 of 8); member 4 still 20-58% |
-| Furthest from M | Members 4, 1 and 6 | Member 4 in every fit; not 1 and 6. All are close: A 0-11%, c 1-25%, N 0% |
+| Furthest from M | Members 4, 1 and 6 | Member 4 in every fit; 1 and 6 only in some fits and blocks. All are close: A 1-12%, c 1-25%, N 0% (*corrected; first read A 0-11% and "not 1 and 6"*) |
 | Spread of the drug block, κ_δ,N | Well above 0.015-0.067 | 0.004-0.018, lower still; the target's drug term is M's |
 | Weekly to day 84 | 0.5x may pass; uncertain | Passes on every arm: 7.2, 8.4 and 10.8% |
 | Every 8 days to day 84 | Near the control (0.5x 20.0%); a narrow call | 0.5x better (17.5%), but 1x 21.4% and 0.75x 19.0%: fails |
@@ -2489,11 +2530,14 @@ doses but not their sensitivity, so only δ_k can carry it.
 - **It fixed the first problem named in the declaration, not the second.**
   M is now the centre of nine patients' own operators, not one compromise
   operator, and the members are fitted better. But the spread between the
-  patients' drug terms was again learned as almost zero. After the fact,
-  the patients share practically the same whole-tumour growth and kill. So
-  the target is again forecast with the cohort's average rates. That suits
-  it with the weekly cohort and not with the every-8-days cohort, and
-  nothing in the target's own 8-12 scans decides which.
+  patients' drug terms was again learned as almost zero, so every patient,
+  the target included, gets the cohort's drug term. The weekly cohort's
+  suits the target and the every-8-days cohort's does not, and nothing in
+  the target's own 8-12 scans decides which. *Corrected after the
+  cohort-size sweep; this point first said that the patients share
+  practically the same whole-tumour growth and kill, and that the target
+  is forecast with the cohort's average rates. Their net growth differs;
+  only the drug term is shared.*
 - **No one version passes everywhere.** Across all the declared ideas,
   three of the four schedules have a version that passes: weekly scans to
   day 84 with pooling, every 8 days to day 84 with the learned trend alone,
@@ -2649,6 +2693,149 @@ K = 64 runs. It stays below 4 GB, so it need not run alone; it is queued
 last, at most two fits at a time. No sweep fit had run when this was
 written.
 
+### Results (seed 48, each fit run once)
+
+All ten fits finished, with 64 of 64 draws on every arm. The pooled fits
+took 3, 5, 11, 23 and 35 minutes at K = 4, 8, 16, 32 and 64 (the K = 64
+job 41 minutes with preparation and evaluation). Summary script
+`cohort_size_summary.py` (log `logs/cohort_size_summary.txt`); figures
+`figures/cohort_size_error.png`, `figures/cohort_size_burden.png` and
+`figures/cohort_size_cohort.png`, with the new patient's scans as black
+stars.
+
+**Error (%), days 84-119,** at 1 / 0.75 / 0.5x, with the stress arms
+0.25 / 0x in brackets:
+
+| K | Pooled | New patient alone on the K-patient basis |
+|---|---|---|
+| 4 | 11.9 / 14.1 / 17.0 (20.1 / 23.1) | 12.7 / 16.8 / 21.8 (27.0 / 31.7) |
+| 8 | 7.2 / 8.4 / 10.8 (13.8 / 17.2) | 14.8 / 18.9 / 23.8 (28.7 / 33.2) |
+| 16 | 6.2 / 6.7 / 10.4 (14.9 / 19.5) | 13.8 / 17.9 / 22.9 (27.8 / 32.2) |
+| 32 | 9.9 / 9.5 / 13.9 (19.6 / 25.4) | 13.4 / 17.5 / 22.5 (27.6 / 32.2) |
+| 64 | 11.6 / 13.9 / 19.0 (24.5 / 29.9) | 15.0 / 19.2 / 24.0 (28.8 / 33.2) |
+| Reference | K = 8, stacked solver: 7.1 / 8.4 / 10.8 (13.7 / 17.1) | Own basis: 13.6 / 16.1 / 21.1 (26.8 / 32.1) |
+
+- **Pooling beats the new patient alone at every K, on every arm.**
+- **The pooled error is lowest at K = 8-16 and rises after that.** At
+  K = 64 it is back near K = 4, and worse at 0.5x and on the stress arms.
+  At 0.5x, K = 64's 19.0% is just above the 18.9% bar; the sweep has no
+  pass or fail rule.
+- **Alone on the K-patient basis, the error does not change with K:**
+  12.7-15.0% at 1x.
+
+**The pooled forecasts.** The day-119 burden and the band width are shares
+of the true burden. The dose effect is the share of the true day-119
+difference between 0.5x and 1x that the forecast gets. The burden error is
+over days 84-119:
+
+| K | Day-119 burden at 1 / 0.75 / 0.5x | Dose effect at 0.5x | Bands hold the truth at 1 / 0.75 / 0.5 / 0.25 / 0x | 0.5x band width | Burden error at 1 / 0.75 / 0.5x | Training error (days 5-84) |
+|---|---|---|---|---|---|---|
+| 4 | 0.84 / 0.77 / 0.73 | 0.58 | 100 / 100 / 100 / 99 / 68% | 0.57 | 10.7 / 15.2 / 19.8% | 5.3% |
+| 8 | 0.93 / 0.89 / 0.87 | 0.78 | 100% on every arm | 0.70 | 3.3 / 6.2 / 9.0% | 3.2% |
+| 16 | 0.96 / 0.89 / 0.83 | 0.66 | 100% on every arm | 0.58 | 1.9 / 6.1 / 10.9% | 4.3% |
+| 32 | 0.85 / 0.83 / 0.81 | 0.75 | 100 / 100 / 93 / 79 / 75% | 0.40 | 8.1 / 10.2 / 12.5% | 4.9% |
+| 64 | 0.97 / 0.93 / 0.90 | 0.81 | 100 / 100 / 100 / 100 / 93% | 0.43 | 6.1 / 5.2 / 6.0% | 6.2% |
+
+Alone on the K-patient basis, at every K: day-119 burden 0.74-0.80 /
+0.66-0.71 / 0.60-0.63, dose effect 0.42-0.44, and 0.5x band width
+0.75-0.96.
+- **The bands narrow as K grows** (0.5x width 0.57-0.70 up to K = 16,
+  0.40-0.43 from K = 32). At K = 32 they start to miss the truth.
+- **K = 64 gets the number of cells right but not where they are.** Its
+  day-119 burden and dose effect are the closest of all, and its burden
+  error (5-6%) is as small as at K = 8-16. Its field error is the largest,
+  19.0% at 0.5x.
+
+**The pooled fits.** In-sample errors replay each past patient's scans
+from their first scan, as before:
+
+| K | κ_δ (c, A, N) | M: c_1, N_11 | Past patients, own operator: median (first eight) | M alone: median | New patient's scans the basis misses |
+|---|---|---|---|---|---|
+| 4 | 0.030, 0.37, 0.013 | 0.03, -0.82 | 7.5% | 17.6% | 4.5% |
+| 8 | 0.036, 0.57, 0.009 | 0.07, -0.84 | 7.6% (7.6%) | 19.1% | 3.7% |
+| 16 | 0.040, 0.50, 0.004 | 0.25, -0.83 | 11.0% (8.6%) | 20.8% | 4.0% |
+| 32 | 0.057, 0.69, 0.003 | 0.30, -0.74 | 11.5% (9.8%) | 24.6% | 3.7% |
+| 64 | 0.077, 0.75, 0.0004 | 0.23, -0.67 | 12.4% (13.3%) | 25.5% | 3.5% |
+
+The share the basis misses is of the scans' norm; the new patient's own
+basis misses 2.6%.
+
+**K = 8 solver check.** Rerun at K = 8 with the batched blocked solver,
+the pooled fit is within 0.09 points of the stacked K = 8 fit on every arm
+(κ_δ 0.036, 0.574, 0.009 against 0.034, 0.572, 0.010). The basis-alone
+fit, which does not use that solver, agrees to two decimals.
+
+**Expectations against outcomes.**
+
+| Expected | Outcome |
+|---|---|
+| K = 4 is worse than K = 8 | Yes: 11.9 / 14.1 / 17.0% against 7.2 / 8.4 / 10.8% |
+| Beyond K = 8, about the same or worse, through a firmer average with slower spread and a stronger drug effect. Uncertain: a larger κ_δ could let the new patient move away from the average | About the same at K = 16 (6.2 / 6.7 / 10.4%), worse at K = 32 and 64. κ_δ grew for c and A, but the drug block's fell 20-fold (0.009 to 0.0004). M's drug term got weaker, not stronger (N_11 -0.84 to -0.67) |
+| Basis alone improves a little with K | No: no trend (12.7-15.0% at 1x), though the basis misses less of the new patient's scans (4.5% to 3.5%) |
+
+**After the fact, no new fits: why more patients do not help**
+(`cohort_size_M_forecast.py`, `cohort_size_member_rates.py`; logs of the
+same names).
+- **Every patient gets the cohort's drug term.** κ_δ,N falls from 0.013
+  at K = 4 to 0.0004 at K = 64. The patients differ only in the linear
+  block A and the source c, which do not scale with the dose.
+- **The rest of the new patient's operator is its own, and it matters.**
+  It is about 1% from M overall, within the past patients' range at every
+  K. In A it is 6-10% from M: the furthest of the nine patients at K = 8,
+  within the past patients' range at the other K. Forecast with M alone,
+  the new patient's error would be 50-57% at 1x at every K, against 6-12%
+  with its own operator.
+- **The past patients get their own net growth, squeezed more as K
+  grows.** Replayed over their scans with their own operators, their net
+  rates (change of log burden per day) follow the true ones: correlation
+  +0.98 at K = 4 and +0.59 to +0.68 at K = 8-64. But the fitted rates span
+  95% of the true spread at K = 4, 66% at K = 8 and 41% at K = 64. They
+  reach only -0.017 to -0.024 per day, against true rates down to -0.038
+  to -0.055.
+- **Everyone is fitted worse as K grows.** The first eight past patients'
+  median in-sample error is 7.6, 8.6, 9.8 and 13.3% at K = 8, 16, 32 and
+  64. The new patient's training error rises from 3.2% (K = 8) to 6.2%
+  (K = 64).
+
+**What this means.**
+- **More past patients do not help this patient beyond about 8-16.**
+  Pooling beats the patient alone at every K. Choosing K = 16 from these
+  results would be after the fact; a claim would need K declared first and
+  new virtual patients.
+- **The shared drug term is the likely limit.** The past patients differ
+  in drug sensitivity, but the fit gives them all one drug term. With more,
+  and more varied, patients, each patient's own growth is squeezed harder
+  toward the centre, and everyone is fitted worse, the new patient
+  included. That the drug term is the cause is a reading of these
+  diagnostics, not a test.
+- **A fix to try would let the drug response vary by patient,** for
+  example one sensitivity factor per patient on the shared drug term. Not
+  run; it would be declared first.
+- **One seed, one draw of past patients and one new patient.** Rerunning
+  K = 8 with a different random stream moved the errors by up to 0.09
+  points. Another draw of past patients was not tried.
+
+**Corrections to earlier results,** found while analysing the sweep and
+corrected in place, marked:
+- **The target is not forecast with M** (partial pooling). It shares M's
+  drug term, but the rest of its operator is its own, and that matters.
+- **A wrong column in the after-the-fact scripts.** The scripts that split
+  an operator into blocks (`cohort_blocks.py`, `pooled_summary.py`,
+  `pooled_members_check.py`) took the linear block A from columns 2 to
+  r + 1 of the operator instead of 1 to r. They dropped A's first column
+  and added the input column, which is zero here. The fits, forecasts,
+  errors, the c and N blocks and the whole-operator distances are
+  unaffected. Corrected: the A distances from M (population prior and
+  partial pooling), M's largest growth rate (population prior) and the
+  members' A_11 (partial pooling). The last changes a conclusion: pooling
+  did learn that the patients grow at different rates. The opening
+  summary's point on what the target takes from the cohort is corrected
+  to match.
+
+This section's "Why", and its expectation "if pooling again learns mainly
+the average", rest on the earlier statements. As part of the design
+written before any fit, they are left as written.
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -2691,6 +2878,9 @@ but it breaks both every-8-days schedules, so it is not a robust fix.
 Partial pooling of the past patients' scans with the target passes both
 weekly schedules, to day 84 for the first time, and its bands always hold
 the truth. It fails both every-8-days schedules, so it is not a fix either.
+More past patients do not steadily help: with weekly scans to day 84 the
+pooled error is lowest at 8-16 past patients and back near 4 by 64. The
+likely limit is that every patient shares the cohort's drug term.
 No version passes more than two of the four schedules, and every 8 days to
 day 57 has none. The agreed list of ideas is done. The options are open:
 - state the dense-imaging assumption in the paper;
@@ -2698,7 +2888,12 @@ day 57 has none. The agreed list of ideas is done. The options are open:
   (one schedule passes) and partial pooling (both weekly schedules pass),
   beside the failures;
 - test the projected form on the realistic schedules, declared first;
-- move the example to a setting with frequent imaging.
+- move the example to a setting with frequent imaging;
+- let each patient's drug response vary in the pooled model, for example
+  one sensitivity factor per patient on the shared drug term, declared
+  first;
+- confirm pooling at a declared number of past patients on new virtual
+  patients.
 
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
@@ -2716,11 +2911,14 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/gp_trend_seed45.png`, `figures/learned_trend_burden.png`,
 `figures/learned_trend_error.png`, `figures/cohort_prior_burden.png`,
 `figures/cohort_prior_error.png`, `figures/pooled_burden.png`,
-`figures/pooled_error.png`, the band-coverage scripts, the
+`figures/pooled_error.png`, `figures/cohort_size_error.png`,
+`figures/cohort_size_burden.png`, `figures/cohort_size_cohort.png`, the
+band-coverage scripts, the
 smoothed-POD scripts and fits, the scan-schedule check, summary and sweep
 scripts, the sparse-fix check, summary and Gaussian-process check scripts,
 the learned-trend summary script, the cohort data check, summary,
-M-alone and block scripts, and the pooled summary and member-check
+M-alone and block scripts, the pooled summary and member-check
+scripts, and the cohort-size summary, M-forecast and member-rate
 scripts) are local session artifacts, not
 bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
