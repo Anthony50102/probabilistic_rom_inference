@@ -83,10 +83,15 @@ scans matters, not the even spacing. After the fact, on one seed, it comes
 back under the bar with scans about every 2 days (to day 84) or daily (to
 day 57). See "Realistic scan schedules".
 
-**Fixing sparse scans: declared, results pending.** Two fixes keep the scan
-count at weekly or below. One tells the Gaussian process the scanner's known
-noise; the other scans every 8 days, so the scans fall at different points
-of the dose cycle. See "Fixing sparse scans".
+**Fixing sparse scans: both declared fixes fail.** Two fixes kept the scan
+count at weekly or below. One told the Gaussian process the scanner's known
+noise; the other scanned every 8 days, so the scans fall at different points
+of the dose cycle. Neither passes on either split, nor do both together or
+two modes instead of three or four. Together they do worst: 33-108% off.
+The dense control still passes. After the fact, the cause is the Gaussian
+process's trend: its prior is too tight for 8-12 scans, so the process
+treats the dose cycle as noise or bends sharply between scans. See "Fixing
+sparse scans".
 
 ## Design
 
@@ -1429,6 +1434,164 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 The data-only check is session `sparse_fix_check.py`, and its output is
 `sparse_fix_check.json`.
 
+### Results (each seed run once)
+
+**Every fix fails, on both splits. The dense control passes.** All 27 fits
+finished with 64 of 64 draws. Median point-forecast error (%) over seeds
+48-50; the bar is 18.9% on every scenario arm:
+
+| Data to | Case | Scans, rank | 1x | 0.75x | 0.5x | Verdict |
+|---|---|---|---|---|---|---|
+| Day 84 | Weekly (declared earlier) | 12, r4 | 22.1 | 24.1 | 32.4 | fail |
+| | Weekly + known noise | 12, r4 | 29.3 | 30.3 | 32.9 | fail |
+| | Every 8 days | 11, r4 | 47.2 | 32.9 | 27.0 | fail |
+| | Every 8 days + known noise | 11, r4 | 106.6 | 97.5 | 90.8 | fail |
+| | Every 8 days + known noise, 2 modes | 11, r2 | 45.2 | 44.2 | 45.2 | fail |
+| | 120 even + known noise (control) | 120, r4 | 8.4 | 6.1 | 6.1 | pass |
+| | 120 even (declared earlier) | 120, r4 | 8.9 | 6.3 | 6.1 | pass |
+| Day 57 | Weekly (declared earlier) | 8, r3 | 42.4 | 49.1 | 53.9 | fail |
+| | Weekly + known noise | 8, r3 | 30.9 | 32.8 | 36.2 | fail |
+| | Every 8 days | 8, r3 | 39.2 | 47.6 | 54.4 | fail |
+| | Every 8 days + known noise | 8, r3 | 107.7 | 64.1 | 33.1 | fail |
+| | Every 8 days + known noise, 2 modes | 8, r2 | 45.4 | 40.8 | 50.1 | fail |
+
+The three seeds agree to within 1.5 points everywhere. On a fixed schedule
+the seeds share the scan days and differ only in scanner noise, so this
+agreement shows robustness to the noise, not to a different patient or
+timing.
+
+What changed inside the fits (ranges over seeds 48-50):
+
+| Data to | Case | Training error | Dose effect at 0.5x | Day-119 burden / truth at 1x | Mode 1: c_1, N_11 |
+|---|---|---|---|---|---|
+| Day 84 | 120 even (earlier) | 1.2% | 0.73-0.74 | 1.03-1.04 | 2.24, -0.95 |
+| | Weekly (earlier) | 18.2% | 0.06-0.07 | 0.80-0.82 | 0.09, -0.15 to -0.14 |
+| | Weekly + known noise | 10.3% | 0.37 | 0.66-0.67 | 0.53, -0.62 |
+| | Every 8 days | 23.3% | 0.02 | 1.21-1.22 | -0.02, -0.04 |
+| | Every 8 days + known noise | 43.2% | 0.01-0.02 | 0.33-0.34 | -0.11, -0.04 |
+| | Every 8 days + known, 2 modes | 19.8% | 0.28 | 0.53 | 0.63, -0.48 |
+| Day 57 | 120 random (reported) | 0.8% | 0.50-0.60 | 1.01-1.06 | 2.24 to 2.43, -0.99 to -0.96 |
+| | Weekly (earlier) | 3.2% | 0.25 | 0.18 | 0.29, -0.66 |
+| | Weekly + known noise | 2.1% | 0.45 | 0.37 | 0.75, -0.86 |
+| | Every 8 days | 5.5% | 0.21 | 0.17-0.18 | 0.15, -0.56 |
+| | Every 8 days + known noise | 19.7% | 0.02 | 2.18-2.19 | 0.04, -0.02 |
+| | Every 8 days + known, 2 modes | 16.5% | 0.01 | 0.46-0.49 | -0.16, -0.03 |
+
+- **Known noise, weekly.** The fit follows its scans more closely, and part
+  of the drug effect comes back (dose effect 0.06 to 0.37 to day 84, 0.25 to
+  0.45 to day 57). But the growth source c_1 stays at a quarter to a third
+  of the dense fits' value, so every forecast shrinks too much. To day 84
+  the errors rise; to day 57 they fall by 11-18 points but stay far above
+  the bar.
+- **Every 8 days, default prior.** No drug effect at all to day 84. The
+  default prior still calls the dose cycle noise (mode 1's noise estimate is
+  about 280,000 times the scanner's).
+- **Every 8 days with known noise: the worst of all.** The Gaussian process
+  can no longer call the cycle noise, so it shortens mode 1's lengthscale to
+  4.7 days (day 84) or 6.5 days (day 57) and wiggles between scans. The
+  training error is 43% and 20%. To day 57 the forecast more than doubles
+  the tumour at 1x.
+- **Two modes.** Fewer unknowns did not help. The basis floor rises to
+  12.7-14.4% (day 84) and 14.1-20.5% (day 57) on the scenario arms.
+- **Control.** The known noise does not hurt dense scans: 8.4, 6.1 and
+  6.1%, against 8.9, 6.3 and 6.1%. Its 1x band is narrower (width 0.09-0.10
+  against 0.12) and holds the truth 92-95% of the time, against 100%.
+
+**Expectations against outcomes.**
+
+| Case | Expected | Outcome |
+|---|---|---|
+| Known noise, weekly, day 84 | Training error well under 18%; little drug effect; fail at 0.5x | Training error 10.3%; dose effect 0.37; fails every arm, worse than before at 1x and 0.75x |
+| Known noise, weekly, day 57 | Little change | Errors fall by 11-18 points; still fails |
+| Every 8 days, default prior | Some drug effect; fail | No drug effect to day 84; fail |
+| Every 8 days + known noise | Best chance; a pass to day 84 would not surprise | The worst results of all |
+| Two modes | May help to day 57 | Fails; floor 14-21% |
+| Control | Pass within about 2 points | Pass, 0-0.5 points better |
+
+The two fixes I expected most from did the most damage when combined.
+
+### Why the fixes fail (after the fact)
+
+Two checks, made after the fits. Neither fits a ROM or computes a forecast.
+
+**1. The Gaussian process hands the regression poor derivatives.** The
+regression learns the operators from the Gaussian process's state and rate
+of change between the scans. For mode 1 on seed 48, with each fit's mean
+hyperparameters, I compared both with the noise-free truth over the
+training window (session `gp_mode1_check.py`,
+`figures/gp_mode1_seed48.png`):
+
+| Scans and noise prior | Lengthscale (days) | Noise variance / scanner's | State error | Rate error |
+|---|---|---|---|---|
+| 120 even, default | 3.3 | 4,643 | 0.4% | 25.7% |
+| Weekly, default | 16.9 | 333,000 | 5.4% | 75.5% |
+| Weekly, known noise | 4.7 | 2.3 | 3.1% | 47.6% |
+| Every 8 days, default | 12.7 | 321,000 | 5.6% | 81.9% |
+| Every 8 days, known noise | 4.7 | 2.5 | 4.6% | 70.1% |
+| Day 57 weekly, default | 48 | 114,000 | 3.4% | 38.4% |
+
+- **Default prior.** The Gaussian process treats the weekly drop and
+  regrowth as noise and draws a smooth curve through it. For every 8 days,
+  mode 1's curve even peaks around day 29, before the first dose on day 35.
+- **Known noise.** It can no longer call the cycle noise. It cannot follow
+  it either, with 7-8 days between scans, so it bends sharply at each scan.
+
+**2. The trend's prior is too tight.** The input-aware Gaussian process
+already has a shape for the dose cycle. Its trend has three parts: a
+constant, a straight line in time and the cumulative drug exposure. The
+last one steps down at each dose, and the straight line regrows the tumour
+between doses. But the prior on each part's coefficient has a fixed spread:
+the mode's observed spread across the scans. With 120 scans the data pin the
+coefficients and the prior hardly matters. With 8-12 scans it holds them
+near zero. The Gaussian process then explains the cycle with noise or with
+sharp bends.
+
+A data-only check fits the Gaussian process alone to mode 1's scans and
+multiplies the trend's prior variance by m (session `gp_trend_check.py`,
+`figures/gp_trend_seed48.png`, `figures/gp_trend_seed45.png`). The other
+hyperparameters are refitted by maximum marginal likelihood for each m. I
+scored the weak-form targets, the numbers the regression actually fits,
+against the noise-free truth:
+
+| Seed 48, mode 1 (noise prior) | m = 1 (as fitted) | m = 10 | m = 100 | Marginal likelihood, m = 10 against 1 |
+|---|---|---|---|---|
+| Day 84 weekly (default) | 28.2% | 8.8% | 8.6% | +6.9 |
+| Day 84 weekly (known) | 25.9% | 21.1% | 10.5% | +7.1 |
+| Day 84 every 8 days (default) | 35.4% | 16.8% | 15.3% | +4.0 |
+| Day 84 every 8 days (known) | 19.4% | 10.4% | 10.3% | +7.1 |
+| Day 57 weekly (default) | 22.2% | 8.5% | 7.2% | +1.4 |
+| Day 57 weekly (known) | 19.1% | 8.5% | 8.4% | +7.0 |
+| Day 84 120 even (default) | 0.5% | 0.5% | 0.5% | +10.0 |
+
+- **The scans themselves prefer a looser trend.** The marginal likelihood
+  is higher at m = 10 in every case, by 1.4-10 log units, and falls again at
+  m = 100 and 1,000.
+- **The targets improve 2-3 times on every sparse schedule.** The dense
+  control does not change.
+- **Development acquisition 45 gives the same numbers** to within 1.5
+  points. It adds day 57 every 8 days: 32.1% to 10.7% (default noise) and
+  50.9% to 15.4% (known noise).
+- **The remaining error** comes from the trend's constant step per dose. The
+  true kill shrinks as the tumour shrinks, so the later troughs overshoot.
+- **Disclosure.** Seed 48 is an evaluation acquisition. The check used its
+  scans and its noise-free training-window states, no forecast. Seed 45 is
+  the development acquisition, but on a fixed schedule it is a
+  near-replicate of 48-50: only the scanner noise differs.
+
+**3. Even good targets carry little information.** The tempering gives
+each mode about as many effective observations as the Gaussian process has
+degrees of freedom: 6-8 per mode on weekly scans to day 84. A rank-4 mode
+has 10 unknowns (c_i, four A entries, B_i and four N entries). Part of the
+answer therefore comes from the operator prior, which is centred on zero.
+That fits the way c_1 and N_11 shrink towards zero in the tables above.
+
+**What this means.** The known noise removed the wrong explanation (noise)
+without making the right one (the dose cycle) available, so the Gaussian
+process found a third one (sharp bends). Timing alone cannot help while the
+Gaussian process smooths the cycle away. The next declared test therefore
+loosens the trend's prior; see "Learning the Gaussian process's trend
+scale".
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -1462,7 +1625,8 @@ production modes blurred.
 
 The realistic-scan result bears on all of these choices. Every chemo result
 here assumes about 120 scans in the training window, far denser than
-clinical MRI. The options are open:
+clinical MRI. The declared fixes (known noise, scans every 8 days, two
+modes) did not change that. The options are open:
 - state the dense-imaging assumption in the paper;
 - test the projected form on the realistic schedules, declared first;
 - move the example to a setting with frequent imaging.
@@ -1477,8 +1641,11 @@ Run notes, the pre-declared rule, logs, and plots
 `figures/pod_limits_seed48.png`, `figures/pod_fix_seed48.png`,
 `figures/blur_fit_burden.png`, `figures/smoothing_profile_seed48.png`,
 `figures/blurred_modes_burden.png`, `figures/scan_schedule_burden.png`,
-`figures/scan_schedule_error.png`, `figures/scan_sweep_burden.png`, the
-band-coverage scripts, the smoothed-POD scripts and fits, and the
-scan-schedule check, summary and sweep scripts) are local session
-artifacts, not bundled with the repository:
+`figures/scan_schedule_error.png`, `figures/scan_sweep_burden.png`,
+`figures/sparse_fix_burden.png`, `figures/sparse_fix_error.png`,
+`figures/gp_mode1_seed48.png`, `figures/gp_trend_seed48.png`,
+`figures/gp_trend_seed45.png`, the band-coverage scripts, the smoothed-POD
+scripts and fits, the scan-schedule check, summary and sweep scripts, and
+the sparse-fix check, summary and Gaussian-process check scripts) are local
+session artifacts, not bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
