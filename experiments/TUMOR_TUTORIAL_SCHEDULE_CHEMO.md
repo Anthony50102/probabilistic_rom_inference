@@ -1673,9 +1673,10 @@ from its declared partner in one setting only.
   was computed.
 - **Smoke run.** A smoke run checked the code end to end on development
   seed 45 (`midcourse-reduced-trend-chemo-weekly-scans-learned-trend`). It
-  used 20 training updates instead of 12,000, so the main fit's kappa barely
-  moved from 1. The data-only fit, which only sets the tempering, ran in
-  full and gave kappa = 3.8, 0.33, 1.5 and 0.61 for modes 1-4. It printed forecast errors of 21.8, 24.8 and 29.8% (1, 0.75 and
+  used 20 training updates instead of 12,000, far from converged: the main
+  fit's kappa had moved from 1 to 1.2-2.4. The data-only fit, which only
+  sets the tempering, ran in full and gave kappa = 3.8, 0.33, 1.5 and 0.61
+  for modes 1-4. It printed forecast errors of 21.8, 24.8 and 29.8% (1, 0.75 and
   0.5x). These are not results and set nothing.
 - **Seeds are near-replicates.** On a fixed schedule, seeds 45 and 48-50
   differ only in scanner noise. Seed agreement here shows robustness to
