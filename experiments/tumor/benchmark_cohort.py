@@ -12,6 +12,7 @@ that the member solver reproduces the target's cached history and that the membe
 exposure table. ``fit CASE`` fits the population operator for CASE's protocol and rank: the production weak-form
 fit (the target case's own configuration) to all members' reduced scans at once, one trajectory per member. Its
 point operator is the centre of the ``-cohort-prior`` cases' operator prior (benchmark_models.fit_production).
+The ``-cohort-pooled`` cases instead fit the members' scans jointly with the target's (``pooled_trajectories``).
 
     python benchmark_cohort.py build
     python benchmark_cohort.py fit CASE [--steps N] [--output-root PATH]
@@ -483,6 +484,30 @@ def prior_mean(case, pod, root, metadata, record, *, full_run):
     if full_run and record["reduced_steps"]:
         raise ValueError("A full-length fit needs the full-length population operator.")
     return np.asarray(bd.read_npz(record["path"])["O_point_fit"], dtype=float)
+
+
+def pooled_record(case, pod=None):
+    """The cohort members a -cohort-pooled fit is fitted jointly with: protocol, rank and the files' digests."""
+    pod = case.pod if pod is None else pod
+    check_target(case)
+    if case.operator_prior_mean != "pooled":
+        raise ValueError(f"{case.name} is not a partial-pooling case.")
+    record = _built()
+    count = len(record["members"])
+    return {"protocol": case.cohort, "rank": pod.rank, "members": count,
+            "members_sha256": record["files"]["members"]["sha256"],
+            "cohort_basis_sha256": record["files"][f"{case.cohort}_basis"]["sha256"],
+            "trajectory_order": f"this acquisition first (index 0), then members 0-{count - 1} (indices 1-{count})"}
+
+
+def pooled_trajectories(case, pod, cfg, metadata, record):
+    """The members' trajectories (reduced noisy scans, exposure inputs) for a -cohort-pooled fit of an acquisition
+    projected onto the same cohort basis, in member order."""
+    if record != pooled_record(case, pod):
+        raise RuntimeError("The cohort changed since this fit was requested.")
+    if metadata["sources"]["basis"]["sha256"] != record["cohort_basis_sha256"]:
+        raise ValueError("This acquisition was projected onto a different basis than the cohort's.")
+    return [_trajectory(member, cfg) for member in load_members(case.cohort, pod.rank)]
 
 
 def main(argv=None):

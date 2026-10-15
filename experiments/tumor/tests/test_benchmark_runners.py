@@ -223,7 +223,8 @@ class CommandLineTests(unittest.TestCase):
                              for base, ranks in {"midcourse-reduced-trend-chemo": {"weekly-scans": 4, "every8-scans": 4},
                                                  "reduced-regimen-trend-chemo": {"weekly-scans": 3,
                                                                                  "every8-scans": 3}}.items()
-                             for source, rank in ranks.items() for arm in ("cohort-basis", "cohort-prior")}})
+                             for source, rank in ranks.items()
+                             for arm in ("cohort-basis", "cohort-prior", "cohort-pooled")}})
         self.assertEqual({name: bd.acquisition_tag(bd.get_case(name, "oracle_masked")) for name in bd.REPORTED_CASES},
                          {"untreated-growth": "observed_mean_r4", "single-dose-chemo": "nominal_mean_r4",
                           "multi-dose-chemo": "matched_none_r4"})

@@ -2151,6 +2151,157 @@ past patients then sets how far the target may move from the mean, instead
 of the target's own few scans. It needs new code and will be declared
 before any fit.
 
+## Partial pooling of past patients (rule declared before any fit)
+
+**Why.** The population prior failed for two reasons, both found in its
+results:
+- **One operator for eight tumours.** M fitted the members with 5-48%
+  error, and its drug term changed with the scan days (-0.95 weekly, -0.75
+  to -0.82 every 8 days).
+- **The target alone set how far it may move from M.** From 8-12 scans
+  the learned width of the drug block collapsed to 0.015-0.067, so the
+  target took M's drug term whether or not it suited this patient.
+
+Partial pooling changes exactly these two parts. It is the standard way to
+combine patients in a hierarchical model: each patient keeps their own
+rates, and the patients together say how much rates differ between
+patients.
+
+**The model.** Every patient k gets their own operator, the population
+operator plus their own deviation: O_k = M + δ_k. The target is k = 0;
+members 0-7 are k = 1-8. All nine patients' scans are fitted at once.
+- **M** is the population operator. It is not fixed in advance but
+  learned with everything else. Prior: each entry ~ N(0, (κ_M,b s_j)²).
+- **δ_k** is how patient k differs from M. Prior: each entry
+  ~ N(0, (κ_δ,b s_j)²), the same width for every patient.
+- **κ_M,b and κ_δ,b** are learned for each block b (c, A, N), with the
+  log-normal(0, 3²) prior every block width has had so far. κ_δ is the
+  spread between patients. The eight members' full courses (14-17 scans
+  each, three with a dose cut) mostly set it, so the target's few scans
+  no longer decide how far the target may move.
+- **The target's forecast** uses draws of O_0 = M + δ_0, as before. Its
+  own scans inform δ_0 directly; the members' scans inform it through M
+  and κ_δ.
+- **Unchanged for each patient:** the Gaussian process of their scans,
+  its hyperparameters (including the learned trend scale) and the
+  tempering exponents. The column scales s_j come from all nine patients
+  together: T is their mean training window (105 days in the smoke run,
+  against the target's 79), and S and U are the RMS of all their scans and
+  inputs. So κ is not on quite the same scale as in earlier sections.
+- **Exact.** The evidence and the operator posterior keep their closed
+  forms. Each mode's unknowns become [M, δ_0, ..., δ_8], and patient k's
+  rows see M + δ_k (`core/weakform_opinf/model.py`,
+  `build_model(pooled=True)`). Tests
+  (`core/weakform_opinf/tests/test_partial_pooling.py`):
+  - with one patient it equals the single fit with width
+    √(κ_M² + κ_δ²);
+  - for two patients, the evidence and the posteriors of M, of each
+    patient and of the target match a brute-force Gaussian calculation
+    (changing κ_δ by 1%, or swapping κ_M and κ_δ, fails this test);
+  - as κ_δ → 0 it becomes one operator shared by all;
+  - unsupported settings are refused.
+
+**Design.** Four cases (`benchmark_cases.POOLED_CASES`), one per realistic
+schedule. They use the same acquisitions, cohort, cohort basis and rank as
+the `-cohort-basis` and `-cohort-prior` cases. The direct control is
+`-cohort-basis`: the same basis, with the target fitted alone. Medians over
+seeds 48-50 at 1 / 0.75 / 0.5x:
+
+| Target schedule | Rank | Cohort protocol | Learned trend, own basis | Cohort basis, centred on zero | Centred on M |
+|---|---|---|---|---|---|
+| Weekly to day 84 (12 scans) | 4 | weekly | 13.6 / 16.1 / 21.1, fail | 14.8 / 18.9 / 23.7, fail | 16.2 / 18.7 / 21.4, fail |
+| Every 8 days to day 84 (11) | 4 | every 8 days | 13.6 / 12.8 / 17.8, pass | 10.7 / 13.8 / 20.0, fail | 100.5 / 95.2 / 89.2, fail |
+| Weekly to day 57 (8) | 3 | weekly | 20.1 / 26.7 / 32.1, fail | 25.4 / 31.5 / 35.6, fail | 11.1 / 10.6 / 12.1, pass |
+| Every 8 days to day 57 (8) | 3 | every 8 days | 12.3 / 18.2 / 25.4, fail | 8.7 / 15.5 / 23.0, fail | 45.0 / 43.6 / 45.4, fail |
+
+Case names: `midcourse-reduced-trend-chemo-{weekly,every8}-scans-learned-trend-cohort-pooled`
+(day 84) and `reduced-regimen-trend-chemo-...-cohort-pooled` (day 57).
+
+**Rule.**
+1. **Runs.** Seeds 48-50 of the four cases, each run once with the
+   production recipe (12,000 updates). Nothing is tuned. The cohort is the
+   one built for the population prior, unchanged; its population fits are
+   not used.
+2. **Metric and arms.** The same metric. Scenario arms are 1, 0.75 and
+   0.5x; 0.25x and 0x are stress arms, reported and not judged.
+3. **Bar.** A case passes if every scenario arm's median is at most 18.9%.
+4. **Reading.** Partial pooling works on a schedule if its case passes.
+   Set against `-cohort-basis`, it shows what pooling adds. It is a fix
+   for realistic imaging only if all four schedules pass. Otherwise the
+   results are reported schedule by schedule, beside the earlier ideas.
+5. **Also reported.**
+   - The learned widths κ_M and κ_δ of each block, against the population
+     prior's collapsed 0.015-0.067.
+   - M's c_1 and N_11, and how far the target's operator is from M in each
+     block.
+   - Each member's in-sample error with their own operator M + δ_k, and
+     with M alone, replayed from their first scan as for the population
+     fits.
+   - The target fits: c_1 and N_11, the training-window error, the share of
+     the true dose effect and the day-119 burden.
+   - How often the 0.5x and 1x bands hold the truth, and their widths.
+
+**Expectations, written before any fit (but after the smoke run below).**
+- **Members.** With their own operators, in-sample errors well below the
+  population fits' 5-48%: most under 10%. The largest deviations from M
+  belong to members 4, 1 and 6.
+- **Spread.** κ_δ of the drug block is well above 0.015-0.067. The
+  members' drug responses differ (sensitivity 0.24-0.45, three cuts), so
+  the target's drug term is free to move.
+- **To day 84.** Weekly: 0.5x may fall below the bar; uncertain. Every 8
+  days: near the `-cohort-basis` control (0.5x 20.0%), not the 89-100% of
+  the fixed centre, because M is now the centre of nine patients' own
+  operators instead of one compromise operator. A narrow call either way.
+- **To day 57.** With four treated scans the target's deviation is weakly
+  determined, so the forecast leans on M. Weekly: near the fixed centre's
+  pass, perhaps a little worse. Every 8 days: much better than 45%, but
+  leaning fail at 0.5x.
+- **Bands.** Wider than with the fixed centre, as they now include the
+  spread between patients.
+
+**Disclosures.**
+- **The same best case as before.** One anatomy, one baseline tumour and a
+  narrow spread of patients (log SD 0.3), as disclosed for the population
+  prior. The members' scans cover days 5-119, so the cohort has seen the
+  target's forecast window, cuts included. The target's own future is not
+  in the data.
+- **Choices made before any fit, with no alternative tried.**
+  - One spread κ_δ per block, shared by all nine patients: the target is
+    treated like any member.
+  - The log-normal(0, 3²) prior for both widths.
+  - Column scales from all nine patients.
+  - The members' full courses.
+  - This cohort and its basis.
+- **Seeds.** Seeds 48-50 have now been used by every sparse-scan idea. On a
+  fixed schedule they differ only in scanner noise (the population prior's
+  seeds agreed within 0.9 points), so they do not test another patient. If
+  pooling is adopted, a confirmation should use a different virtual target,
+  declared first.
+- **Smoke run.** One smoke run checked the code end to end, written outside
+  the results tree. It used development seed 45, weekly scans to day 84,
+  and 20 training updates instead of 12,000.
+  - It printed forecast errors of 9.0, 9.8 and 17.7% (1, 0.75 and 0.5x), and
+    26.3 and 34.4% (0.25x and 0x). 3-6 of the 64 draws per arm were within
+    25%.
+  - After 20 updates the widths were κ_M 1.4, 2.1 and 1.0, and κ_δ 9.9,
+    1.1 and 0.8 (c, A, N).
+  - At 20 updates these are not results and set nothing. They were,
+    however, seen before the expectations above were written.
+- **Cost.** One update takes about 19 ms, so one fit takes about 4 minutes
+  (about 1 minute for the target alone). This was timed on the smoke run's
+  data before declaring.
+- **Unchanged earlier fits.** The fingerprints of all 43 earlier cases are
+  unchanged. With this code, refits of a learned-trend case (every 8 days to
+  day 84, seed 48) and of a population-prior case (weekly to day 57, seed
+  48) reproduce their stored operator files bit for bit.
+
+```bash
+cd experiments/tumor
+conda run -n prob_rom python benchmark_cohort.py build   # the population prior's cohort (cached, unchanged)
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo-weekly-scans-learned-trend-cohort-pooled   # 48-50
+# likewise every case in benchmark_cases.POOLED_CASES
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -2194,9 +2345,8 @@ The options are open:
 - state the dense-imaging assumption in the paper;
 - report the learned trend scale with scans every 8 days to day 84, and the
   remaining failures;
-- partial pooling of past patients' scans with the target (next in the
-  agreed order, to be declared; see "A population prior from past
-  patients");
+- partial pooling of past patients' scans with the target (declared, being
+  run; see "Partial pooling of past patients");
 - test the projected form on the realistic schedules, declared first;
 - move the example to a setting with frequent imaging.
 

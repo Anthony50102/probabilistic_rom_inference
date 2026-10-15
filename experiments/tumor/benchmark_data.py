@@ -72,7 +72,8 @@ DEFAULT_SEEDS = {
     **{name: (48, 49, 50) for name in SPARSE_FIX_CASES},
     # Learned trend scale: likewise (the diagnosis behind it fitted GPs alone to acquisitions 45 and 48, no ROM fit).
     **{name: (48, 49, 50) for name in LEARNED_TREND_CASES},
-    # Population prior: likewise (seed 45 only for the smoke run; the cohort is built from its own simulations).
+    # Population prior and partial pooling: likewise (seed 45 only for smoke runs; the cohort is built from its own
+    # simulations).
     **{name: (48, 49, 50) for name in COHORT_CASES},
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}

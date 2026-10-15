@@ -58,7 +58,10 @@ with the target's anatomy, varied growth, diffusion and drug sensitivity, three
 of them with a dose modification, scanned through the whole course on the same
 imaging protocol. ``*-cohort-basis`` keeps the zero-centred operator prior;
 ``*-cohort-prior`` centres it on the operator fitted to all the cohort's scans
-(``operator_prior_mean="cohort"``).
+(``operator_prior_mean="cohort"``); ``*-cohort-pooled`` fits the acquisition
+together with the cohort's scans, each patient with its own operator around a
+shared population operator, and learns how far patients' operators spread
+around it (partial pooling, ``operator_prior_mean="pooled"``).
 
 Observation models
 ------------------
@@ -117,7 +120,7 @@ COHORT_DESIGN = {
     "rank": 4,
     "input_sensitivity": TUTORIAL_TWIN["sensitivity"],
 }
-OPERATOR_PRIOR_MEANS = ("zero", "cohort")
+OPERATOR_PRIOR_MEANS = ("zero", "cohort", "pooled")
 # Reduced-model structure: the operators a structured chemo ROM is fitted with (see benchmark_models.galerkin_row_maps).
 STRUCTURES = ("free", "galerkin", "galerkin_logistic")
 STRUCTURED_OPERATORS = {"galerkin": "AN", "galerkin_logistic": "AHN"}
@@ -168,7 +171,8 @@ class BenchmarkCase:
     # Past patients' imaging protocol ("weekly", "every8"; COHORT_DESIGN) whose pooled scans give the POD basis
     # (pod.source "cohort_training"); empty: the acquisition's own scans.
     cohort: str = ""
-    # Centre of the operator prior: zero, or the population operator fitted to the cohort's scans ("cohort").
+    # Centre of the operator prior: zero, the population operator fitted to the cohort's scans ("cohort"), or a
+    # population operator learned jointly with the cohort members' own operators ("pooled": partial pooling).
     operator_prior_mean: str = "zero"
 
     def __post_init__(self):
@@ -195,8 +199,10 @@ class BenchmarkCase:
                              f"at most rank {COHORT_DESIGN['rank']}.")
         if self.operator_prior_mean not in OPERATOR_PRIOR_MEANS:
             raise ValueError(f"Unknown operator prior mean: {self.operator_prior_mean}")
-        if self.operator_prior_mean == "cohort" and not (self.cohort and self.structure == "free"):
+        if self.operator_prior_mean != "zero" and not (self.cohort and self.structure == "free"):
             raise ValueError("The population operator prior needs a cohort basis and the free ROM.")
+        if self.operator_prior_mean == "pooled" and self.gp_noise_prior != "spectrum":
+            raise ValueError("Partial pooling uses the spectrum noise prior (the cohort has no measurement record).")
         if self.structure not in STRUCTURES:
             raise ValueError(f"Unknown reduced-model structure: {self.structure}")
         if self.structure != "free" and not (self.dose_days and self.pod.centering == "none"):
@@ -386,21 +392,26 @@ CASES.update({f"{base}-{source}-learned-trend": replace(
 # Population prior from past patients (declared before any fit): the four sparse learned-trend cases, with the POD
 # basis of a virtual cohort's scans on the same imaging protocol (COHORT_DESIGN) instead of the target's own, at the
 # same rank. "-cohort-basis" keeps the zero-centred operator prior (the control: the basis alone); "-cohort-prior"
-# centres it on the population operator fitted to the cohort (benchmark_cohort.fit_cohort).
+# centres it on the population operator fitted to the cohort (benchmark_cohort.fit_cohort). "-cohort-pooled" (partial
+# pooling, declared before any of its fits) fits the acquisition jointly with the members' scans: each patient's
+# operator is the population operator plus its own deviation, with the deviations' spread learned from all of them.
 COHORT_SOURCES = {
     "midcourse-reduced-trend-chemo-weekly-scans-learned-trend": "weekly",
     "midcourse-reduced-trend-chemo-every8-scans-learned-trend": "every8",
     "reduced-regimen-trend-chemo-weekly-scans-learned-trend": "weekly",
     "reduced-regimen-trend-chemo-every8-scans-learned-trend": "every8",
 }
-COHORT_ARMS = {"cohort-basis": "zero", "cohort-prior": "cohort"}
+COHORT_ARMS = {"cohort-basis": "zero", "cohort-prior": "cohort", "cohort-pooled": "pooled"}
 COHORT_CASES = tuple(f"{source}-{arm}" for source in COHORT_SOURCES for arm in COHORT_ARMS)
+POOLED_CASES = tuple(f"{source}-cohort-pooled" for source in COHORT_SOURCES)
 CASES.update({f"{source}-{arm}": replace(
     CASES[source], name=f"{source}-{arm}", cohort=protocol, operator_prior_mean=mean,
     pod=replace(CASES[source].pod, source="cohort_training"),
     description=(f"As {source}, on the POD basis of a virtual cohort's {protocol} scans"
-                 + ("; operator prior centred on the cohort's population operator." if mean == "cohort" else
-                    " (zero-centred operator prior).")))
+                 + {"zero": " (zero-centred operator prior).",
+                    "cohort": "; operator prior centred on the cohort's population operator.",
+                    "pooled": ("; fitted jointly with the cohort's scans, each patient's operator around a learned "
+                               "population operator (partial pooling).")}[mean]))
     for source, protocol in COHORT_SOURCES.items() for arm, mean in COHORT_ARMS.items()})
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")

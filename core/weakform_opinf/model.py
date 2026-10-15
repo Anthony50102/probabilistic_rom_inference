@@ -3,6 +3,8 @@
 One implementation shared by every experiment. It operates on a **list of
 trajectories** (a single operator shared across initial conditions); the
 single-trajectory experiments are just the ``len(trajectories) == 1`` case.
+``pooled=True`` instead gives every trajectory its own operator around a shared
+population operator, with the spread between them learned (partial pooling).
 
 Because the chemo input α(t) enters only as fixed data in the design matrix,
 the reduced dynamics stay linear in O whether or not inputs are present, so the
@@ -283,7 +285,7 @@ def power_likelihood_correction(u, alpha):
     return -0.5 * jnp.sum((alpha - 1.0) * jnp.log(2 * jnp.pi * u) + jnp.log(alpha))
 
 
-def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
+def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=False):
     """Build the marginalised-O + weak-form NumPyro model.
 
     Parameters
@@ -314,6 +316,17 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
         set how far O may move from M. Exact for the linear-Gaussian
         evidence: the rows are fitted to y − A Mᵢ and Mᵢ is added back to the
         posterior mean. Not available with row maps.
+    pooled : bool
+        Partial pooling: trajectory k has its own operator O⁽ᵏ⁾ = M + δ⁽ᵏ⁾
+        around a shared population operator M, with M ~ N(0, (κ_M,b s_j)²)
+        and δ⁽ᵏ⁾ ~ N(0, (κ_δ,b s_j)²) column-wise (s_j the nondimensional
+        scales of all trajectories together). ``log_tau_block`` then holds
+        log κ_M (first n_blocks entries) and log κ_δ (last n_blocks), so the
+        spread κ_δ between trajectories is learned from them, not set by
+        hand. Exact: every mode's rows are fitted in the stacked unknowns
+        [M, δ⁽⁰⁾, …, δ⁽ᴷ⁻¹⁾] (trajectory k's design A [I, 0, …, I, …, 0]).
+        Needs the nondimensional block-hierarchical prior; not available with
+        row maps or a prior mean.
 
     Returns
     -------
@@ -326,6 +339,9 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
         for the model) means the resolved slack ``prior_info["gamma2"]``.
         With row maps, μ_O = P_i μ_θ and C_O = [P_i C_θ, 0] (zero-padded to m
         columns), so draws μ_O + C_O z keep the structure exactly.
+        Pooled: the operator of trajectory 0 (the target), or with the static
+        keyword ``which`` the population operator M (``"mean"``) or trajectory
+        k's (an int); C_O is a square (m × m) factor of its covariance.
     time_evals : list of np.ndarray, per-trajectory eval grids.
     prior_info : dict of representative prior locations (diagnostics), the
         closure variance ``gamma2`` (0 under the tempered rule) and the rule's
@@ -386,6 +402,46 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
             return blocks
         A_D, y_D, S_D, A_W, y_W, S_W = blocks
         return A_D, y_D - mean_O @ A_D.T, S_D, A_W, y_W - mean_O @ A_W.T, S_W
+
+    pooled = bool(pooled)
+    m_fit = m_total
+    if pooled:
+        if not (nondim and cfg.op_prior_mode == "block_hier"):
+            raise ValueError("Partial pooling needs the nondimensional block-hierarchical operator prior "
+                             "(sigma_O=None, op_prior_mode='block_hier')")
+        if structured or centred:
+            raise ValueError("Partial pooling is not supported with structured operator rows or a prior mean")
+        m_fit = (num_traj + 1) * m_total
+        operator_prior["pooled"] = dict(
+            rule="partial pooling", trajectories=num_traj, target_trajectory=0,
+            operators="O_k = M + delta_k; M ~ N(0, (kappa_M,b s_j)^2), delta_k ~ N(0, (kappa_delta,b s_j)^2)",
+            log_tau_block=f"entries 0-{n_blocks - 1}: log kappa_M; {n_blocks}-{2 * n_blocks - 1}: log kappa_delta")
+
+    def _pooled_blocks(traj_blocks):
+        """Trajectory k's rows in the stacked unknowns [M, δ⁽⁰⁾, …]: its design A placed as A [I, 0, …, I, …, 0]."""
+        placed = []
+        for k, (A_D, y_D, S_D, A_W, y_W, S_W) in enumerate(traj_blocks):
+            def place(A):
+                zeros = jnp.zeros_like(A)
+                return jnp.concatenate([A] + [A if j == k else zeros for j in range(num_traj)], axis=1)
+            placed.append((place(A_D), y_D, S_D, place(A_W), y_W, S_W))
+        return placed
+
+    def _pooled_prior(kappa):
+        """Prior precision and log|prior cov| of [M, δ⁽⁰⁾, …, δ⁽ᴷ⁻¹⁾] from (κ_M, κ_δ) per block."""
+        prec_M, log_cov_M = prior_prec_from_tau(kappa[:n_blocks])
+        prec_d, log_cov_d = prior_prec_from_tau(kappa[n_blocks:])
+        return jnp.concatenate([prec_M] + [prec_d] * num_traj), log_cov_M + num_traj * log_cov_d
+
+    def _pooled_selector(which):
+        """Map from the stacked unknowns to M (``"mean"``) or to trajectory k's operator M + δ⁽ᵏ⁾."""
+        S = np.zeros((m_total, m_fit))
+        S[:, :m_total] = np.eye(m_total)
+        if which != "mean":
+            if isinstance(which, bool) or not isinstance(which, (int, np.integer)) or not 0 <= which < num_traj:
+                raise ValueError(f"which must be 'mean' or a trajectory index below {num_traj}; got {which!r}")
+            S[:, (which + 1) * m_total:(which + 2) * m_total] = np.eye(m_total)
+        return jnp.asarray(S)
 
     def _structured_mode(traj_blocks, i, kappa_block):
         """Mode i's design blocks in its coefficients θ_i, their prior precision and log|prior cov|."""
@@ -505,10 +561,13 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
         if cfg.op_prior_mode == "block_hier":
             log_tau = numpyro.sample(
                 "log_tau_block",
-                dist.Normal(log_tau_center * jnp.ones(n_blocks),
+                dist.Normal(log_tau_center * jnp.ones(2 * n_blocks if pooled else n_blocks),
                             cfg.hier_tau_scale))
             kappa_block = jnp.exp(log_tau)
-            prior_prec, log_prior_cov = prior_prec_from_tau(kappa_block)
+            if pooled:
+                prior_prec, log_prior_cov = _pooled_prior(kappa_block)
+            else:
+                prior_prec, log_prior_cov = prior_prec_from_tau(kappa_block)
         elif nondim:
             kappa_block = jnp.ones(n_blocks)
             prior_prec, log_prior_cov = prior_prec_from_tau(kappa_block)
@@ -531,6 +590,8 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
         if cfg.mll_weight > 0:
             numpyro.factor("gp_mll", cfg.mll_weight * mll_total)
 
+        if pooled:
+            traj_blocks = _pooled_blocks(traj_blocks)
         total_evidence = 0.0
         for i in range(num_modes):
             if structured:
@@ -539,7 +600,7 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
                     blocks_i, i, k_rows, prec_i, log_cov_i, deriv_is_diag)
             else:
                 log_p_i, _, _ = evidence_fn(
-                    traj_blocks, i, m_total, prior_prec, log_prior_cov,
+                    traj_blocks, i, m_fit, prior_prec, log_prior_cov,
                     deriv_is_diag)
             total_evidence = total_evidence + log_p_i
         numpyro.factor("marg_O_evidence", total_evidence + correction)
@@ -581,6 +642,31 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None):
             mu_all.append(mi)
             C_all.append(Ci)
         return jnp.stack(mu_all), jnp.stack(C_all)
+
+    def pooled_posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None, which=0):
+        """Closed-form posterior of trajectory ``which``'s operator (0: the target) or of M (``"mean"``) given θ
+        and (κ_M, κ_δ); the stacked unknowns' factor F (F Fᵀ = Σ) is reduced to a square root of S Σ Sᵀ by QR."""
+        gamma2 = gamma2_resolved if gamma2 is None else gamma2
+        kappa = jnp.ones(2 * n_blocks) if tau_block is None else tau_block
+        prior_prec_vec, _ = _pooled_prior(kappa)
+        ells_all, sig2s_all, nus_all, *trend_all = theta_stacked
+        traj_blocks = []
+        for ic, ctx in enumerate(traj_ctx):
+            blocks, _, _, _ = _build_blocks(
+                ctx, ells_all[ic], sig2s_all[ic], nus_all[ic], gamma2, *(t[ic] for t in trend_all))
+            traj_blocks.append(blocks)
+        traj_blocks = _pooled_blocks(traj_blocks)
+        S = _pooled_selector(which)
+        mu_all, C_all = [], []
+        for i in range(num_modes):
+            mu_i, factor_i = posterior_fn(traj_blocks, i, m_fit, prior_prec_vec, deriv_is_diag)
+            _, R_i = jnp.linalg.qr((S @ factor_i).T, mode="reduced")
+            mu_all.append(S @ mu_i)
+            C_all.append(R_i.T)
+        return jnp.stack(mu_all), jnp.stack(C_all)
+
+    if pooled:
+        posterior_O_fn = jax.jit(pooled_posterior_O_fn, static_argnames=("which",))
 
     prior_info = dict(
         ell=float(np.exp(traj_ctx[0]["locs"]["log_ell_loc"])),

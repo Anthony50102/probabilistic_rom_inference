@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 import sys
 
@@ -9,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import benchmark_cohort as bc  # noqa: E402
 import benchmark_data as bd  # noqa: E402
-from benchmark_cases import CASES, COHORT_CASES, COHORT_DESIGN, PATIENT_DOSE_DAYS, TUTORIAL_TWIN  # noqa: E402
+from benchmark_cases import (CASES, COHORT_CASES, COHORT_DESIGN, PATIENT_DOSE_DAYS, TUTORIAL_TWIN,  # noqa: E402
+                             production_config)
 
 
 class CohortDesignTests(unittest.TestCase):
@@ -90,6 +92,82 @@ class CohortDesignTests(unittest.TestCase):
             bd.write_npz(folder / "operators.npz", O_point_fit=2 * M)
             with self.assertRaises(RuntimeError):
                 bc.prior_mean(case, case.pod, root, metadata, record, full_run=False)
+
+    def test_pooled_members_join_an_acquisition_on_the_same_basis(self):
+        case = CASES["midcourse-reduced-trend-chemo-weekly-scans-learned-trend-cohort-pooled"]
+        built = {"members": [{}] * 8, "files": {"members": {"sha256": "m"}, "weekly_basis": {"sha256": "abc"},
+                                                 "every8_basis": {"sha256": "xyz"}}}
+        times = np.linspace(5., 119., 60)
+        members = [{"t_sampled": 5. + 7. * np.arange(17), "y": np.full((4, 17), float(k)), "input_times": times,
+                    "input_values": np.exp(-times / (k + 10.))} for k in range(8)]
+        metadata = {"sources": {"basis": {"sha256": "abc"}}}
+        cfg = production_config(case)
+        with mock.patch.object(bc, "_built", return_value=built), \
+                mock.patch.object(bc, "load_members", return_value=members) as load:
+            record = bc.pooled_record(case)
+            self.assertEqual((record["protocol"], record["rank"], record["members"], record["members_sha256"],
+                              record["cohort_basis_sha256"]), ("weekly", 4, 8, "m", "abc"))
+            with self.assertRaises(ValueError):
+                bc.pooled_record(CASES[case.name.replace("-cohort-pooled", "-cohort-prior")])
+            trajectories = bc.pooled_trajectories(case, case.pod, cfg, metadata, record)
+            load.assert_called_once_with("weekly", 4)
+            self.assertEqual(len(trajectories), 8)
+            for k, trajectory in enumerate(trajectories):
+                np.testing.assert_array_equal(trajectory["snapshots_comp"], members[k]["y"])
+                self.assertEqual(trajectory["inputs_eval"].shape, (1, cfg.num_eval_points))
+                np.testing.assert_array_equal(trajectory["input_table"]["values"], members[k]["input_values"])
+            with self.assertRaises(ValueError):
+                bc.pooled_trajectories(case, case.pod, cfg, {"sources": {"basis": {"sha256": "xyz"}}}, record)
+            with self.assertRaises(RuntimeError):
+                bc.pooled_trajectories(case, case.pod, cfg, metadata, {**record, "members_sha256": "old"})
+
+    def test_pooled_export_draws_the_acquisitions_operator(self):
+        """Trajectory 0 (the acquisition) gives the operator draws and the initial-state rule; the population
+        operator and every trajectory's point are stored in the canonical layout beside them."""
+        from types import SimpleNamespace
+        import jax
+        import jax.numpy as jnp
+        import benchmark_models as bm
+        from core.weakform_opinf.pipeline import _ic_sigma
+        r, trajectories, draws = 2, 3, bm.PRODUCTION_DRAWS
+        rng = np.random.default_rng(0)
+        posterior = {f"{kind}_{ic}_{i}": np.exp(rng.normal(size=draws))
+                     for kind in ("lengthscale", "variance", "noise") for ic in range(trajectories) for i in range(r)}
+        posterior["log_tau_block"] = rng.normal(size=(draws, 6))
+        guide = SimpleNamespace(sample_posterior=lambda key, params, sample_shape, gamma2: posterior)
+        svi = SimpleNamespace(get_params=lambda state: None)
+        cfg = SimpleNamespace(num_modes=r, operators="cAN", sigma_O=None, seed=42, gp_jitter_rel=None,
+                              ic_uncertainty=True, ic_scale=1.)
+
+        def conditional(theta, gamma2, sigma_O, tau, which=0):
+            level = -1. if which == "mean" else 10. * (which + 1)
+            return (jnp.full((r, 1 + 2 * r), level) + 0. * theta[0][0, 0] + 0. * tau[0],
+                    jnp.broadcast_to(1e-3 * jnp.eye(1 + 2 * r), (r, 1 + 2 * r, 1 + 2 * r)))
+
+        t = np.linspace(5., 57., 9)
+        observations = {"t_sampled": t, "q0": np.array([3., -1.])}
+        key = jax.random.PRNGKey(0)
+        with tempfile.TemporaryDirectory() as folder:
+            arrays = bm._export_production(Path(folder), cfg, 0., observations, guide, svi, None, conditional, key,
+                                           key, trajectories, True)
+            initial = bd.read_npz(Path(folder) / "initial_conditions.npz")
+        data = [0, 1, 2, 4, 5]   # canonical cABN columns of the fitted cAN layout; column 3 is the zero B column
+        self.assertEqual(arrays["O_samples"].shape, (draws, r, 6))
+        np.testing.assert_allclose(arrays["O_samples"][..., data], 10., atol=.02)
+        np.testing.assert_array_equal(arrays["population_point"][:, data], -1.)
+        np.testing.assert_array_equal(arrays["population_point"][:, 3], 0.)
+        np.testing.assert_array_equal(arrays["population_point_fit"], -1.)
+        self.assertEqual(arrays["trajectory_points"].shape, (trajectories, r, 6))
+        for k in range(trajectories):
+            np.testing.assert_array_equal(arrays["trajectory_points"][k][:, data], 10. * (k + 1))
+        self.assertEqual(arrays["population_root"].shape, (r, 6, 6))
+        self.assertEqual(arrays["gp_lengthscale_samples"].shape, (draws, trajectories, r))
+        self.assertEqual(arrays["tau_block_samples"].shape, (draws, 6))
+        mean = [np.stack([[posterior[f"{kind}_{ic}_{i}"].mean() for i in range(r)] for ic in range(trajectories)])
+                for kind in ("lengthscale", "variance", "noise")]
+        np.testing.assert_allclose(arrays["mean_lengthscale"], mean[0], rtol=1e-6)
+        expected = _ic_sigma(t, *(value[0] for value in mean), r, roundoff_nugget=True)
+        np.testing.assert_allclose(initial["sigma"], expected, rtol=1e-5)
 
 
 if __name__ == "__main__":

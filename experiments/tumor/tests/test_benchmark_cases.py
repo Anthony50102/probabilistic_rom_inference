@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 
 from benchmark_cases import (CASES, COHORT_CASES, COHORT_DESIGN, LEARNED_TREND_CASES, LEGACY_PODS, PATIENT_DOSE_DAYS,
-                             REPORTED_CASES, SCAN_SCHEDULE_CASES, TUTORIAL_TWIN,
+                             POOLED_CASES, REPORTED_CASES, SCAN_SCHEDULE_CASES, TUTORIAL_TWIN,
                              SPARSE_FIX_CASES, PODSettings, describe, galerkin_operators, get_case, production_config,
                              regular_scan_days, stride_scan_days, _adapter)
 from core.weakform_opinf import WeakFormConfig
@@ -246,21 +246,25 @@ class BenchmarkCaseTests(unittest.TestCase):
                 replace(CASES["multi-dose-chemo"], gp_trend_scale=value)
 
     def test_cohort_cases_change_only_the_basis_and_prior_centre(self):
-        self.assertEqual(len(COHORT_CASES), 8)
+        self.assertEqual(len(COHORT_CASES), 12)
+        self.assertEqual(POOLED_CASES, tuple(name for name in COHORT_CASES if name.endswith("-cohort-pooled")))
+        self.assertEqual(len(POOLED_CASES), 4)
+        means = {"basis": "zero", "prior": "cohort", "pooled": "pooled"}
         for name in COHORT_CASES:
             with self.subTest(case=name):
                 case = CASES[name]
-                source = CASES[name.removesuffix("-cohort-basis").removesuffix("-cohort-prior")]
+                arm = name.rsplit("-", 1)[1]
+                source = CASES[name.removesuffix(f"-cohort-{arm}")]
                 self.assertIn(source.name, LEARNED_TREND_CASES)
                 self.assertEqual(case.cohort, "every8" if "-every8-" in name else "weekly")
-                self.assertEqual(case.operator_prior_mean, "cohort" if name.endswith("-prior") else "zero")
+                self.assertEqual(case.operator_prior_mean, means[arm])
                 self.assertEqual(case.pod, replace(source.pod, source="cohort_training"))
                 self.assertEqual(replace(case, name=source.name, description=source.description, pod=source.pod,
                                          cohort="", operator_prior_mean="zero"), source)
                 self.assertEqual(production_config(case), production_config(source))
                 recipe = describe(case)
                 self.assertEqual(recipe["cohort_design"], COHORT_DESIGN)
-                self.assertEqual("operator_prior_mean" in recipe, name.endswith("-prior"))
+                self.assertEqual("operator_prior_mean" in recipe, arm != "basis")
                 self.assertNotEqual(recipe["recipe_fingerprint"], describe(source)["recipe_fingerprint"])
                 self.assertNotIn("cohort", describe(source))
                 self.assertNotIn("operator_prior_mean", describe(source))
@@ -273,8 +277,15 @@ class BenchmarkCaseTests(unittest.TestCase):
                        dict(structure="galerkin"), dict(pod=replace(weekly.pod, source="observed_training"))):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 replace(weekly if "cohort" not in change or change["cohort"] != "weekly" else source, **change)
-        with self.assertRaises(ValueError):
-            replace(source, operator_prior_mean="cohort")
+        for mean in ("cohort", "pooled"):
+            with self.subTest(mean=mean), self.assertRaises(ValueError):
+                replace(source, operator_prior_mean=mean)
+        pooled = CASES["midcourse-reduced-trend-chemo-weekly-scans-learned-trend-cohort-pooled"]
+        for change in (dict(gp_noise_prior="measurement"), dict(structure="galerkin")):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                replace(pooled, **change)
+        fingerprints = {describe(CASES[name])["recipe_fingerprint"] for name in COHORT_CASES}
+        self.assertEqual(len(fingerprints), 12)
 
     def test_segmented_scans_fit_their_own_POD(self):
         case = CASES["multi-dose-chemo"]

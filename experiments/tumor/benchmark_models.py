@@ -208,10 +208,16 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     total = _checked_steps(steps, cfg.num_steps)
     requested = {"planned_updates": total, "production_config": asdict(cfg)}
     cohort_prior = {}
+    pooled = case.operator_prior_mean == "pooled"
     if case.operator_prior_mean == "cohort":
         import benchmark_cohort
         # The population operator's file and fit; resuming with a different one is refused.
         cohort_prior = {"cohort_prior": benchmark_cohort.prior_record(case, pod, root)}
+        requested.update(cohort_prior)
+    elif pooled:
+        import benchmark_cohort
+        # The cohort members fitted jointly with this acquisition; resuming with different ones is refused.
+        cohort_prior = {"pooled_cohort": benchmark_cohort.pooled_record(case, pod)}
         requested.update(cohort_prior)
     _same_request(folder / "fit_start.json", requested)
     if (folder / "result.json").exists():
@@ -248,20 +254,27 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
             raise ValueError("The Galerkin structure needs an uncentred POD basis.")
         row_maps = galerkin_row_maps(case.structure, rom, basis["physical_matrix"], cfg.num_modes)
     prior_mean = None
-    if cohort_prior:
+    if case.operator_prior_mean == "cohort":
         prior_mean = benchmark_cohort.prior_mean(case, pod, root, data["metadata"], cohort_prior["cohort_prior"],
                                                  full_run=total == cfg.num_steps)
-    model, conditional, _, priors = build_model(rom, trajectories, cfg, row_maps=row_maps, prior_mean=prior_mean)
+    if pooled:
+        # Partial pooling: the members' scans join this acquisition's (index 0), each with its own operator.
+        trajectories += benchmark_cohort.pooled_trajectories(case, pod, cfg, data["metadata"],
+                                                             cohort_prior["pooled_cohort"])
+    model, conditional, _, priors = build_model(rom, trajectories, cfg, row_maps=row_maps, prior_mean=prior_mean,
+                                                pooled=pooled)
     gamma2 = priors["gamma2"]
     guide, svi, state, losses, posterior_key, operator_key = _run_svi(model, cfg, total, folder, gamma2, {
         "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
         "production_config": asdict(cfg),
         "planned_updates": total, "observations_sha256": data["metadata"]["observations_sha256"],
-        "inputs": "Reduced training observations and (chemo) the training exposure table only.",
+        "inputs": "Reduced training observations and (chemo) the training exposure table only." + (
+            " Jointly with the cohort members' reduced noisy scans and exposure tables (partial pooling)."
+            if pooled else ""),
         "ODE_calls_in_objective": 0, "thread_environment": benchmark_environment.current(), **noise_prior,
         **cohort_prior}, log)
     exported = _export_production(folder, cfg, gamma2, observations, guide, svi, state, conditional,
-                                  posterior_key, operator_key)
+                                  posterior_key, operator_key, len(trajectories), pooled)
     complete = bool(np.isfinite(losses).all() and np.isfinite(exported["O_point"]).all())
     result = {
         "status": "complete" if complete else "nonfinite_production_fit",
@@ -308,7 +321,9 @@ def canonical_layout(arrays, operators, r):
 
 
 def _export_production(folder, cfg, gamma2, observations, guide, svi, state, conditional, posterior_key,
-                       operator_key):
+                       operator_key, trajectories=1, pooled=False):
+    """Operator and initial-state draws of the acquisition (trajectory 0). A partial-pooling fit also stores the
+    population operator's and every trajectory's conditional mean at the mean hyperparameters (diagnostics)."""
     import jax
     import jax.numpy as jnp
     from jax import random
@@ -316,7 +331,7 @@ def _export_production(folder, cfg, gamma2, observations, guide, svi, state, con
     r = cfg.num_modes
     params = svi.get_params(state)
     posterior = guide.sample_posterior(posterior_key, params, sample_shape=(PRODUCTION_DRAWS,), gamma2=gamma2)
-    theta = _stack_theta(posterior, 1, r)
+    theta = _stack_theta(posterior, trajectories, r)
     tau = jnp.exp(jnp.asarray(posterior["log_tau_block"]))
     sigma_O = None if cfg.sigma_O is None else jnp.asarray(cfg.sigma_O)
     keys = random.split(operator_key, PRODUCTION_DRAWS)
@@ -342,7 +357,20 @@ def _export_production(folder, cfg, gamma2, observations, guide, svi, state, con
     }
     if len(theta) == 4:
         arrays.update(gp_trend_scale_samples=np.asarray(theta[3]), mean_trend_scale=mean_hypers[3])
+    if pooled:
+        hypers = tuple(jnp.asarray(value) for value in mean_hypers)
+        population, population_root = conditional(hypers, gamma2, sigma_O, jnp.asarray(mean_tau), which="mean")
+        points = np.stack([np.asarray(conditional(hypers, gamma2, sigma_O, jnp.asarray(mean_tau), which=k)[0])
+                           for k in range(trajectories)])
+        # Canonical columns of the population operator (point and covariance root) and of every trajectory's point.
+        placed = canonical_layout({"O_point": np.asarray(population), "O_samples": points,
+                                   "conditional_root": np.asarray(population_root)}, cfg.operators, r)
+        pooled_arrays = {"population_point": placed["O_point"], "population_root": placed["conditional_root"],
+                         "trajectory_points": placed["O_samples"], "population_point_fit": np.asarray(population),
+                         "trajectory_points_fit": points}
     arrays = canonical_layout(arrays, cfg.operators, r)
+    if pooled:
+        arrays.update(pooled_arrays)
     bd.write_npz(folder / "operators.npz", **arrays)
     # Native initial-state rule: GP posterior sd at t0 from the mean hyperparameters, 500 draws.
     sigma = _ic_sigma(observations["t_sampled"], *(value[0] for value in mean_hypers[:3]), r,
