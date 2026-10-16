@@ -3021,6 +3021,139 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 # likewise every stage-1 case: variant_name(source, K, arm, patient) in benchmark_cases
 ```
 
+## Restarting the forecast from the last scan (design written before the new fits)
+
+**Why (found after the fact).** The benchmark scores every forecast by
+integrating the fitted model from the first scan (day 5) all the way to
+day 119. So any miss on the patient's own training scans is carried into
+the forecast window. This is much of why the strong responders' errors
+were so large in the variant round: the pooled variants start vp2's
+forecast window at 2.6-4.0 times its true tumour. In a clinic, a forecast
+would start from the latest scan. So the same fitted models are also
+integrated from the patient's last training scan: its coordinates on the
+POD basis, noisy as measured. Nothing is refitted. Only the forecast's
+starting point changes.
+
+**What has been seen.** After stage 1 and the confirmation patients'
+weekly results, I restarted the point forecast of every weekly-to-day-84
+fit (session script `restart_check.py`). Started from the first scan
+instead, the script reproduces the official errors to 3e-12 points.
+Mean over patients of the 1 / 0.75 / 0.5x mean error:
+
+| Variant | Patients | From the first scan | Restarted | Worst, restarted |
+|---|---|---|---|---|
+| A alone | 10 | 292.9 | 34.4 | 113.4 (vp2) |
+| B pooled | 10 | 76.4 | 16.2 | 46.4 (vp2) |
+| E projected alone | 10 | 38.2 | 21.3 | 28.4 (vp3) |
+| C pooled + factor | 4 development | 85.2 | 22.4 | 46.4 (vp2) |
+| D K64 pooled + factor | 4 development | 104.5 | 60.5 | 176.9 (vp2) |
+| F projected pooled | 4 development | 96.1 | 18.7 | 28.1 (vp2) |
+| G projected pooled + factor | 4 development | 125.2 | 13.8 | 19.4 (vp2) |
+
+Restarted:
+- **G is best on the development patients:** 8.0 / 13.6 / 19.4 / 14.1 on
+  the twin and vp1-3. All its day-119 burdens are positive (0.50-1.18 of
+  the truth).
+- **Some still predict a negative tumour at day 119:** B, C and F on vp2
+  (B -1.75 / -0.72 / -0.21 of the truth, C -2.09 / -0.94 / -0.35, F -0.22
+  at 1x), and A on vp3 and vp7. Nothing in the reduced models keeps the
+  burden positive.
+- **E stays biased low:** below the truth on 29 of its 30 patient-arms
+  (0.42-0.90; vp2 at 1x is 1.18). Errors 10.2-28.4.
+- **On the confirmation patients vp4-9:** B's restarted mean is 11.6
+  (5.5-14.8), E's 22.9 and A's 21.3. G, C and F were never fitted there.
+
+Not seen yet: any restarted number on the sparse schedules, and any
+restarted band apart from two timing checks (0.5x; the band holds the truth
+55% of the time for G on vp2 and 13% for E on the twin). Standard-protocol
+stage-2 results were seen as they finished: fortnightly E on the twin and
+vp1-5, B and A on the twin and vp1-6, and 4-weekly A on the twin.
+
+**The restart protocol.**
+- **Start:** the reduced coordinates of the last training scan. On every
+  schedule this scan is on the cut day (84, or 57), because the schedules
+  fix their first and last scan days. The script checks this for every
+  fit.
+- **Point forecast:** the posterior-mean operator from that start.
+- **Draws:** the benchmark's same 64 operator draws, each from the same
+  start. So the band (5-95% of the draws) holds the operator's uncertainty
+  only. It has zero width at the cut and leaves out the scan's own noise.
+- **Everything else is the benchmark's.** The drug input still includes
+  every earlier dose. The safety threshold is the same: a draw that
+  crosses it is cut off and counts as a miss. The window (cut to day 119)
+  is the same, and so is the field error, which includes what the basis
+  cannot represent. Band coverage is counted strictly, as before.
+- **Both protocols are reported.** The standard one stays the benchmark's
+  definition.
+
+**New fits** (48; seed 48; each run once; no code change).
+- **G, C and F on the six confirmation patients,** weekly scans to day 84
+  (18 fits). With B, E and A already there, every variant except D then
+  has all ten patients on this schedule.
+- **G on all ten patients for fortnightly to day 84, 4-weekly to day 84
+  and weekly to day 57** (30 fits). B, E and A are already on these
+  schedules in stage 2.
+
+G is carried to the sparse schedules because it was the best restarted
+variant on the development patients, an after-the-fact choice. C, F and D
+are not fitted on the sparse schedules. D is the slowest (65 minutes a fit)
+and the worst restarted.
+
+**Evaluation.** The restarted point forecast and 64 draws at all five arms,
+for every fit in the variant round and in this follow-up, next to the
+standard protocol.
+
+**Reported** (no pass or fail; the 18.9% bar is drawn for reference).
+- Restarted error at 1, 0.75 and 0.5x, with the stress arms, per patient,
+  schedule and variant.
+- The mean, median and worst over patients, with development and
+  confirmation patients also shown separately.
+- The day-119 burden against the truth, including negative burdens.
+- Restarted band coverage and width, and draws that were cut off.
+
+**Expectations** (written before the new fits, and before any restarted
+number on the sparse schedules).
+1. **Confirmation patients, weekly to day 84:** G's restarted mean is at
+   most B's 11.6, and lower than C's and F's. G gives no negative burden.
+   This is uncertain, since B is already good on these patients.
+2. **Restarting helps on the sparse schedules:** it lowers the mean error
+   of each of A, B, E and G on each one.
+3. **G is best on the sparse schedules:** it has the lowest restarted mean
+   of A, B, E and G on each one. I am least sure about 4-weekly scans.
+4. **Fewer scans, larger errors:** restarted errors rise from weekly to
+   fortnightly to 4-weekly (to day 84). Weekly to day 57 is worse than
+   weekly to day 84: the forecast covers 62 days instead of 35, from fewer
+   treated scans.
+5. **The restarted bands hold the truth less than 90% of the time** on
+   most fits, because they start with zero width.
+
+**What it is for.** Suppose G, restarted, is best on the confirmation
+patients and on most sparse schedules. Then "G, forecast from the latest
+scan" is the setting I bring to the user for the Neural-ODE comparison,
+where both models would be scored both ways. Otherwise the results are
+reported schedule by schedule, and the user chooses.
+
+**Disclosures.**
+- **After the fact.** Both the restart and the choice of G for the sparse
+  schedules came after seeing the results above. G was the best of seven
+  on four patients, which flatters it. The confirmation patients and the
+  sparse schedules are the test.
+- **Session script.** The restart is computed by a session script that
+  reuses the benchmark's functions, not by repository code. If the
+  protocol is adopted, it moves into `benchmark_evaluation.py` with a
+  test.
+- **The start is a noisy scan,** as in a clinic. The band does not include
+  that noise.
+- **Run timing.** The new fits start on the same virtual machine while
+  stage 2 is still running. They take cores as stage-2 jobs finish.
+
+```bash
+cd experiments/tumor
+# new fits: the variant round's case names, e.g.
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo-fortnightly-scans-learned-trend-cohort8-projected-pooled-drug-vp4 --seeds 48
+# restart (session script restart_check.py): verify | run -j 16 | report
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
