@@ -130,6 +130,34 @@ beats the new patient alone at every K. The error is lowest at K = 8-16
 and 19.0%). Every patient shares the cohort's drug term, and with more
 patients everyone is fitted worse. See "More past patients".
 
+**The variant round: no clear winner on the benchmark's protocol.** Seven
+variants (pooling, a drug factor per patient, and the projected form, alone
+or pooled) ran on the twin and nine new virtual patients, on four realistic
+schedules (136 fits on an Azure machine, declared before the fits). The
+declared rule picked E, the projected form fitted to the new patient alone,
+on four development patients. On six fresh patients E is low on every one
+(mean 39.2%). Pooling (B) gives the best typical forecast (median 16.8%)
+but fails strong responders. On sparse scans no variant is best on all
+three schedules, and only 10 of 90 patient means are under 18.9%. See
+"Variant round".
+
+**Forecasting from the last scan: most of the error was the starting
+point.** The benchmark integrates every forecast from the first scan
+(day 5), so any miss on the training scans carries into the forecast.
+Starting instead from the last training scan, as a clinic would, needs no
+refit. It was found after the fact and declared before 48 more fits. It
+lowers every variant's error on every schedule. G (the projected form,
+pooled, with a drug factor per patient) then has mean errors of 12.6,
+12.1, 19.7 and 18.9% on weekly, fortnightly and 4-weekly scans to day 84
+and weekly scans to day 57. It never forecasts a negative tumour, and it is
+under the 18.9% bar for 9, 9, 4 and 6 of the ten patients. B (pooled) has
+16.2, 16.2, 18.5 and 17.7. Three of the five declared expectations were
+not met: on the six new patients G ties with B, C and F (11.0-11.8), B is
+lower on 4-weekly scans and on weekly scans to day 57, and fortnightly
+scans do as well as weekly ones. Still left: too little regrowth after a dose cut, and bands
+that hold the truth less than 90% of the time. See "Restarting the
+forecast from the last scan".
+
 ## Design
 
 | | Reported chemo cases | Tutorial schedule (this record) |
@@ -3021,6 +3049,291 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 # likewise every stage-1 case: variant_name(source, K, arm, patient) in benchmark_cases
 ```
 
+### Results (seed 48, each fit run once)
+
+**Run log.**
+- **Machine.** An Azure Standard_F16as_v6 virtual machine (16 cores,
+  64 GB, Linux x86), from 15:58 UTC. Core 52 and tumour 77 tests pass on
+  it. The twin's simulated data were copied from the Mac (21 files,
+  SHA-256 checked). Each new patient's simulation was generated on the
+  machine once, before any fit.
+- **Smoke runs** (seed 45, 20 updates, a separate folder; not results):
+  C-G on vp2, and one variant on each other schedule (fortnightly C on
+  vp4, 4-weekly G on vp5, weekly to day 57 E on vp6 and D on vp7). All
+  finished with 64 draws on every arm; peak memory 2.1-5.4 GB per fit.
+- **Stage 1** started at 16:21 UTC, 12 fits at a time. Each fit started
+  about 80 threads, which overloaded the machine. From 16:33 each new fit
+  was pinned to one free core (`taskset`); a few ran unpinned when no
+  core was free. Pinning changes only how many threads a fit uses.
+- **The twin's D** (K = 64) ran at about 0.9 s per update on one core. It
+  was stopped after 2250 s, past update 2000 and before writing any
+  output. It was resumed from its saved state at update 2000 on four
+  cores (the runner's own resume; it reported 38 minutes after resuming).
+- **Stage 2 started early.** A and B are run whatever wins, so their 72
+  fits started at 16:57, before the choice. E's 36 fits started at 17:46,
+  before the twin's D had finished. With three of the four patients, D's
+  mean was already at least 101.5, so D could not win. The twin's D
+  finished at 18:15; D's mean is 104.5.
+- **Every fit finished** (exit 0), apart from the stopped run above.
+  Every arm evaluated 64 draws. Stage 2 finished at 19:53 UTC.
+- **Draws cut off at the safety threshold** (each counts as a miss in the
+  band). One draw in seven weekly-to-day-84 fits: E on vp2 and vp3; F on
+  vp1, vp3 and the twin (0x only); G on vp1 and vp3. Many more for the
+  projected form fitted alone on sparse scans: E lost 2-14 of its 64
+  draws in all ten 4-weekly fits and 3-9 in six of the ten fortnightly
+  fits. A lost one draw (vp2, weekly to day 57, 1x). The free pooled
+  variants (B, C, D) lost none.
+- Summary script `variant_summary.py` (log `logs/variant_summary.txt`);
+  figures `figures/variant_stage1_error.png`,
+  `figures/variant_stage1_burden.png`,
+  `figures/variant_stage1_burden_focus.png`,
+  `figures/variant_stage2_weekly84_error.png`,
+  `figures/variant_stage2_weekly84_burden.png` and
+  `figures/variant_stage2_<schedule>_error.png` for the sparser
+  schedules, with the new patient's scans as black stars. They are local
+  session artifacts, like the earlier ones, in
+  `.../files/azure-variants/`.
+
+**Platform.** On Azure, the twin's A and B agree with the Mac's sweep runs
+to 0.001 points on every arm (A 14.80 / 18.92 / 23.81 / 28.70 / 33.17%,
+B 7.21 / 8.43 / 10.78 / 13.76 / 17.18%).
+
+#### Stage 1: choosing the variant
+
+**Error (%), days 84-119,** at 1 / 0.75 / 0.5x, with the mean of the three
+in brackets:
+
+| Patient | A alone | B pooled | C pooled + factor | D K = 64 + factor | E projected alone | F projected pooled | G projected pooled + factor |
+|---|---|---|---|---|---|---|---|
+| Twin | 14.8 / 18.9 / 23.8 (19.2) | 7.2 / 8.4 / 10.8 (8.8) | 7.7 / 8.8 / 11.0 (9.2) | 10.2 / 10.3 / 15.4 (12.0) | 27.4 / 30.5 / 34.5 (30.8) | 8.6 / 10.2 / 13.2 (10.7) | 8.4 / 9.8 / 12.5 (10.2) |
+| vp1 | 11.0 / 11.4 / 15.7 (12.7) | 10.6 / 13.4 / 17.0 (13.6) | 21.4 / 23.1 / 25.7 (23.4) | 8.0 / 13.0 / 19.3 (13.4) | 7.7 / 10.7 / 15.4 (11.3) | 16.8 / 16.8 / 18.3 (17.3) | 11.3 / 11.8 / 13.6 (12.2) |
+| vp2 | 2993 / 2622 / 2138 (2584) | 447 / 428 / 385 (420) | 316 / 302 / 270 (296) | 331 / 328 / 306 (322) | 59.6 / 51.9 / 44.4 (51.9) | 299 / 280 / 243 (274) | 424 / 400 / 351 (392) |
+| vp3 | 108.5 / 113.3 / 115.5 (112.4) | 160.0 / 141.0 / 111.7 (137.5) | 9.0 / 9.2 / 18.9 (12.4) | 79.0 / 73.5 / 60.7 (71.1) | 46.4 / 52.0 / 59.8 (52.7) | 100.4 / 84.3 / 62.1 (82.3) | 81.7 / 87.3 / 91.8 (86.9) |
+| **Mean** | 682.1 | 145.0 | 85.2 | 104.5 | **36.7** | 96.1 | 125.2 |
+| Median | 65.8 | 75.6 | 17.9 | 42.2 | 41.4 | 49.8 | 49.6 |
+
+Stress arms, 0.25 / 0x:
+
+| Patient | A | B | C | D | E | F | G |
+|---|---|---|---|---|---|---|---|
+| Twin | 28.7 / 33.2 | 13.8 / 17.2 | 13.9 / 17.3 | 21.7 / 27.9 | 38.8 / 42.7 | 16.7 / 19.9 | 15.6 / 18.6 |
+| vp1 | 21.0 / 26.1 | 21.3 / 26.7 | 29.4 / 34.2 | 25.9 / 32.7 | 20.3 / 24.8 | 21.0 / 24.4 | 16.4 / 19.5 |
+| vp2 | 1587 / 1065 | 317 / 235 | 220 / 161 | 261 / 201 | 41.9 / 47.2 | 189 / 128 | 279 / 196 |
+| vp3 | 114.6 / 111.7 | 76.9 / 45.1 | 31.3 / 42.8 | 43.4 / 28.6 | 67.9 / 74.8 | 39.6 / 28.8 | 94.3 / 95.2 |
+
+**Choice: E,** the projected form fitted to the new patient alone on the
+K = 8 basis. Its mean is 36.7; no simpler variant is within 0.5 points.
+- **A mixed picture.** E has the lowest mean and the smallest worst case
+  (52.7%). But on the twin it is the second worst (30.8%, against 8.8% for
+  B). C has the lowest median (17.9%).
+- **Two strong responders decide the mean.** vp2 and vp3 have kills of
+  1.88 and 1.83, almost twice the twin's. By day 84 their tumours have
+  shrunk to 5% and 12% of their peak, and they keep shrinking: on day 119
+  vp2 has 126-442 cells, against 9,753-17,439 for the twin. The error is
+  relative to the true field over days 84-119, so it becomes very large
+  when the true tumour is that small.
+
+**What the forecasts do on the strong responders** (burden in cells: at
+the cut, day 84, then on day 119 at 1 / 0.75 / 0.5x):
+
+| Patient | Truth | E | C | B |
+|---|---|---|---|---|
+| vp2 | 801, then 126 / 236 / 442 | 961, then 243 / 322 / 435 | 2,615, then 904 / 1,273 / 1,780 | 3,221, then 1,499 / 1,984 / 2,627 |
+| vp3 | 2,182, then 657 / 1,199 / 2,176 | 1,431, then 289 / 414 / 595 | 2,076, then 564 / 878 / 1,344 | 4,192, then 2,618 / 3,376 / 4,378 |
+
+- **On vp2 every pooled variant already misses the last scans.** They
+  start the forecast at 2.6-4.0 times the true burden, and their training
+  errors are 14-23% (E: 12.8%). Pooling pulls the patient toward the past
+  patients, whose shared drug term is weaker. Alone, the free form (A)
+  fails outright on vp2: 64% training error, and it forecasts growth.
+- **On vp3 the drug factor works:** C fits the scans (8.6%) and forecasts
+  within 9-19%, though with too little regrowth at 0.5x (0.62 of the
+  truth). E starts low (0.66 of the truth at the cut) and regrows too
+  little (0.27-0.44).
+- **A and G forecast a negative burden on vp3** after about day 100,
+  which is impossible.
+
+**The other forecast measures.** Day-119 burden as a share of the truth, at
+1 / 0.75 / 0.5x:
+
+| Variant | Twin | vp1 | vp2 | vp3 |
+|---|---|---|---|---|
+| A | 0.74 / 0.66 / 0.60 | 0.93 / 0.82 / 0.74 | 119 / 63 / 34 | -1.39 / -0.76 / -0.42 |
+| B | 0.93 / 0.89 / 0.87 | 0.99 / 1.00 / 1.01 | 11.9 / 8.4 / 6.0 | 3.98 / 2.82 / 2.01 |
+| C | 0.95 / 0.91 / 0.88 | 1.19 / 1.17 / 1.17 | 7.2 / 5.4 / 4.0 | 0.86 / 0.73 / 0.62 |
+| D | 0.84 / 0.83 / 0.81 | 1.01 / 0.99 / 0.98 | 11.0 / 7.5 / 5.2 | 2.67 / 1.94 / 1.44 |
+| E | 0.64 / 0.56 / 0.50 | 0.88 / 0.82 / 0.76 | 1.93 / 1.37 / 0.99 | 0.44 / 0.35 / 0.27 |
+| F | 0.90 / 0.82 / 0.77 | 1.12 / 1.07 / 1.04 | 13.1 / 8.3 / 5.3 | 2.53 / 1.85 / 1.36 |
+| G | 0.91 / 0.84 / 0.78 | 1.04 / 0.99 / 0.96 | 16.3 / 10.3 / 6.7 | -0.66 / -0.28 / -0.08 |
+
+How often the 5-95% band of the 64 draws holds the true burden over days
+84-119, at 1 / 0.5x (a draw cut off at the safety threshold counts as a
+miss), and the 0.5x band's width on day 119 as a share of the truth:
+
+| Variant | Twin | vp1 | vp2 | vp3 |
+|---|---|---|---|---|
+| A | 100 / 99%, 0.94 | 100 / 54%, 0.26 | 100 / 100%, 105 | 100 / 63%, 1.90 |
+| B | 100 / 100%, 0.70 | 100 / 100%, 0.83 | 100 / 100%, 19.5 | 100 / 100%, 5.15 |
+| C | 100 / 100%, 0.69 | 100 / 100%, 0.77 | 100 / 100%, 21.7 | 100 / 100%, 3.65 |
+| D | 100 / 100%, 0.41 | 100 / 100%, 0.42 | 0 / 0%, 9.07 | 61 / 100%, 1.86 |
+| E | 100 / 77%, 0.64 | 100 / 54%, 0.30 | 58 / 58%, 22.8 | 56 / 63%, 2.27 |
+| F | 100 / 92%, 0.50 | 37 / 36%, 0.87 | 100 / 100%, 56.6 | 0 / 0%, 6.87 |
+| G | 100 / 100%, 0.55 | 80 / 71%, 0.74 | 100 / 100%, 44.5 | 19 / 19%, 7.82 |
+
+On vp2 and vp3 the bands that always hold the truth are 3.7-105 times the
+true burden wide, so holding it says little.
+
+Dose effect at 0.5x (the share of the true day-119 difference between 0.5x
+and 1x that the forecast gets) and training error (days 5-84), for the
+twin / vp1 / vp2 / vp3:
+
+| Variant | Dose effect at 0.5x | Training error (%) |
+|---|---|---|
+| A | 0.43 / 0.34 / -0.32 / 0.00 | 4.7 / 5.6 / 64.4 / 14.9 |
+| B | 0.78 / 1.06 / 3.57 / 1.16 | 3.2 / 5.3 / 23.4 / 14.6 |
+| C | 0.80 / 1.13 / 2.77 / 0.51 | 3.3 / 4.8 / 19.9 / 8.6 |
+| D | 0.78 / 0.92 / 2.89 / 0.90 | 4.5 / 5.6 / 15.0 / 8.1 |
+| E | 0.33 / 0.51 / 0.61 / 0.20 | 5.4 / 4.5 / 12.8 / 14.5 |
+| F | 0.59 / 0.86 / 2.22 / 0.85 | 3.9 / 4.6 / 14.0 / 14.3 |
+| G | 0.62 / 0.78 / 2.82 / 0.17 | 3.7 / 4.5 / 17.9 / 7.0 |
+
+**The drug factors** (C, D and G). The truth is s / 0.23; for the new
+patients it is 1.00 / 0.87 / 1.88 / 1.83 (twin, vp1-3). The effective kill
+is -N_11 of the new patient's operator, in the twin's units:
+
+| Variant | Past patients' factors against the truth: rank correlation (twin, vp1-3 fits) | Spread ω | M's N_11 | New patient's factor: twin / vp1 / vp2 / vp3 | New patient's effective kill |
+|---|---|---|---|---|---|
+| C | +0.90 / +0.98 / +0.93 / +0.90 | 0.11-0.24 | -0.86 to -0.93 | 1.00 / 0.72 / 1.05 / 1.26 | 0.85 / 0.64 / 0.95 / 1.17 |
+| D | +0.83 / +0.82 / +0.83 / +0.83 | 0.25-0.26 | -0.80 | 0.94 / 0.72 / 1.36 / 1.34 | 0.75 / 0.58 / 1.09 / 1.07 |
+| G | +0.81 / +0.79 / +0.76 / +0.76 | 0.13-0.29 | -0.77 to -0.97 | 0.93 / 0.69 / 1.04 / 1.28 | 0.91 / 0.64 / 0.81 / 1.09 |
+
+- **The factors put the past patients in the right order but squeeze
+  them.** In C's twin fit the first eight past patients' factors span
+  0.92-1.08, against true 1.05-1.96.
+- **The new patients' factors move only part of the way.** For vp2 and
+  vp3 they reach 1.04-1.36, against 1.83-1.88. For vp1 (0.87) they
+  overshoot to 0.69-0.72. With 12 weekly scans the new patient's own data
+  do not pull the factor far from the cohort.
+
+**Expectations against outcomes.**
+
+| Expected | Outcome |
+|---|---|
+| Drug factor (C against B): better on vp2 and vp3; about the same on vp1 | Better on vp2 (296 against 420) and vp3 (12.4 against 137.5). Worse on vp1 (23.4 against 13.6) |
+| The past patients' factors rank their sensitivities (rank correlation 0.7 or more) | Yes: C +0.90 to +0.98, G +0.76 to +0.81, D +0.82 to +0.83 |
+| The new patients' factors move from 1 toward the truth for at least three of the four | Partly: toward the truth for vp2 and vp3, past it for vp1, near 1 for the twin (whose truth is 1) in C, D and G |
+| K = 64 with factors (D) no worse than C | No: mean 104.5 against 85.2. Better on vp1 only |
+| Projected (E, F, G) better at 0.5x than the free variants at the same K | E against A: yes (mean 38.5 against 573). F against B: yes (84.3 against 131.1). G against C: no (117.3 against 81.4). On the twin all three are worse at 0.5x (34.5 against 23.8, 13.2 against 10.8, 12.5 against 11.0) |
+| Winner C or G | No: E |
+| The twin stays the hardest patient | No: vp2 is the hardest for every variant except E (vp3) |
+
+**After the fact, no new fits: other ways to read the same errors.** The
+mean over patients is dominated by vp2. Three other summaries:
+- **Error relative to the tumour at the cut.** The same squared field
+  error, divided by the true field on day 84 instead of over days 84-119,
+  so that a shrinking tumour does not inflate it. Mean of the three arms:
+
+  | Patient | A | B | C | D | E | F | G |
+  |---|---|---|---|---|---|---|---|
+  | Twin | 18.5 | 8.5 | 8.8 | 11.5 | 29.4 | 10.3 | 9.8 |
+  | vp1 | 13.7 | 14.8 | 25.1 | 14.7 | 12.3 | 18.5 | 13.1 |
+  | vp2 | 1285 | 211 | 149 | 162 | 25.9 | 137 | 196 |
+  | vp3 | 72.1 | 85.6 | 8.4 | 44.5 | 34.3 | 50.8 | 55.9 |
+  | Mean | 347 | 79.9 | 47.7 | 58.2 | **25.5** | 54.2 | 68.8 |
+
+- **Mean rank over the four patients** (1 is best): E 2.75, C 3.25,
+  G 3.75, D and F 4.00, B 4.75, A 5.50.
+- **Day-119 burden, mean |log(forecast / truth)|:** E 0.54, C 0.56, D
+  0.72, F 0.75, B 0.82; A and G have negative burdens.
+
+E stays first on all three; C is second. The order is a reading, not a
+second rule.
+
+**Why E wins (a reading).** E fits each new patient to its own scans, so a
+strong responder is not pulled toward the cohort. But from 12 weekly scans
+it learns little of the dose response (dose effect at 0.5x 0.20-0.61,
+against 0.78-0.80 for B and C on the twin), so on the twin it forecasts
+too little regrowth (day-119 burden 0.50 of the truth at 0.5x). Pooling
+helps the twin and vp1, whose kills (1.00 and 0.87) are close to the
+cohort's shared drug term (0.84-0.93). It fails the strong responders,
+whose kills (1.83-1.88) are near the top of the past patients' range
+(1.05-1.96) but twice the shared term. The drug factor rescues vp3 but not
+vp2, whose tumour shrinks fastest.
+
+#### Stage 2: new patients and sparser scans
+
+**The confirmation patients, weekly scans to day 84.** Error (%), days
+84-119, at 1 / 0.75 / 0.5x, with the mean of the three in brackets:
+
+| Patient | E projected alone | B pooled | A alone |
+|---|---|---|---|
+| vp4 | 33.5 / 37.6 / 42.9 (38.0) | 23.2 / 18.3 / 14.0 (18.5) | 25.2 / 19.2 / 16.0 (20.1) |
+| vp5 | 44.2 / 49.2 / 55.1 (49.5) | 10.6 / 8.0 / 12.8 (10.4) | 65.3 / 57.1 / 51.2 (57.9) |
+| vp6 | 39.7 / 43.5 / 47.7 (43.6) | 29.1 / 32.4 / 36.1 (32.6) | 12.1 / 18.4 / 26.2 (18.9) |
+| vp7 | 35.7 / 41.4 / 49.2 (42.1) | 113.2 / 100.5 / 81.4 (98.4) | 56.2 / 68.3 / 79.8 (68.1) |
+| vp8 | 25.1 / 27.8 / 31.3 (28.1) | 7.9 / 8.6 / 9.9 (8.8) | 12.1 / 15.7 / 20.3 (16.1) |
+| vp9 | 30.7 / 33.8 / 37.4 (34.0) | 13.6 / 14.8 / 16.7 (15.0) | 15.6 / 18.9 / 23.6 (19.4) |
+| **Mean** | 39.2 | **30.6** | 33.4 |
+| Median | 40.1 | **16.8** | 19.7 |
+
+The stress arms (0.25 / 0x) range over 35.0-61.0 / 38.5-66.3 for E,
+11.7-58.4 / 13.9-42.3 for B and 19.1-88.8 / 26.6-94.6 for A (per patient
+in the log).
+- **E, the stage-1 choice, has the highest mean on the new patients.** It
+  is low on every one: the day-119 burden is 0.34-0.68 of the truth, and
+  it already starts at 0.68-0.88 of the truth at the cut. Its dose effect
+  at 0.5x is 0.25-0.39.
+- **B is the best typical forecast** (median 16.8; mean rank 1.5 of 3),
+  but it fails vp7 (98.4%), a strong responder (kill 1.63). It starts
+  vp7's forecast at 1.69 times the truth and ends at 1.77-3.03 times. On
+  vp6, the fastest grower after vp1 (k 0.064, against the twin's 0.052),
+  it is low (0.57-0.69).
+- **A forecasts a negative burden** on vp5 at 1x (-0.19 of the truth) and
+  on vp7 at every arm (-0.39 / -0.23 / -0.14).
+
+**Sparser scans, all ten patients.** Mean of the three scenario arms (%;
+per-arm numbers and stress arms in the log):
+
+| Patient | Fortnightly to day 84: E / B / A | 4-weekly to day 84: E / B / A | Weekly to day 57: E / B / A |
+|---|---|---|---|
+| Twin | 27.6 / 12.5 / 97.7 | 85.1 / 55.8 / 55.2 | 39.3 / 13.4 / 30.8 |
+| vp1 | 14.9 / 43.7 / 16.7 | 32.0 / 90.5 / 16.6 | 46.6 / 50.8 / 23.6 |
+| vp2 | 64.7 / 453 / 2408 | 1093 / 352 / 2637 | 29.7 / 142.3 / 22.4 |
+| vp3 | 24.8 / 99.3 / 852 | 705 / 42.2 / 838 | 48.2 / 51.9 / 40.4 |
+| vp4 | 33.7 / 22.3 / 609 | 60.0 / 23.1 / 616 | 35.5 / 11.4 / 28.8 |
+| vp5 | 44.8 / 13.1 / 389 | 240 / 46.3 / 421 | 45.4 / 15.0 / 30.2 |
+| vp6 | 43.0 / 44.6 / 60.0 | 117.9 / 80.8 / 101.7 | 55.3 / 45.3 / 27.3 |
+| vp7 | 23.6 / 67.1 / 742 | 581 / 27.8 / 756 | 43.2 / 40.4 / 32.7 |
+| vp8 | 30.7 / 20.6 / 95.9 | 67.3 / 63.2 / 55.5 | 37.3 / 18.6 / 28.6 |
+| vp9 | 24.9 / 25.2 / 252 | 99.9 / 38.0 / 253 | 33.5 / 14.0 / 29.0 |
+| **Mean** | **33.3** / 80.2 / 552 | 308 / **82.0** / 575 | 41.4 / 40.3 / **29.4** |
+| Median | **29.2** / 34.5 / 320 | 109 / **51.0** / 337 | 41.3 / 29.5 / **28.9** |
+
+- **No variant does well on sparse scans, and none is best on all three.**
+  E has the lowest mean fortnightly, B 4-weekly, A weekly to day 57. Only
+  10 of the 90 patient means are under the 18.9% bar (B 7, A 2, E 1).
+- **Fortnightly (7 scans).** A, the free form fitted alone, cannot fit the
+  scans: training error 27-61%, and its forecast starts at 0.88-13.3 times
+  the truth. E fits better and is the most even (worst 64.7). B is good
+  on some patients (twin 12.5, vp5 13.1) and fails the strong responders
+  (vp2 453, vp3 99.3, vp7 67.1).
+- **4-weekly (4 scans).** Everything fails. E's training error is 16-51%,
+  and its day-119 burden runs up to 33 times the truth. B has the lowest
+  mean but is far too low on vp1 and vp6 (day-119 burden 0.04-0.06 and
+  0.07-0.09 of the truth; training error 46% and 27%).
+- **Weekly to day 57 (8 scans; a 62-day forecast).** A has the lowest mean
+  (29.4) and worst case (40.4), but forecasts a negative burden on three
+  patients at 1x. B's median is about the same (29.5), with a worse tail
+  (vp2 142.3). E is low: day-119 burden 0.19-0.51 of the truth on eight of
+  the ten patients.
+
+**Reading.** On the declared protocol the round has no clear winner. The
+stage-1 choice (E) is consistently biased low; pooling (B) gives the best
+typical forecast when the patient is like the cohort and fails when it is
+not; the free form alone (A) fails as soon as the scans thin out. The
+next section shows how much of these errors comes from the protocol's
+starting point rather than the models.
+
 ## Restarting the forecast from the last scan (design written before the new fits)
 
 **Why (found after the fact).** The benchmark scores every forecast by
@@ -3154,6 +3467,228 @@ conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-che
 # restart (session script restart_check.py): verify | run -j 16 | report
 ```
 
+### Results (restarted; seed 48, each fit run once)
+
+**Run log.**
+- **The 48 new fits** started at 18:56 UTC on the same machine, while
+  stage 2 was still running, each pinned to a free core as before. A
+  pooled fit holds 3.0-3.4 GB and peaks at 3.9 GB, and the machine has no
+  swap, so from 19:06 at most 14 fits ran at once. All 48 finished (exit 0) by
+  21:01 UTC, and every arm evaluated 64 draws.
+- **Check of the script** (on the Mac, before any restarted number from
+  the new fits; `logs/restart_verify.txt`). Started from the first scan,
+  it reproduces the official errors of the 28 stage-1 fits at 1 / 0.75 /
+  0.5x to 3e-12 points. With draws it reproduces the official band
+  counts, complete draws and cut-off draws exactly on 15 fit-arms: the
+  twin's G, vp3's F and vp2's E at all five arms. The last two each have
+  a cut-off draw.
+- **The two timing checks** named in the design (G on vp2 and E on the
+  twin, 0.5x) come out the same in the full run.
+- **The restarted evaluation** ran on the machine at the lowest priority
+  (`nice 19`) while fits were running, which slowed them a little. It
+  covered the 585 fit-arms present at 19:03 with 16 processes (19:03 to
+  20:07, about 100 s per fit-arm). Then passes on two processes picked up
+  each newly finished fit, and a last pass ran after the final fit.
+  The third pass was stopped when the last fit finished, so that the
+  final pass could use all 16 cores; the runner resumes from its saved
+  results. A last pass found nothing left: 920 fit-arms (184 fits, five
+  arms each), 21:13 UTC.
+- **The machine was deleted** with its resource group (requested at
+  21:16 UTC, about 5.3 hours after it was created; checked gone
+  afterwards). Estimated cost about $6 (F16as_v6 at $1.093 an hour, plus
+  disk and address).
+- Session scripts `restart_check.py` (verify, run, report),
+  `restart_expectations.py` (the expectations and tables below) and
+  `restart_figures.py`. Logs `logs/restart_verify.txt`,
+  `logs/restart_report.txt` and `logs/restart_expectations.txt`. Figures
+  `figures/restart_error.png` and
+  `figures/restart_burden_<schedule>_0.5x.png`, with the new patient's
+  scans as black stars. All are in the variant round's session folder.
+
+**Restarted error by schedule.** A patient's error is the mean of the
+1 / 0.75 / 0.5x arms; the table gives the mean over patients, then the
+median and the worst patient. "From the first scan" is the same fits
+scored the benchmark's way. "Band" is the mean share of forecast times
+at which the 5-95% band of the 64 draws holds the true burden. Negative
+burdens count patient-arms (1 / 0.75 / 0.5x) whose day-119 forecast is
+below zero.
+
+**Weekly to day 84.**
+
+| Variant | Patients | From the first scan | Restarted: mean | Median | Worst | vp4-9 mean | Under 18.9% | Band at 1 / 0.5x | Negative burdens |
+|---|---|---|---|---|---|---|---|---|---|
+| A alone | 10 | 292.9 | 34.4 | 15.5 | 113.4 (vp2) | 21.3 | 6 of 10 | 80 / 36% | 6 (vp3, vp7) |
+| B pooled | 10 | 76.4 | 16.2 | 14.3 | 46.4 (vp2) | 11.6 | 8 of 10 | 82 / 61% | 3 (vp2) |
+| C pooled + factor | 10 | 43.0 | 16.0 | 13.3 | 46.4 (vp2) | 11.7 | 8 of 10 | 87 / 69% | 3 (vp2) |
+| D K64 pooled + factor | 4 | 104.5 | 60.5 | 26.9 | 176.9 (vp2) | — | 2 of 4 | 26 / 35% | 0 |
+| E projected alone | 10 | 38.2 | 21.3 | 20.6 | 28.4 (vp3) | 22.9 | 3 of 10 | 92 / 48% | 0 |
+| F projected pooled | 10 | 58.4 | 14.1 | 13.3 | 28.1 (vp2) | 11.0 | 8 of 10 | 61 / 51% | 1 (vp2) |
+| G projected pooled + factor | 10 | 66.0 | 12.6 | 12.6 | 19.4 (vp2) | 11.8 | 9 of 10 | 89 / 58% | 0 |
+
+**Fortnightly to day 84.**
+
+| Variant | Patients | From the first scan | Restarted: mean | Median | Worst | vp4-9 mean | Under 18.9% | Band at 1 / 0.5x | Negative burdens |
+|---|---|---|---|---|---|---|---|---|---|
+| A alone | 10 | 552.1 | 46.9 | 41.4 | 112.5 (vp2) | 42.0 | 1 of 10 | 40 / 63% | 0 |
+| B pooled | 10 | 80.2 | 16.2 | 13.1 | 47.2 (vp2) | 11.9 | 8 of 10 | 82 / 66% | 3 (vp2) |
+| E projected alone | 10 | 33.3 | 20.0 | 20.6 | 27.7 (vp6) | 21.1 | 3 of 10 | 87 / 59% | 0 |
+| G projected pooled + factor | 10 | 68.6 | 12.1 | 12.6 | 20.7 (vp2) | 10.8 | 9 of 10 | 90 / 71% | 0 |
+
+**4-weekly to day 84.**
+
+| Variant | Patients | From the first scan | Restarted: mean | Median | Worst | vp4-9 mean | Under 18.9% | Band at 1 / 0.5x | Negative burdens |
+|---|---|---|---|---|---|---|---|---|---|
+| A alone | 10 | 575.0 | 48.3 | 44.7 | 118.7 (vp2) | 43.8 | 3 of 10 | 18 / 51% | 0 |
+| B pooled | 10 | 82.0 | 18.5 | 13.9 | 55.8 (vp2) | 12.5 | 6 of 10 | 71 / 69% | 2 (vp2) |
+| E projected alone | 10 | 308.0 | 29.1 | 18.2 | 72.1 (vp2) | 22.6 | 5 of 10 | 38 / 59% | 0 |
+| G projected pooled + factor | 10 | 216.3 | 19.7 | 19.7 | 34.7 (vp1) | 15.8 | 4 of 10 | 76 / 71% | 0 |
+
+**Weekly to day 57.**
+
+| Variant | Patients | From the first scan | Restarted: mean | Median | Worst | vp4-9 mean | Under 18.9% | Band at 1 / 0.5x | Negative burdens |
+|---|---|---|---|---|---|---|---|---|---|
+| A alone | 10 | 29.4 | 26.7 | 26.1 | 35.1 (vp3) | 26.3 | 0 of 10 | 97 / 56% | 2 (vp3, vp7) |
+| B pooled | 10 | 40.3 | 17.7 | 15.4 | 30.0 (vp1) | 14.2 | 6 of 10 | 56 / 66% | 1 (vp2) |
+| E projected alone | 10 | 41.4 | 35.9 | 35.3 | 48.7 (vp6) | 35.7 | 0 of 10 | 61 / 19% | 0 |
+| G projected pooled + factor | 10 | 32.5 | 18.9 | 15.2 | 36.4 (vp6) | 18.9 | 6 of 10 | 80 / 58% | 0 |
+
+**Restarted error per patient** (mean of 1 / 0.75 / 0.5x):
+
+**Weekly to day 84.**
+
+| Patient | A | B | C | D | E | F | G |
+|---|---|---|---|---|---|---|---|
+| twin | 14.8 | 9.0 | 9.3 | 11.4 | 20.3 | 8.4 | 8.0 |
+| vp1 | 10.9 | 16.6 | 20.5 | 13.5 | 10.2 | 17.2 | 13.6 |
+| vp2 | 113.4 | 46.4 | 46.4 | 176.9 | 17.1 | 28.1 | 19.4 |
+| vp3 | 77.2 | 20.3 | 13.5 | 40.3 | 28.4 | 21.1 | 14.1 |
+| vp4 | 12.1 | 13.8 | 15.8 | — | 20.9 | 7.5 | 10.0 |
+| vp5 | 20.8 | 12.3 | 14.9 | — | 27.8 | 10.8 | 15.6 |
+| vp6 | 13.2 | 14.8 | 13.1 | — | 26.4 | 17.7 | 18.8 |
+| vp7 | 53.3 | 14.8 | 11.9 | — | 24.3 | 15.8 | 11.6 |
+| vp8 | 12.1 | 5.5 | 6.0 | — | 18.1 | 7.0 | 5.9 |
+| vp9 | 16.2 | 8.5 | 8.5 | — | 19.8 | 7.1 | 8.9 |
+
+**Fortnightly to day 84.**
+
+| Patient | A | B | E | G |
+|---|---|---|---|---|
+| twin | 21.1 | 10.4 | 21.7 | 8.2 |
+| vp1 | 13.1 | 12.9 | 12.5 | 12.4 |
+| vp2 | 112.5 | 47.2 | 16.7 | 20.7 |
+| vp3 | 70.1 | 19.8 | 22.8 | 14.4 |
+| vp4 | 62.7 | 13.3 | 15.3 | 8.0 |
+| vp5 | 48.5 | 12.7 | 23.1 | 12.8 |
+| vp6 | 19.8 | 16.1 | 27.7 | 16.1 |
+| vp7 | 66.8 | 14.3 | 19.6 | 13.3 |
+| vp8 | 19.8 | 5.9 | 21.7 | 6.0 |
+| vp9 | 34.3 | 8.8 | 19.3 | 8.6 |
+
+**4-weekly to day 84.**
+
+| Patient | A | B | E | G |
+|---|---|---|---|---|
+| twin | 18.5 | 8.9 | 17.2 | 20.8 |
+| vp1 | 13.4 | 22.4 | 12.9 | 34.7 |
+| vp2 | 118.7 | 55.8 | 72.1 | 22.8 |
+| vp3 | 69.6 | 22.9 | 53.1 | 24.0 |
+| vp4 | 64.2 | 9.8 | 12.7 | 15.4 |
+| vp5 | 51.2 | 9.8 | 26.7 | 20.2 |
+| vp6 | 24.4 | 19.7 | 19.2 | 15.3 |
+| vp7 | 67.6 | 18.0 | 47.4 | 19.2 |
+| vp8 | 17.2 | 8.6 | 13.8 | 13.1 |
+| vp9 | 38.1 | 8.9 | 15.5 | 11.5 |
+
+**Weekly to day 57.**
+
+| Patient | A | B | E | G |
+|---|---|---|---|---|
+| twin | 28.5 | 11.9 | 35.4 | 12.1 |
+| vp1 | 22.9 | 30.0 | 42.1 | 23.5 |
+| vp2 | 22.8 | 27.3 | 27.8 | 12.5 |
+| vp3 | 35.1 | 22.8 | 39.7 | 27.1 |
+| vp4 | 26.1 | 8.4 | 30.2 | 13.1 |
+| vp5 | 25.0 | 12.8 | 37.5 | 26.9 |
+| vp6 | 25.1 | 26.3 | 48.7 | 36.4 |
+| vp7 | 29.0 | 18.0 | 35.2 | 17.3 |
+| vp8 | 26.3 | 9.4 | 33.4 | 9.1 |
+| vp9 | 26.1 | 10.1 | 28.9 | 10.9 |
+
+**Expectations against outcomes.**
+
+| Expected | Outcome |
+|---|---|
+| 1. Confirmation patients, weekly to day 84: G at most B's 11.6, below C and F; no negative burden | No: F 11.0, B 11.6, C 11.7, G 11.8, a tie within 0.8 points. G gives no negative burden. Over all ten patients G is lowest (12.6, against F 14.1, C 16.0 and B 16.2) and has the smallest worst case (19.4) |
+| 2. Restarting lowers the mean of A, B, E and G on each sparse schedule | Yes, 12 of 12. The biggest drops are where the first-scan forecasts were worst: 4-weekly scans (G 216.3 to 19.7, E 308.0 to 29.1, A 575.0 to 48.3) and A on fortnightly scans (552.1 to 46.9). The smallest are A and E on weekly scans to day 57 (29.4 to 26.7, 41.4 to 35.9) |
+| 3. G lowest of A, B, E and G on each sparse schedule (least sure on 4-weekly) | Partly: fortnightly yes (G 12.1, B 16.2); 4-weekly no (B 18.5, G 19.7); weekly to day 57 no (B 17.7, G 18.9). By median, G is lowest on weekly to day 57 (15.2 against 15.4), not on 4-weekly (19.7 against 13.9) |
+| 4. Errors rise from weekly to fortnightly to 4-weekly (to day 84); weekly to day 57 worse than weekly to day 84 | No, for all four. Weekly and fortnightly scans give about the same error for B, E and G (16.2 and 16.2, 21.3 and 20.0, 12.6 and 12.1); only A rises (34.4, 46.9). 4-weekly is the worst of the three for all four (A 48.3, B 18.5, E 29.1, G 19.7). Weekly to day 57 is worse than weekly to day 84 for B, E and G, not for A, whose weekly-to-84 mean is dominated by the strong responders vp2, vp3 and vp7 (113.4, 77.2, 53.3) |
+| 5. Restarted bands hold the truth less than 90% of the time on most fits | Yes: 147 of 184 fits (mean over 1 / 0.75 / 0.5x) and 363 of 552 fit-arms |
+
+**Reading.**
+- **Most of the benchmark's error was the starting point.** Every variant
+  improves on every schedule once its forecast starts from the last
+  scan. Nothing was refitted. G's means under the benchmark's protocol
+  (66.0, 68.6, 216.3 and 32.5 on the four schedules) fall to 12.6, 12.1,
+  19.7 and 18.9.
+- **G and B are the two best restarted variants.**
+  - G (projected form, pooled, a drug factor per patient) has the lowest
+    mean on weekly (12.6) and fortnightly (12.1) scans to day 84 and the
+    smallest worst case on three of the four schedules (19.4, 20.7,
+    34.7). It never forecasts a negative tumour. It is under the 18.9%
+    bar for 9, 9, 4 and 6 of the ten patients.
+  - B (free form, pooled) has the lowest mean on 4-weekly scans (18.5)
+    and weekly scans to day 57 (17.7), 1.2 points below G. It is under
+    the bar for 8, 8, 6 and 6 of the ten. It forecasts a negative
+    tumour for vp2, the strongest responder, on every schedule.
+  - On the confirmation patients F, B, C and G are within 0.8 points
+    (11.0-11.8).
+- **Fewer scans cost less than expected.** Restarted, fortnightly scans
+  (7 MRIs to day 84) do as well as weekly ones (12): G 12.1 against
+  12.6. Four-weekly scans (4 MRIs) cost G about 7 points and B about 2.
+- **What is left is too little regrowth after a dose cut.** G's day-119
+  burden at 0.5x is below the truth for all ten patients with weekly or
+  fortnightly scans (median 0.76 and 0.83 of the truth), while at 1x it
+  is close (median 0.97 and 1.06). On the three day-84 schedules every
+  variant's day-119 burden falls against the truth from 1x to 0.5x (weekly
+  scans: B 0.93 to 0.78, E 0.76 to 0.59). The dense-scan fits earlier in
+  this record had the same weakness.
+- **The restarted bands are too narrow.** They start with zero width and
+  hold only the operators' uncertainty. G's hold the truth 89% of the
+  time at 1x and 58% at 0.5x (weekly to day 84): at 0.5x the truth
+  regrows out of the band.
+- **The projected form alone (E) stays low:** median day-119 burden at
+  0.5x is 0.59 of the truth with weekly scans to day 84 and 0.42 to
+  day 57. Pooled, the same form comes closer (weekly to day 84: F 0.85,
+  G 0.76; to day 57: G 0.89). Reading: the past patients supply the dose
+  response that a few scans of one patient cannot.
+- **The declared condition for the Neural-ODE setting is not met.** G is
+  not best on the confirmation patients (a tie) and is best on one of the
+  three sparse schedules. So, as declared, the results are reported
+  schedule by schedule and the user chooses. The candidates are G and B,
+  both forecast from the latest scan.
+
+**Disclosures.**
+- **After the fact,** as stated in the design: the restart and the choice
+  of G for the sparse schedules came after the stage-1 and confirmation
+  results had been seen.
+- **Draws cut off at the safety threshold** (each counts as a miss).
+  Scored the benchmark's way, the new fits lose draws on sparse scans:
+  G on all ten 4-weekly fits (0-25 of 64 per arm; vp1 23-25), at most one
+  per arm on six of the ten fortnightly fits, and on five of the ten
+  weekly-to-57 fits (one or two at 0x only, except vp1 with 1-11 per
+  arm). F on vp7 (weekly to day 84) loses one per arm. Restarted, only
+  two fits lose any: E on 4-weekly vp1 (one per arm) and G on
+  weekly-to-57 vp1 (2 at 0.25x and 17 at 0x; none at the judged arms).
+- **Restart workers ran beside the fits** at the lowest priority. This
+  changes only run times.
+- **One anatomy, one seed per patient, a best-case cohort,** as in the
+  variant round's disclosures.
+- **The start is a noisy scan,** and the band leaves out its noise.
+- **Session scripts.** The restart, the expectations check and the
+  figures are session scripts that reuse the benchmark's functions. If
+  the protocol is adopted, it moves into `benchmark_evaluation.py` with a
+  test.
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
@@ -3205,13 +3740,28 @@ day 57 has none. The agreed list of ideas is done. The options are open:
 - report the sparse-scan results as a limitation: the learned trend scale
   (one schedule passes) and partial pooling (both weekly schedules pass),
   beside the failures;
-- test the projected form on the realistic schedules, declared first;
+- test the projected form on the realistic schedules, declared first
+  (done in the variant round: E, F and G);
 - move the example to a setting with frequent imaging;
 - let each patient's drug response vary in the pooled model, for example
   one sensitivity factor per patient on the shared drug term, declared
-  first;
+  first (done in the variant round: C, D and G);
 - confirm pooling at a declared number of past patients on new virtual
-  patients.
+  patients (done in the variant round: B with eight past patients on
+  vp4-9).
+
+The variant round and the restart change this picture. Forecast from the
+last scan, the best variants are under the 18.9% bar for most patients
+with weekly or fortnightly scans to day 84 (G: 9 of 10 on both). Open:
+- adopt the restart: move it from the session script into
+  `benchmark_evaluation.py` with a test, and report both protocols;
+- choose the setting for the Neural-ODE comparison: G (no negative
+  tumours, the smallest worst case on three of four schedules, lowest on
+  weekly and fortnightly scans) or B (lowest mean on 4-weekly scans and weekly scans to day 57,
+  by 1.2 points), both forecast from the last scan, and the schedule;
+- confirm the chosen setting on fresh virtual patients, declared first;
+- the remaining weakness: too little regrowth after a dose cut, so the
+  0.5x bands often miss (G holds the truth 58-71% of the time).
 
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
@@ -3240,3 +3790,7 @@ scripts, and the cohort-size summary, M-forecast and member-rate
 scripts) are local session artifacts, not
 bundled with the repository:
 `/Users/anthonypoole/.copilot/session-state/270528ea-ceb6-45be-9e3d-35eb315a865f/files/chemo-tutorial-runs/`.
+The variant round's and the restart's scripts (`variant_summary.py`,
+`restart_check.py`, `restart_expectations.py`, `restart_figures.py`), logs,
+results and plots (`figures/variant_*.png`, `figures/restart_*.png`) are in
+the sibling folder `.../files/azure-variants/`.
