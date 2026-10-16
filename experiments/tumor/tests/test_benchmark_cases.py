@@ -8,8 +8,9 @@ from dataclasses import replace
 
 from benchmark_cases import (CASES, COHORT_CASES, COHORT_DESIGN, COHORT_SWEEP_CASES, LEARNED_TREND_CASES, LEGACY_PODS,
                              PATIENT_DOSE_DAYS, POOLED_CASES, REPORTED_CASES, SCAN_SCHEDULE_CASES, TUTORIAL_TWIN,
-                             SPARSE_FIX_CASES, PODSettings, describe, galerkin_operators, get_case, production_config,
-                             regular_scan_days, stride_scan_days, _adapter)
+                             SPARSE_FIX_CASES, VARIANT_CASES, VARIANT_LEARNED_TREND_CASES, PODSettings, describe,
+                             galerkin_operators, get_case, production_config, regular_scan_days, stride_scan_days,
+                             _adapter)
 from core.weakform_opinf import WeakFormConfig
 
 
@@ -24,7 +25,7 @@ class BenchmarkCaseTests(unittest.TestCase):
                                                             "midcourse-logistic-chemo", "midcourse-regimen-trend-chemo",
                                                             "midcourse-logistic-trend-chemo"} | set(SCAN_SCHEDULE_CASES)
                          | set(SPARSE_FIX_CASES) | set(LEARNED_TREND_CASES) | set(COHORT_CASES)
-                         | set(COHORT_SWEEP_CASES))
+                         | set(COHORT_SWEEP_CASES) | set(VARIANT_LEARNED_TREND_CASES) | set(VARIANT_CASES))
         self.assertEqual(CASES["untreated-growth"].dose_days, ())
         self.assertEqual(CASES["untreated-growth"].prediction_end, 90.)
         single, multi = CASES["single-dose-chemo"], CASES["multi-dose-chemo"]
@@ -66,7 +67,8 @@ class BenchmarkCaseTests(unittest.TestCase):
                 self.assertEqual(case.gp_noise_prior == "measurement",
                                  name in SPARSE_FIX_CASES and "known-noise" in name)
                 self.assertEqual(cfg.gp_trend_scale, case.gp_trend_scale)
-                self.assertEqual(case.gp_trend_scale == "learned", name in LEARNED_TREND_CASES + COHORT_CASES + COHORT_SWEEP_CASES)
+                self.assertEqual(case.gp_trend_scale == "learned", name in LEARNED_TREND_CASES + COHORT_CASES
+                                 + COHORT_SWEEP_CASES + VARIANT_LEARNED_TREND_CASES + VARIANT_CASES)
                 self.assertEqual(cfg.operator_solver, "qr")
                 self.assertEqual(cfg.precision, "default")
                 self.assertEqual(cfg.num_steps, 12000)

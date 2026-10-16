@@ -139,6 +139,25 @@ def galerkin_row_maps(structure, rom, basis, r):
     return maps
 
 
+def structured_row_maps(case, pod, cfg, rom, data):
+    """Row maps of a structured case (None for the free ROM) from the basis its acquisition was projected onto: its
+    own POD (the data folder's basis.npz) or the past patients' (benchmark_cohort.cohort_basis, checked against the
+    basis recorded at preparation)."""
+    if case.structure == "free":
+        return None
+    if case.cohort:
+        import benchmark_cohort
+        V, shift, record = benchmark_cohort.cohort_basis(case, pod)
+        if record["sha256"] != data["metadata"]["sources"]["basis"]["sha256"]:
+            raise RuntimeError("The cohort basis changed after this acquisition was prepared.")
+    else:
+        basis = bd.read_npz(data["folder"] / "basis.npz")
+        V, shift = basis["physical_matrix"], basis["physical_shift"]
+    if np.any(shift != 0.):
+        raise ValueError("The Galerkin structure needs an uncentred POD basis.")
+    return galerkin_row_maps(case.structure, rom, V, cfg.num_modes)
+
+
 def _save_svi(path, state, losses, steps):
     import jax
     leaves = jax.tree_util.tree_leaves(jax.device_get(state))
@@ -247,12 +266,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         trajectories[0]["noise_variances"] = variances
         noise_prior = {"measurement_noise_variances": variances.tolist(),
                        "measurement_noise_rule": "benchmark_data.scan_noise_variances"}
-    row_maps = None
-    if case.structure != "free":
-        basis = bd.read_npz(data["folder"] / "basis.npz")
-        if np.any(basis["physical_shift"] != 0.):
-            raise ValueError("The Galerkin structure needs an uncentred POD basis.")
-        row_maps = galerkin_row_maps(case.structure, rom, basis["physical_matrix"], cfg.num_modes)
+    row_maps = structured_row_maps(case, pod, cfg, rom, data)
     prior_mean = None
     if case.operator_prior_mean == "cohort":
         prior_mean = benchmark_cohort.prior_mean(case, pod, root, data["metadata"], cohort_prior["cohort_prior"],
@@ -264,7 +278,8 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
     model, conditional, _, priors = build_model(
         rom, trajectories, cfg, row_maps=row_maps, prior_mean=prior_mean, pooled=pooled,
         # The cohort-size sweep's records name the blocked solver; the declared cohort's fits used the stacked one.
-        pooled_solver=cohort_prior["pooled_cohort"].get("solver", "stacked") if pooled else "stacked")
+        pooled_solver=cohort_prior["pooled_cohort"].get("solver", "stacked") if pooled else "stacked",
+        input_scale=case.drug_factor)
     gamma2 = priors["gamma2"]
     guide, svi, state, losses, posterior_key, operator_key = _run_svi(model, cfg, total, folder, gamma2, {
         "case": case.name, "seed": seed, "pod_tag": bd.pod_tag(pod), "observation": case.observation,
@@ -276,7 +291,7 @@ def fit_production(case, seed, pod=None, root=None, *, steps=None, log=print):
         "ODE_calls_in_objective": 0, "thread_environment": benchmark_environment.current(), **noise_prior,
         **cohort_prior}, log)
     exported = _export_production(folder, cfg, gamma2, observations, guide, svi, state, conditional,
-                                  posterior_key, operator_key, len(trajectories), pooled)
+                                  posterior_key, operator_key, len(trajectories), pooled, case.drug_factor)
     complete = bool(np.isfinite(losses).all() and np.isfinite(exported["O_point"]).all())
     result = {
         "status": "complete" if complete else "nonfinite_production_fit",
@@ -323,9 +338,11 @@ def canonical_layout(arrays, operators, r):
 
 
 def _export_production(folder, cfg, gamma2, observations, guide, svi, state, conditional, posterior_key,
-                       operator_key, trajectories=1, pooled=False):
+                       operator_key, trajectories=1, pooled=False, input_scale=False):
     """Operator and initial-state draws of the acquisition (trajectory 0). A partial-pooling fit also stores the
-    population operator's and every trajectory's conditional mean at the mean hyperparameters (diagnostics)."""
+    population operator's and every trajectory's conditional mean at the mean hyperparameters (diagnostics). With
+    learned input scales every operator is the effective one for inputs in the given units (O_k scaled by each
+    column's input degree times eta_k); the population operator is at eta = 0."""
     import jax
     import jax.numpy as jnp
     from jax import random
@@ -337,18 +354,25 @@ def _export_production(folder, cfg, gamma2, observations, guide, svi, state, con
     tau = jnp.exp(jnp.asarray(posterior["log_tau_block"]))
     sigma_O = None if cfg.sigma_O is None else jnp.asarray(cfg.sigma_O)
     keys = random.split(operator_key, PRODUCTION_DRAWS)
+    eta = (np.asarray(posterior["input_scale_sd"])[:, None] * np.asarray(posterior["input_scale_z"])
+           if input_scale else None)
+
+    def scales(eta_s):
+        return {} if eta_s is None else {"log_input_scale": jnp.asarray(eta_s)}
 
     @jax.jit
-    def draw_operator(theta_s, key, tau_s):
-        mean, root = conditional(theta_s, gamma2, sigma_O, tau_s)
+    def draw_operator(theta_s, key, tau_s, eta_s=None):
+        mean, root = conditional(theta_s, gamma2, sigma_O, tau_s, **scales(eta_s))
         return mean + jnp.einsum("ijk,ik->ij", root, random.normal(key, shape=mean.shape))
 
-    samples = np.stack([np.asarray(draw_operator(tuple(value[i] for value in theta), keys[i], tau[i]))
+    samples = np.stack([np.asarray(draw_operator(tuple(value[i] for value in theta), keys[i], tau[i],
+                                                 None if eta is None else eta[i]))
                         for i in range(PRODUCTION_DRAWS)])
     mean_hypers = tuple(np.asarray(value).mean(0) for value in theta)
     mean_tau = np.asarray(tau).mean(0)
+    mean_eta = None if eta is None else eta.mean(0)
     point, root = conditional(tuple(jnp.asarray(value) for value in mean_hypers), gamma2, sigma_O,
-                              jnp.asarray(mean_tau))
+                              jnp.asarray(mean_tau), **scales(mean_eta))
     arrays = {
         "O_point": np.asarray(point), "O_samples": samples, "conditional_root": np.asarray(root),
         "gp_lengthscale_samples": np.asarray(theta[0]), "gp_variance_samples": np.asarray(theta[1]),
@@ -361,8 +385,10 @@ def _export_production(folder, cfg, gamma2, observations, guide, svi, state, con
         arrays.update(gp_trend_scale_samples=np.asarray(theta[3]), mean_trend_scale=mean_hypers[3])
     if pooled:
         hypers = tuple(jnp.asarray(value) for value in mean_hypers)
-        population, population_root = conditional(hypers, gamma2, sigma_O, jnp.asarray(mean_tau), which="mean")
-        points = np.stack([np.asarray(conditional(hypers, gamma2, sigma_O, jnp.asarray(mean_tau), which=k)[0])
+        population, population_root = conditional(hypers, gamma2, sigma_O, jnp.asarray(mean_tau), which="mean",
+                                                   **scales(mean_eta))
+        points = np.stack([np.asarray(conditional(hypers, gamma2, sigma_O, jnp.asarray(mean_tau), which=k,
+                                                  **scales(mean_eta))[0])
                            for k in range(trajectories)])
         # Canonical columns of the population operator (point and covariance root) and of every trajectory's point.
         placed = canonical_layout({"O_point": np.asarray(population), "O_samples": points,
@@ -370,6 +396,9 @@ def _export_production(folder, cfg, gamma2, observations, guide, svi, state, con
         pooled_arrays = {"population_point": placed["O_point"], "population_root": placed["conditional_root"],
                          "trajectory_points": placed["O_samples"], "population_point_fit": np.asarray(population),
                          "trajectory_points_fit": points}
+        if input_scale:
+            pooled_arrays.update(log_input_scale_samples=eta, input_scale_sd_samples=np.asarray(
+                posterior["input_scale_sd"]), mean_log_input_scale=mean_eta)
     arrays = canonical_layout(arrays, cfg.operators, r)
     if pooled:
         arrays.update(pooled_arrays)

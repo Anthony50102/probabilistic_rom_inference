@@ -6,11 +6,14 @@ from types import SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np
+import numpyro.distributions as dist
 from numpyro import handlers
+from numpyro.infer.util import log_density
 
 from core.weakform_opinf import pipeline
 from core.weakform_opinf.config import WeakFormConfig
-from core.weakform_opinf.model import _block_id_from_rom, build_model, nondimensional_column_scale
+from core.weakform_opinf.model import (INPUT_SCALE_SD_LOC, INPUT_SCALE_SD_SCALE, _block_id_from_rom, build_model,
+                                       nondimensional_column_scale)
 
 KINDS = ("lengthscale", "variance", "noise")
 
@@ -44,6 +47,44 @@ def _trajectories():
 
 THETA = [(np.array([.7, .9]), np.array([1.5, .8]), np.array([1e-3, 2e-3])),
          (np.array([1.1, .6]), np.array([2.5, .4]), np.array([3e-3, 1e-3]))]
+THETA3 = THETA + [(np.array([.9, .8]), np.array([1.2, .6]), np.array([2e-3, 1.5e-3]))]
+
+
+def _input_trajectories(num_eval_points):
+    """Three trajectories of the cAN input ROM sharing one input array; the first and last have 15 training times
+    (one batch of the blocked solver), the middle one 18."""
+    u = np.exp(-(np.linspace(0., 8., num_eval_points) % 2.))[None]
+    trajectories = []
+    for k, (t0, t1, n) in enumerate(((1., 6., 15), (1., 7., 18), (1.5, 6.5, 15))):
+        t = np.linspace(t0, t1, n)
+        trajectories.append(dict(t_sampled=t, inputs_eval=u.copy(),
+                                 snapshots_comp=np.stack([2. + .3 * k + np.sin(.8 * t + k), .5 * np.cos(1.1 * t - k)])))
+    return trajectories
+
+
+def _cah_row_maps():
+    """θ_i = [c_i, A_i1, A_i2, h_i] for the cAH ROM, h_i the rate of a fixed quadratic feature of mode i."""
+    P = np.zeros((2, 6, 4))
+    for i, w in enumerate(([1., .5, -.3], [.2, 1., .4])):
+        P[i, :3, :3] = np.eye(3)
+        P[i, 3:, 3] = w
+    return P
+
+
+def _can_row_maps():
+    """θ_i = [c_i, A_i1, A_i2, n_i] for the cAN input ROM: a diagonal N (structural zeros off the diagonal)."""
+    P = np.zeros((2, 5, 4))
+    for i in range(2):
+        P[i, :3, :3] = np.eye(3)
+        P[i, 3 + i, 3] = 1.
+    return P
+
+
+def _blocked_values(theta, tau, kinds=KINDS):
+    """The blocked solver's sites: one (num_traj, num_modes) array per kind, and log κ."""
+    values = {kind: jnp.stack([jnp.asarray(th[j]) for th in theta]) for j, kind in enumerate(kinds)}
+    values["log_tau_block"] = jnp.log(jnp.asarray(tau))
+    return values
 
 
 def _evidence(model, theta, tau):
@@ -62,6 +103,28 @@ def _posterior(posterior, theta, tau, **kwargs):
 
 def _covariance(root):
     return np.einsum("ijk,ilk->ijl", root, root)
+
+
+def _likelihoods_in_O(rom, trajectories, cfg):
+    """Each trajectory's Gaussian likelihood of mode i's operator row, exp(c_k − ½ Oᵀ H O + bᵀ O), read off its
+    own single-trajectory posterior and evidence (κ = 1; fixed slack, so the rows do not depend on which
+    trajectories are fitted together): per-trajectory lists of every mode's H and b, and Σ_k c_k."""
+    H, b, constant = [], [], 0.
+    for k, trajectory in enumerate(trajectories):
+        model, posterior, _, _ = build_model(rom, [trajectory], cfg)
+        evidence, _ = _evidence(model, THETA[k:k + 1], np.ones(3))
+        mean, root = _posterior(posterior, THETA[k:k + 1], np.ones(3))
+        prior_precision = 1. / nondimensional_column_scale(rom, [trajectory], 2)[0] ** 2
+        constant += evidence
+        H.append([]), b.append([])
+        for i in range(2):
+            inverse_root = np.linalg.inv(root[i])
+            precision = inverse_root.T @ inverse_root
+            H[k].append(precision - np.diag(prior_precision))
+            b[k].append(precision @ mean[i])
+            constant -= (.5 * np.sum(np.log(prior_precision)) - .5 * np.linalg.slogdet(precision)[1]
+                         + .5 * mean[i] @ precision @ mean[i])
+    return H, b, constant
 
 
 class PartialPoolingTests(unittest.TestCase):
@@ -97,22 +160,8 @@ class PartialPoolingTests(unittest.TestCase):
         trajectories = _trajectories()
         rom = _rom()
         block_id, m, _ = _block_id_from_rom(rom)
-        H, b, constant = [], [], 0.
         with pipeline.precision_context(cfg):
-            for k, trajectory in enumerate(trajectories):
-                model, posterior, _, _ = build_model(rom, [trajectory], cfg)
-                evidence, _ = _evidence(model, THETA[k:k + 1], np.ones(3))
-                mean, root = _posterior(posterior, THETA[k:k + 1], np.ones(3))
-                prior_precision = 1. / nondimensional_column_scale(rom, [trajectory], 2)[0] ** 2
-                constant += evidence
-                H.append([]), b.append([])
-                for i in range(2):
-                    inverse_root = np.linalg.inv(root[i])
-                    precision = inverse_root.T @ inverse_root
-                    H[k].append(precision - np.diag(prior_precision))
-                    b[k].append(precision @ mean[i])
-                    constant -= (.5 * np.sum(np.log(prior_precision)) - .5 * np.linalg.slogdet(precision)[1]
-                                 + .5 * mean[i] @ precision @ mean[i])
+            H, b, constant = _likelihoods_in_O(rom, trajectories, cfg)
             model, posterior, _, info = build_model(rom, trajectories, cfg, pooled=True)
             value, _ = _evidence(model, THETA, self.tau)
             pooled = {which: _posterior(posterior, THETA, self.tau, which=which) for which in ("mean", 0, 1)}
@@ -264,6 +313,131 @@ class PartialPoolingTests(unittest.TestCase):
         info = self._compare_solvers(_input_rom(), cfg, trajectories, theta, KINDS + ("trend_scale",))
         self.assertEqual([batch["training_times"] for batch in info["operator_prior"]["pooled"]["batches"]],
                          [12, 16, 17])
+
+    def test_structured_blocked_matches_the_brute_force_gaussian(self):
+        """Structured rows with the blocked solver, O_k,i = P_i (θ_M,i + δ_k,i) (an identity part and a fixed
+        quadratic feature with a learned rate): evidence and posteriors are the Gaussian integrals over
+        [θ_M, δ_0, δ_1] computed directly from each trajectory's likelihood in O, with the coefficients' prior scales
+        from the model's record."""
+        cfg = replace(self.cfg, closure="slack", gamma2=1e-3)
+        trajectories, rom, P = _trajectories(), _rom(), _cah_row_maps()
+        k = P.shape[2]
+        with pipeline.precision_context(cfg):
+            H, b, constant = _likelihoods_in_O(rom, trajectories, cfg)
+            model, posterior, _, info = build_model(rom, trajectories, cfg, row_maps=P, pooled=True,
+                                                    pooled_solver="blocked")
+            trace = handlers.trace(handlers.substitute(model, data=_blocked_values(THETA, self.tau))).get_trace()
+            value = float(trace["marg_O_evidence"]["fn"].log_factor)
+            pooled = {which: _posterior(posterior, THETA, self.tau, which=which) for which in ("mean", 0, 1)}
+        rows = info["operator_prior"]["structured_rows"]
+        blocks, scale = np.asarray(rows["block"]), np.asarray(rows["scale"])
+        self.assertEqual(blocks.tolist(), [[0, 1, 1, 2]] * 2)
+        expected = constant
+        for i in range(2):
+            var_M, var_d = ((kappa[blocks[i]] * scale[i]) ** 2 for kappa in (self.kappa_M, self.kappa_d))
+            prior_variance = np.concatenate([var_M, var_d, var_d])
+            placement = [P[i] @ np.hstack([np.eye(k), np.eye(k) * (j == 0), np.eye(k) * (j == 1)]) for j in range(2)]
+            precision = np.diag(1. / prior_variance) + sum(E.T @ H[j][i] @ E for j, E in enumerate(placement))
+            information = sum(E.T @ b[j][i] for j, E in enumerate(placement))
+            covariance = np.linalg.inv(precision)
+            mean = covariance @ information
+            expected += (-.5 * np.sum(np.log(prior_variance)) - .5 * np.linalg.slogdet(precision)[1]
+                         + .5 * information @ mean)
+            selector = {"mean": P[i] @ np.hstack([np.eye(k), np.zeros((k, 2 * k))]), 0: placement[0], 1: placement[1]}
+            for which, S in selector.items():
+                with self.subTest(mode=i, operator=which):
+                    np.testing.assert_allclose(pooled[which][0][i], S @ mean, rtol=1e-7, atol=1e-9)
+                    np.testing.assert_allclose(_covariance(pooled[which][1])[i], S @ covariance @ S.T,
+                                               rtol=1e-6, atol=1e-10)
+        self.assertAlmostEqual(value, expected, delta=1e-7 * max(1., abs(expected)))
+        self.assertIn("structured", info["operator_prior"]["pooled"])
+
+    def test_identity_row_maps_are_the_unstructured_blocked_solver(self):
+        """Row maps P_i = I give the unstructured blocked solver's log density and posteriors, without and with
+        learned input scales."""
+        eta = np.array([.3, -.2, .1])
+        cases = ((_rom(), _trajectories(), THETA, False), (_input_rom(), _input_trajectories(40), THETA3, True))
+        with pipeline.precision_context(self.cfg):
+            for rom, trajectories, theta, input_scale in cases:
+                m = rom.model.operator_matrix.shape[1]
+                built = [build_model(rom, trajectories, self.cfg, row_maps=row_maps, pooled=True,
+                                     pooled_solver="blocked", input_scale=input_scale)
+                         for row_maps in (None, np.stack([np.eye(m)] * 2))]
+                values = _blocked_values(theta, self.tau)
+                kwargs = {}
+                if input_scale:
+                    values.update(input_scale_sd=jnp.asarray(.5), input_scale_z=jnp.asarray(eta / .5))
+                    kwargs["log_input_scale"] = jnp.asarray(eta)
+                density = [float(log_density(model, (), {}, values)[0]) for model, *_ in built]
+                with self.subTest(inputs=input_scale):
+                    self.assertAlmostEqual(density[1], density[0], delta=1e-10 * abs(density[0]))
+                for which in ("mean", *range(len(trajectories))):
+                    plain, structured = (_posterior(posterior, theta, self.tau, which=which, **kwargs)
+                                         for _, posterior, *_ in built)
+                    with self.subTest(inputs=input_scale, operator=which):
+                        np.testing.assert_allclose(structured[0], plain[0], rtol=1e-9, atol=1e-11)
+                        np.testing.assert_allclose(_covariance(structured[1]), _covariance(plain[1]),
+                                                   rtol=1e-8, atol=1e-13)
+
+    def test_input_scales_are_scaled_inputs(self):
+        """Learned input scales: η = 0 is the model without them, and η_k = log c_k is that model fitted to the
+        inputs c_k u (their RMS kept, so the prior's scales are unchanged): equal log density up to the η sites'
+        priors, the same M, and trajectory k's operator for the unscaled inputs is the scaled-input fit's with its
+        input columns times c_k; with and without structured rows. Trajectories 0 and 2 form one batch, so η is
+        matched to trajectories, not to batch positions."""
+        rom, trajectories = _input_rom(), _input_trajectories(40)
+        c, omega, degree = np.array([np.sqrt(1.5), np.sqrt(.5), 1.]), .4, np.array([0, 0, 0, 1, 1])
+        scaled = [dict(tr, inputs_eval=tr["inputs_eval"] * ck) for tr, ck in zip(trajectories, c)]
+        values = _blocked_values(THETA3, self.tau)
+        with pipeline.precision_context(self.cfg):
+            np.testing.assert_allclose(nondimensional_column_scale(rom, scaled, 2)[0],
+                                       nondimensional_column_scale(rom, trajectories, 2)[0], rtol=1e-13)
+            for row_maps in (None, _can_row_maps()):
+                kwargs = dict(row_maps=row_maps, pooled=True, pooled_solver="blocked")
+                model, posterior, _, info = build_model(rom, trajectories, self.cfg, input_scale=True, **kwargs)
+                record = info["operator_prior"]["pooled"]["input_scale"]
+                self.assertEqual(record["input_degree"], degree.tolist())
+                trace = handlers.trace(handlers.substitute(model, data=dict(
+                    values, input_scale_sd=jnp.asarray(omega), input_scale_z=jnp.zeros(3)))).get_trace()
+                self.assertEqual({name for name, site in trace.items()
+                                  if site["type"] == "sample" and not site["is_observed"]},
+                                 {*KINDS, "log_tau_block", "input_scale_sd", "input_scale_z"})
+                for eta, data in ((np.zeros(3), trajectories), (np.log(c), scaled)):
+                    reference = build_model(rom, data, self.cfg, **kwargs)
+                    z = eta / omega
+                    prior = float(dist.LogNormal(np.log(INPUT_SCALE_SD_LOC), INPUT_SCALE_SD_SCALE).log_prob(omega)
+                                  + dist.Normal(0., 1.).log_prob(jnp.asarray(z)).sum())
+                    density = float(log_density(model, (), {}, dict(
+                        values, input_scale_sd=jnp.asarray(omega), input_scale_z=jnp.asarray(z)))[0])
+                    expected = float(log_density(reference[0], (), {}, values)[0]) + prior
+                    with self.subTest(structured=row_maps is not None, eta=eta.tolist()):
+                        self.assertAlmostEqual(density, expected, delta=1e-9 * abs(expected))
+                    for which in ("mean", 0, 1, 2):
+                        mean, root = _posterior(posterior, THETA3, self.tau, which=which,
+                                                log_input_scale=jnp.asarray(eta))
+                        ref_mean, ref_root = _posterior(reference[1], THETA3, self.tau, which=which)
+                        factor = np.ones(5) if which == "mean" else np.exp(eta[which]) ** degree
+                        with self.subTest(structured=row_maps is not None, eta=eta.tolist(), operator=which):
+                            np.testing.assert_allclose(mean, ref_mean * factor, rtol=1e-9, atol=1e-11)
+                            np.testing.assert_allclose(_covariance(root),
+                                                       factor[:, None] * _covariance(ref_root) * factor,
+                                                       rtol=1e-8, atol=1e-13)
+
+    def test_input_scale_rejections(self):
+        cfg = replace(self.cfg, closure="slack", gamma2=1e-3)
+        trajectories = _input_trajectories(40)
+        with pipeline.precision_context(cfg):
+            for kwargs in (dict(), dict(pooled=True), dict(pooled=True, pooled_solver="stacked")):
+                with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                    build_model(_input_rom(), trajectories, cfg, input_scale=True, **kwargs)
+            with self.assertRaises(ValueError):  # no input columns
+                build_model(_rom(), _trajectories(), cfg, pooled=True, pooled_solver="blocked", input_scale=True)
+            learned, plain = (build_model(_input_rom(), trajectories, cfg, pooled=True, pooled_solver="blocked",
+                                          input_scale=flag)[1] for flag in (True, False))
+            for posterior, kwargs in ((learned, dict()), (learned, dict(log_input_scale=jnp.zeros(2))),
+                                      (plain, dict(log_input_scale=jnp.zeros(3)))):
+                with self.subTest(learned=posterior is learned, kwargs=list(kwargs)), self.assertRaises(ValueError):
+                    _posterior(posterior, THETA3, self.tau, **kwargs)
 
 
 if __name__ == "__main__":

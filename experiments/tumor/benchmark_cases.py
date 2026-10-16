@@ -140,6 +140,21 @@ COHORT_SWEEP_DESIGN = {
     "sizes": (4, 8, 16, 32, 64),
     "pooled_solver": "blocked",
 }
+# New patients from the cohort's population (TUMOR_TUTORIAL_SCHEDULE_CHEMO.md, "Variant round", declared before any
+# fit): log k, log D and log sensitivity are the tutorial twin's plus log_sd (centre_z + z), with centre_z the
+# cohort's centre draw (COHORT_DESIGN's parameter_seed, first draw) and z the rows of default_rng(seed) standard
+# normals of shape (patients, 3), rounded to four significant figures. Each has the tutorial twin's anatomy, baseline
+# tumour, planned course (no dose modification), scanner and acquisition seeds; only k, D and the sensitivity differ.
+# The first three are development patients (they pick the variant); the other six only confirm it.
+VIRTUAL_PATIENT_DESIGN = {"patients": 9, "seed": 202, "log_sd": COHORT_DESIGN["log_sd"],
+                          "centre": "COHORT_DESIGN parameter_seed, first draw", "significant_figures": 4,
+                          "development": ("vp1", "vp2", "vp3"),
+                          "confirmation": ("vp4", "vp5", "vp6", "vp7", "vp8", "vp9")}
+VIRTUAL_PATIENTS = {
+    name: dict(zip(("growth_rate", "diffusion", "sensitivity"), values)) for name, values in (
+        ("vp1", (.07078, .04212, .199)), ("vp2", (.03644, .03709, .4333)), ("vp3", (.05352, .06346, .4207)),
+        ("vp4", (.03432, .03534, .3059)), ("vp5", (.0451, .04055, .3237)), ("vp6", (.06393, .04466, .2922)),
+        ("vp7", (.04558, .06064, .3746)), ("vp8", (.04904, .07976, .2162)), ("vp9", (.03568, .06703, .2414)))}
 OPERATOR_PRIOR_MEANS = ("zero", "cohort", "pooled")
 # Reduced-model structure: the operators a structured chemo ROM is fitted with (see benchmark_models.galerkin_row_maps).
 STRUCTURES = ("free", "galerkin", "galerkin_logistic")
@@ -197,6 +212,15 @@ class BenchmarkCase:
     # Number of past patients from the cohort-size sweep (COHORT_SWEEP_DESIGN; their scans also give the basis);
     # 0: the declared eight-member cohort (COHORT_DESIGN).
     cohort_size: int = 0
+    # The new patient: the tutorial twin ("") or a declared virtual patient (VIRTUAL_PATIENTS), whose growth rate,
+    # diffusion and sensitivity (the full-order truth) are its own.
+    patient: str = ""
+    # Drug sensitivity of the ROM's exposure input alpha(t) (its units); 0: the case's own sensitivity. A virtual
+    # patient's inputs are in the cohort's units, since its own sensitivity is unknown when the model is fitted.
+    input_sensitivity: float = 0.
+    # Partial pooling only: every patient's exposure input is scaled by its own learned factor (core build_model
+    # input_scale), e.g. its drug sensitivity relative to the input units.
+    drug_factor: bool = False
 
     def __post_init__(self):
         if self.observation not in OBSERVATION_MODELS:
@@ -230,8 +254,25 @@ class BenchmarkCase:
                              f"{COHORT_SWEEP_DESIGN['rank']}.")
         if self.operator_prior_mean not in OPERATOR_PRIOR_MEANS:
             raise ValueError(f"Unknown operator prior mean: {self.operator_prior_mean}")
-        if self.operator_prior_mean != "zero" and not (self.cohort and self.structure == "free"):
-            raise ValueError("The population operator prior needs a cohort basis and the free ROM.")
+        if self.operator_prior_mean != "zero" and not (self.cohort and (
+                self.structure == "free" or (self.cohort_size and self.operator_prior_mean == "pooled"))):
+            raise ValueError("The population operator prior needs a cohort basis and the free ROM (partial pooling "
+                             "in the cohort-size sweep also takes the projected form).")
+        if not isinstance(self.drug_factor, bool):
+            raise ValueError("drug_factor is True or False.")
+        if self.drug_factor and not (self.operator_prior_mean == "pooled" and self.cohort_size):
+            raise ValueError("A learned drug factor per patient needs partial pooling in the cohort-size sweep.")
+        if self.patient:
+            if self.patient not in VIRTUAL_PATIENTS:
+                raise ValueError(f"Unknown virtual patient: {self.patient!r}")
+            truth = VIRTUAL_PATIENTS[self.patient]
+            if {name: getattr(self, name) for name in truth} != truth:
+                raise ValueError(f"{self.patient}'s growth rate, diffusion and sensitivity are its declared ones.")
+            if not (self.cohort_size and self.input_sensitivity == COHORT_SWEEP_DESIGN["input_sensitivity"]):
+                raise ValueError("Virtual patients are new patients of the cohort-size sweep, with ROM inputs in "
+                                 "the cohort's units.")
+        elif self.input_sensitivity:
+            raise ValueError("Only a virtual patient's ROM inputs are in other units than its own sensitivity.")
         if self.operator_prior_mean == "pooled" and self.gp_noise_prior != "spectrum":
             raise ValueError("Partial pooling uses the spectrum noise prior (the cohort has no measurement record).")
         if self.cohort_size and self.operator_prior_mean == "cohort":
@@ -460,6 +501,66 @@ CASES.update({f"{COHORT_SWEEP_SOURCE}-cohort{size}-{arm}": replace(
                  "the cohort-size sweep" + {"zero": " (zero-centred operator prior: the basis alone).",
                                              "pooled": "; fitted jointly with their scans (partial pooling)."}[mean]))
     for size in COHORT_SWEEP_DESIGN["sizes"] for arm, mean in COHORT_SWEEP_ARMS.items()})
+# Variant round (TUMOR_TUTORIAL_SCHEDULE_CHEMO.md, "Variant round", declared before any fit): the cohort-size sweep's
+# model and variants of it, for the tutorial twin and the virtual patients, on four of the new patient's imaging
+# schedules up to the treatment decision (the past patients are the sweep's, weekly, days 5-119). Arms: the new
+# patient alone on the past patients' basis ("basis") or pooled with them ("pooled"), each in the free form or the
+# projected PDE form ("projected-": galerkin_logistic), and pooled with every patient's own learned drug factor
+# ("-drug"). The fortnightly and 4-weekly sources are the fixed-schedule cases with the learned trend scale.
+VARIANT_LEARNED_TREND_CASES = tuple(f"midcourse-reduced-trend-chemo-{schedule}-scans-learned-trend"
+                                    for schedule in ("fortnightly", "4weekly"))
+CASES.update({name: replace(
+    CASES[name.removesuffix("-learned-trend")], name=name, gp_trend_scale="learned",
+    description=f"As {name.removesuffix('-learned-trend')}; the GP trend's prior scale is learned with the other GP "
+                "hyperparameters.") for name in VARIANT_LEARNED_TREND_CASES})
+VARIANT_SOURCES = {
+    COHORT_SWEEP_SOURCE: "weekly scans to day 84",
+    VARIANT_LEARNED_TREND_CASES[0]: "fortnightly scans to day 84",
+    VARIANT_LEARNED_TREND_CASES[1]: "4-weekly scans to day 84",
+    "reduced-regimen-trend-chemo-weekly-scans-learned-trend": "weekly scans to day 57",
+}
+VARIANT_ARMS = {  # arm: (structure, operator prior mean, learned drug factor)
+    "basis": ("free", "zero", False),
+    "pooled": ("free", "pooled", False),
+    "pooled-drug": ("free", "pooled", True),
+    "projected-basis": ("galerkin_logistic", "zero", False),
+    "projected-pooled": ("galerkin_logistic", "pooled", False),
+    "projected-pooled-drug": ("galerkin_logistic", "pooled", True),
+}
+VARIANT_SIZE_ARMS = {8: tuple(VARIANT_ARMS), 64: ("pooled-drug",)}
+VARIANT_PATIENTS = ("",) + tuple(VIRTUAL_PATIENTS)
+
+
+def variant_name(source: str, size: int, arm: str, patient: str = "") -> str:
+    return f"{source}-cohort{size}-{arm}" + (f"-{patient}" if patient else "")
+
+
+def _variant_case(source: str, size: int, arm: str, patient: str) -> BenchmarkCase:
+    structure, mean, drug = VARIANT_ARMS[arm]
+    base = CASES[source]
+    changes = dict(VIRTUAL_PATIENTS[patient], patient=patient,
+                   input_sensitivity=COHORT_SWEEP_DESIGN["input_sensitivity"]) if patient else {}
+    who = (f"virtual patient {patient} (k, D, sensitivity {tuple(VIRTUAL_PATIENTS[patient].values())}; ROM inputs "
+           "in the cohort's units)" if patient else "the tutorial twin")
+    fit = {"zero": "alone (zero-centred operator prior)", "pooled": "jointly with their scans (partial pooling)"}[mean]
+    return replace(
+        base, name=variant_name(source, size, arm, patient), cohort="weekly", cohort_size=size,
+        operator_prior_mean=mean, structure=structure, drug_factor=drug,
+        pod=replace(base.pod, source="cohort_training"), **changes,
+        description=(f"As {source}, for {who}: on the POD basis of the weekly scans of the first {size} past patients "
+                     f"of the cohort-size sweep, fitted {fit}"
+                     + (", projected PDE form (galerkin_logistic)" if structure != "free" else "")
+                     + ("; every patient's exposure input scaled by its own learned drug factor" if drug else "")
+                     + "."))
+
+
+VARIANT_CASES = tuple(variant_name(source, size, arm, patient) for source in VARIANT_SOURCES
+                      for patient in VARIANT_PATIENTS for size, arms in VARIANT_SIZE_ARMS.items() for arm in arms)
+# The cohort-size sweep's own cases (the tutorial twin, weekly to day 84) keep their definitions.
+CASES.update({variant_name(*key): _variant_case(*key)
+              for key in ((source, size, arm, patient) for source in VARIANT_SOURCES for patient in VARIANT_PATIENTS
+                          for size, arms in VARIANT_SIZE_ARMS.items() for arm in arms)
+              if variant_name(*key) not in CASES})
 # The three benchmarks reported in the paper (the default when a runner is given no case).
 REPORTED_CASES = ("untreated-growth", "single-dose-chemo", "multi-dose-chemo")
 
@@ -512,6 +613,13 @@ DEFAULT_POD_PROVENANCE = {
         f"{COHORT_SWEEP_SOURCE}'s rank, checked against the pooled scans' noise threshold when the cohort is built. "
         "This acquisition's scans are only projected onto it.")
        for size in COHORT_SWEEP_DESIGN["sizes"] for arm in COHORT_SWEEP_ARMS},
+    **{name: f"As {name.removesuffix('-learned-trend')} (the same acquisitions and basis; not reselected)."
+       for name in VARIANT_LEARNED_TREND_CASES},
+    **{name: (f"Uncentred POD of the noisy segmented weekly scans of the first {CASES[name].cohort_size} past patients "
+              f"of the cohort-size sweep (as {COHORT_SWEEP_SOURCE}-cohort{CASES[name].cohort_size}-*), first "
+              f"{CASES[name].pod.rank} modes: the source schedule's rank. This acquisition's scans are only projected "
+              "onto it.")
+       for name in VARIANT_CASES if name not in COHORT_SWEEP_CASES},
 }
 
 # The earlier oracle-masked design, kept reproducible under its original output paths.
@@ -633,6 +741,12 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
         fields.pop("cohort_size")
     if fields["operator_prior_mean"] == "zero":
         fields.pop("operator_prior_mean")
+    # The tutorial twin with inputs in its own units and no learned drug factor: every recipe before the variant round.
+    for key, default in (("patient", ""), ("input_sensitivity", 0.), ("drug_factor", False)):
+        if fields[key] == default:
+            fields.pop(key)
+    if fields.get("patient"):
+        fields["virtual_patient_design"] = VIRTUAL_PATIENT_DESIGN
     if legacy:
         # Keeps the fingerprints recorded by the earlier design reproducible.
         fields.pop("observation")

@@ -35,8 +35,8 @@ for _path in (str(ROOT), str(SCRIPT_DIR)):
 
 from benchmark_cases import (  # noqa: E402
     CASES, COHORT_CASES, COHORT_SWEEP_CASES, HISTORICAL_DOSE_DAYS, HISTORICAL_SENSITIVITY, LEGACY_OBSERVATION,
-    OBSERVATION_MODELS, REPORTED_CASES, LEARNED_TREND_CASES, SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, BenchmarkCase,
-    PODSettings, describe, get_case)
+    OBSERVATION_MODELS, REPORTED_CASES, LEARNED_TREND_CASES, SCAN_SCHEDULE_CASES, SPARSE_FIX_CASES, VARIANT_CASES,
+    VARIANT_LEARNED_TREND_CASES, BenchmarkCase, PODSettings, describe, get_case)
 
 TUMORTWIN = ROOT.parent / "TumorTwin"
 PATIENT = "TNBC_demo_001"
@@ -77,6 +77,9 @@ DEFAULT_SEEDS = {
     **{name: (48, 49, 50) for name in COHORT_CASES},
     # Cohort-size sweep: acquisition 48 only (seeds differ only in scanner noise; seed 45 only for smoke runs).
     **{name: (48,) for name in COHORT_SWEEP_CASES},
+    # Variant round: likewise, acquisition 48 for every patient (new patients differ in k, D and sensitivity).
+    **{name: (48, 49, 50) for name in VARIANT_LEARNED_TREND_CASES},
+    **{name: (48,) for name in VARIANT_CASES},
 }
 LEGACY_SEEDS = {**{name: DEFAULT_SEEDS[name] for name in REPORTED_CASES}, "single-dose-chemo": (45, 46, 47)}
 BLOCK = 2048
@@ -385,7 +388,13 @@ def _patient():
 def _training_inputs_path(case):
     # The table spans training start to forecast end and the fit grid spans training, so both are in the name.
     start, end = case.training_span
-    return CACHE / f"inputs_{_history_stem(case)}_train{start:g}-{end:g}_to{case.prediction_end:g}.npz"
+    units = f"_in{case.input_sensitivity:g}" if case.input_sensitivity else ""
+    return CACHE / f"inputs_{_history_stem(case)}{units}_train{start:g}-{end:g}_to{case.prediction_end:g}.npz"
+
+
+def input_sensitivity(case):
+    """The sensitivity the ROM's exposure input is computed with (its units): the case's own unless declared."""
+    return case.input_sensitivity or case.sensitivity
 
 
 def _training_inputs(case):
@@ -399,7 +408,7 @@ def _training_inputs(case):
             raise ValueError("The patient record has no positive chemotherapy dose amounts.")
         days = np.asarray(case.dose_days)
         cycled = np.asarray([amounts[i % len(amounts)] for i in range(len(days))])
-        spec, t0 = config._build_chemo_spec_from_schedule(PATIENT, case.sensitivity, DECAY_RATE, days, cycled)
+        spec, t0 = config._build_chemo_spec_from_schedule(PATIENT, input_sensitivity(case), DECAY_RATE, days, cycled)
         if not np.array_equal(spec.doses, np.ones(len(days))):
             raise ValueError("TumorTwin no longer normalizes dose amounts; the input table would change.")
         table = config.make_jax_input_func(
@@ -414,12 +423,12 @@ def _training_inputs(case):
 
 
 def chemo_inputs(case, strength):
-    """Exposure alpha(t) for one future strength (identical before the first future pulse)."""
+    """Exposure alpha(t) for one future strength (identical before the first future pulse), in the ROM's units."""
     base = _training_inputs(case)
     times = base["input_times"]
     future = sum(np.where(times >= day, np.exp(-DECAY_RATE * (times - day)), 0.)
                  for day in case.dose_days if day > case.training_span[1])
-    values = base["input_values"] + case.sensitivity * (strength - case.training_strength) * future
+    values = base["input_values"] + input_sensitivity(case) * (strength - case.training_strength) * future
     return {"input_times": times, "input_values": values, "dose_days": base["dose_days"]}
 
 

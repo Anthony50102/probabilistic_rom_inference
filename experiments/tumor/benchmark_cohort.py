@@ -39,7 +39,7 @@ import benchmark_data as bd
 import benchmark_environment
 from benchmark_cases import (
     CASES, COHORT_CASES, COHORT_DESIGN, COHORT_SOURCES, COHORT_SWEEP_CASES, COHORT_SWEEP_DESIGN, PATIENT_DOSE_DAYS,
-    TUTORIAL_TWIN, PODSettings, get_case, production_config)
+    TUTORIAL_TWIN, VIRTUAL_PATIENT_DESIGN, VIRTUAL_PATIENTS, PODSettings, get_case, production_config)
 
 PARAMETERS = ("growth_rate", "diffusion", "sensitivity")
 OPERATOR_DRAWS = 500
@@ -86,13 +86,17 @@ def members_path():
 
 
 def check_target(case):
-    """The cohort was built for the tutorial twin on the patient's schedule; refuse any other target."""
+    """The cohort was built for new patients on the patient's schedule: the tutorial twin or a declared virtual
+    patient (VIRTUAL_PATIENTS, cohort-size sweep only), with ROM inputs in the cohort's units; refuse any other."""
     if not case.cohort:
         raise ValueError(f"{case.name} has no cohort.")
-    twin = {name: getattr(case, name) for name in PARAMETERS}
-    if (twin != TUTORIAL_TWIN or tuple(case.dose_days) != PATIENT_DOSE_DAYS or case.training_strength != 1.
-            or case.noise_level != NOISE_LEVEL or case.sensitivity != COHORT_DESIGN["input_sensitivity"]):
-        raise ValueError(f"{case.name} is not the target the cohort was built for.")
+    truth = {name: getattr(case, name) for name in PARAMETERS}
+    known = truth == (VIRTUAL_PATIENTS[case.patient] if case.patient else TUTORIAL_TWIN)
+    if (not known or tuple(case.dose_days) != PATIENT_DOSE_DAYS or case.training_strength != 1.
+            or case.noise_level != NOISE_LEVEL or bd.input_sensitivity(case) != COHORT_DESIGN["input_sensitivity"]):
+        raise ValueError(f"{case.name} is not a target the cohort was built for.")
+    if case.patient and not case.cohort_size:
+        raise ValueError(f"{case.name}: virtual patients join the cohort-size sweep only.")
     if case.cohort_size and (case.cohort_size not in COHORT_SWEEP_DESIGN["sizes"]
                              or case.cohort not in COHORT_SWEEP_DESIGN["strides"]):
         raise ValueError(f"{case.name} asks for a cohort the size sweep does not have.")
@@ -113,6 +117,20 @@ def member_parameters(cohort=COHORT_DESIGN):
             "centre": np.exp(twin + cohort["log_sd"] * centre_z),
             # The target relative to the population, in population standard deviations.
             "target_z": -centre_z}
+
+
+def virtual_patient_parameters(patients=VIRTUAL_PATIENT_DESIGN):
+    """The declared new patients (VIRTUAL_PATIENTS before rounding): log k, log D, log sensitivity = twin + log_sd
+    (z_centre + z), z_centre the cohort's centre draw and z from default_rng(seed). z is each patient's position in
+    the population (in standard deviations from its centre), as -z_centre is the tutorial twin's."""
+    centre_z = member_parameters()["centre_z"]
+    z = np.random.default_rng(patients["seed"]).standard_normal((patients["patients"], len(PARAMETERS)))
+    twin = np.log([TUTORIAL_TWIN[name] for name in PARAMETERS])
+    values = np.exp(twin + patients["log_sd"] * (centre_z + z))
+    names = patients["development"] + patients["confirmation"]
+    rounded = {name: {key: float(f"{value:.{patients['significant_figures']}g}") for key, value in zip(PARAMETERS, row)}
+               for name, row in zip(names, values)}
+    return {"order": PARAMETERS, "names": names, "z": z, "values": values, "rounded": rounded}
 
 
 def dose_factors(member, cohort=COHORT_DESIGN):
@@ -774,12 +792,16 @@ def pooled_record(case, pod=None):
         raise ValueError(f"{case.name} is not a partial-pooling case.")
     if case.cohort_size:
         record, count = _sweep_built(), case.cohort_size
-        return {"protocol": case.cohort, "rank": pod.rank, "members": count, "cohort_size": count,
-                "design_fingerprint": record["design_fingerprint"],
-                "members_sha256": record["files"]["members"]["sha256"],
-                "cohort_basis_sha256": record["files"][f"K{count}_basis"]["sha256"],
-                "solver": COHORT_SWEEP_DESIGN["pooled_solver"],
-                "trajectory_order": f"this acquisition first (index 0), then members 0-{count - 1} (indices 1-{count})"}
+        pooled = {"protocol": case.cohort, "rank": pod.rank, "members": count, "cohort_size": count,
+                  "design_fingerprint": record["design_fingerprint"],
+                  "members_sha256": record["files"]["members"]["sha256"],
+                  "cohort_basis_sha256": record["files"][f"K{count}_basis"]["sha256"],
+                  "solver": COHORT_SWEEP_DESIGN["pooled_solver"],
+                  "trajectory_order": f"this acquisition first (index 0), then members 0-{count - 1} (indices 1-{count})"}
+        if case.drug_factor:
+            pooled["drug_factor"] = ("every trajectory's exposure input scaled by its own learned factor exp(eta_k) "
+                                     "(core build_model input_scale)")
+        return pooled
     record = _built()
     count = len(record["members"])
     return {"protocol": case.cohort, "rank": pod.rank, "members": count,

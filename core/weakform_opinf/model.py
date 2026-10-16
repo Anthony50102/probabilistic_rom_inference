@@ -304,7 +304,14 @@ def power_likelihood_correction(u, alpha):
     return -0.5 * jnp.sum((alpha - 1.0) * jnp.log(2 * jnp.pi * u) + jnp.log(alpha))
 
 
-def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=False, pooled_solver="stacked"):
+# Prior of the spread ω of the learned log input scales η_k = ω z_k (build_model input_scale): median 0.5, one
+# log-unit sd, so a typical factor exp(±ω) between trajectories anywhere from ~1.1 to ~3.5 is a priori plausible.
+INPUT_SCALE_SD_LOC = 0.5
+INPUT_SCALE_SD_SCALE = 1.0
+
+
+def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=False, pooled_solver="stacked",
+                input_scale=False):
     """Build the marginalised-O + weak-form NumPyro model.
 
     Parameters
@@ -327,7 +334,9 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         the Gaussian prior and posterior are over the k coefficients θ_i (e.g.
         structural zeros, or a projected term whose rate is learned); see
         :func:`structured_rows` for their prior scales. Needs the nondimensional
-        prior. None (default): θ_i = O_i.
+        prior. None (default): θ_i = O_i. With partial pooling (blocked solver
+        only) trajectory k's coefficients are θ_M,i + δθ_k,i, each coefficient
+        with the multipliers κ_M, κ_δ of its block.
     prior_mean : optional (num_modes, m) array
         Centre M of the Gaussian operator prior (default zero), e.g. an
         operator fitted to other trajectories in the same basis and input
@@ -345,7 +354,7 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         hand. Exact: every mode's rows are fitted in the stacked unknowns
         [M, δ⁽⁰⁾, …, δ⁽ᴷ⁻¹⁾] (trajectory k's design A [I, 0, …, I, …, 0]).
         Needs the nondimensional block-hierarchical prior; not available with
-        row maps or a prior mean.
+        a prior mean, nor with row maps outside the blocked solver.
     pooled_solver : {"stacked", "blocked"}
         Partial pooling only. "stacked" (default, the first pooled fits): one
         QR of the stacked system above, whose cost grows with the cube of the
@@ -359,6 +368,18 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         (num_traj, num_modes) site per kind ("lengthscale", "variance",
         "noise", and "trend_scale" when learned) instead of one scalar site
         per trajectory and mode (same priors, independent entries).
+    input_scale : bool
+        Partial pooling with the blocked solver only: trajectory k's inputs
+        enter its design scaled by a learned factor exp(η_k), η_k = ω z_k with
+        z_k ~ N(0, 1) (site ``input_scale_z``, one entry per trajectory) and
+        ω ~ LogNormal(log 0.5, 1) (site ``input_scale_sd``); e.g. each
+        patient's own drug sensitivity when the input is the drug exposure in
+        one reference patient's units. The operators stay closed-form given η.
+        The prior's column scales and the GP's input trend use the unscaled
+        inputs. The posterior then needs ``log_input_scale`` (η of every
+        trajectory) and returns trajectory k's effective operator for the
+        unscaled inputs (columns of input degree d times exp(d η_k)); the
+        population operator M is that of η = 0.
 
     Returns
     -------
@@ -373,7 +394,9 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         columns), so draws μ_O + C_O z keep the structure exactly.
         Pooled: the operator of trajectory 0 (the target), or with the static
         keyword ``which`` the population operator M (``"mean"``) or trajectory
-        k's (an int); C_O is a square (m × m) factor of its covariance.
+        k's (an int); C_O is a square (m × m) factor of its covariance (with
+        row maps, the zero-padded factor above). With learned input scales the
+        keyword ``log_input_scale`` (η, shape (num_traj,)) is required.
     time_evals : list of np.ndarray, per-trajectory eval grids.
     prior_info : dict of representative prior locations (diagnostics), the
         closure variance ``gamma2`` (0 under the tempered rule) and the rule's
@@ -448,8 +471,9 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         if not (nondim and cfg.op_prior_mode == "block_hier"):
             raise ValueError("Partial pooling needs the nondimensional block-hierarchical operator prior "
                              "(sigma_O=None, op_prior_mode='block_hier')")
-        if structured or centred:
-            raise ValueError("Partial pooling is not supported with structured operator rows or a prior mean")
+        if centred or (structured and not blocked):
+            raise ValueError("Partial pooling is not supported with a prior mean, nor with structured operator "
+                             "rows outside the blocked solver (pooled_solver='blocked')")
         m_fit = (num_traj + 1) * m_total
         operator_prior["pooled"] = dict(
             rule="partial pooling", trajectories=num_traj, target_trajectory=0,
@@ -459,6 +483,25 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
             operator_prior["pooled"]["solver"] = ("blocked: each delta_k eliminated by its own QR (trajectories of "
                                                   "equal shapes in one vmapped batch), then one QR for M")
             operator_prior["pooled"]["gp_hyperparameter_sites"] = "one (num_traj, num_modes) site per kind"
+            if structured:
+                operator_prior["pooled"]["structured"] = ("theta_k,i = theta_M,i + delta_k,i; each coefficient with "
+                                                          "the kappa_M, kappa_delta of its block")
+
+    input_scale = bool(input_scale)
+    if input_scale:
+        if not blocked:
+            raise ValueError("Learned input scales need partial pooling with the blocked solver "
+                             "(pooled=True, pooled_solver='blocked')")
+        input_degree = np.asarray(operator_prior["input_degree"])
+        if not input_degree.any():
+            raise ValueError("Learned input scales need operator columns that use the inputs")
+        input_degree_jnp = jnp.asarray(input_degree, dtype=float)
+        operator_prior["pooled"]["input_scale"] = dict(
+            rule="trajectory k's inputs scaled by exp(eta_k), eta_k = omega z_k",
+            z_prior=["normal", 0.0, 1.0], omega_prior=["lognormal", float(np.log(INPUT_SCALE_SD_LOC)),
+                                                       INPUT_SCALE_SD_SCALE],
+            sites=["input_scale_sd", "input_scale_z"], input_degree=input_degree.tolist(),
+            operators="trajectory k: columns of input degree d times exp(d eta_k); M: eta = 0")
 
     def _pooled_blocks(traj_blocks):
         """Trajectory k's rows in the stacked unknowns [M, δ⁽⁰⁾, …]: its design A placed as A [I, 0, …, I, …, 0]."""
@@ -498,6 +541,15 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
                   for A_D, y_D, S_D, A_W, y_W, S_W in traj_blocks]
         var = kappa_block[theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2
         return blocks, 1.0 / var, jnp.sum(jnp.log(var))
+
+    def _structured_pooled_mode(batch_blocks, i, kappa):
+        """The blocked solver's mode i in its coefficients: every batch's designs times P_i, the precisions of
+        θ_M,i and of every δ⁽ᵏ⁾_i, and log|prior cov| of all of them."""
+        blocks = [(A_D @ P_rows[i], y_D, S_D, A_W @ P_rows[i], y_W, S_W)
+                  for A_D, y_D, S_D, A_W, y_W, S_W in batch_blocks]
+        var_M = kappa[:n_blocks][theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2
+        var_d = kappa[n_blocks:][theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2
+        return blocks, 1.0 / var_M, 1.0 / var_d, jnp.sum(jnp.log(var_M)) + num_traj * jnp.sum(jnp.log(var_d))
 
     tempered = cfg.closure == "tempered"
     if tempered:
@@ -634,9 +686,10 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         operator_prior["pooled"]["batches"] = [dict(training_times=int(batch["n_train"]),
                                                     trajectories=len(batch["index"])) for batch in batches]
 
-    def _batched_blocks(theta, gamma2):
+    def _batched_blocks(theta, gamma2, log_scale=None):
         """Every batch's _build_blocks output (blocks, states, mll, correction), vmapped over its trajectories;
-        ``theta`` holds (num_traj, num_modes) hyperparameter arrays."""
+        ``theta`` holds (num_traj, num_modes) hyperparameter arrays, ``log_scale`` the learned log input scales η
+        (num_traj,) or None."""
         out = []
         for batch in batches:
             def one(constants, ells, sig2s, nus, *trend, n_train=batch["n_train"]):
@@ -645,9 +698,14 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
                            alpha=constants.get("alpha"), n_train=n_train,
                            batch_gp=functools.partial(_gp.gp_batch, constants["gp"], jitter_rel=cfg.gp_jitter_rel,
                                                       feature_variances=constants.get("feature_variances")))
+                if "input_scale" in constants:
+                    ctx["inputs_eval"] = ctx["inputs_eval"] * constants["input_scale"]
                 blocks, Xs, mll, correction = _build_blocks(ctx, ells, sig2s, nus, gamma2, *trend)
                 return blocks, Xs, mll, jnp.asarray(correction, dtype=Xs.dtype)
-            out.append(jax.vmap(one)(batch["constants"], *(t[batch["index"]] for t in theta)))
+            constants = batch["constants"]
+            if log_scale is not None:
+                constants = dict(constants, input_scale=jnp.exp(log_scale[batch["index"]]))
+            out.append(jax.vmap(one)(constants, *(t[batch["index"]] for t in theta)))
         return out
 
     def model(gamma2=None):
@@ -672,7 +730,13 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
             log_prior_cov = -jnp.sum(jnp.log(inv_prec_vec))
 
         if blocked:
-            batched = _batched_blocks(theta, gamma2)
+            log_scale = None
+            if input_scale:
+                omega = numpyro.sample("input_scale_sd", dist.LogNormal(np.log(INPUT_SCALE_SD_LOC),
+                                                                        INPUT_SCALE_SD_SCALE))
+                z = numpyro.sample("input_scale_z", dist.Normal(jnp.zeros(num_traj), 1.0).to_event(1))
+                log_scale = omega * z
+            batched = _batched_blocks(theta, gamma2, log_scale)
             for batch, (_, Xs, _, _) in zip(batches, batched):
                 for j, ic in enumerate(batch["index"]):
                     for i in range(num_modes):
@@ -683,8 +747,14 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
             batch_blocks = [blocks for blocks, *_ in batched]
             total_evidence = 0.0
             for i in range(num_modes):
-                total_evidence = total_evidence + _ev.pooled_evidence_qr(
-                    batch_blocks, i, m_total, prec_M, prec_d, log_prior_cov, deriv_is_diag)
+                if structured:
+                    blocks_i, prec_M_i, prec_d_i, log_cov_i = _structured_pooled_mode(batch_blocks, i, kappa_block)
+                    log_p_i = _ev.pooled_evidence_qr(
+                        blocks_i, i, k_rows, prec_M_i, prec_d_i, log_cov_i, deriv_is_diag)
+                else:
+                    log_p_i = _ev.pooled_evidence_qr(
+                        batch_blocks, i, m_total, prec_M, prec_d, log_prior_cov, deriv_is_diag)
+                total_evidence = total_evidence + log_p_i
             numpyro.factor("marg_O_evidence", total_evidence + sum(jnp.sum(c) for *_, c in batched))
             return
 
@@ -778,26 +848,44 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
             C_all.append(R_i.T)
         return jnp.stack(mu_all), jnp.stack(C_all)
 
-    def _blocked_posterior(theta_stacked, gamma2, tau_block, index, population):
+    def _blocked_posterior(theta_stacked, gamma2, tau_block, index, population, log_scale=None):
         """The blocked solver's posterior of M (``population``) or of trajectory ``index``'s operator; the index
-        is traced, so one compilation serves every trajectory."""
+        is traced, so one compilation serves every trajectory. With learned input scales ``log_scale`` holds η of
+        every trajectory; trajectory k's operator is then returned for its unscaled inputs."""
         gamma2 = gamma2_resolved if gamma2 is None else gamma2
         kappa = jnp.ones(2 * n_blocks) if tau_block is None else tau_block
-        batch_blocks = [blocks for blocks, *_ in _batched_blocks(tuple(theta_stacked), gamma2)]
+        batch_blocks = [blocks for blocks, *_ in _batched_blocks(tuple(theta_stacked), gamma2, log_scale)]
         prec_M, prec_d, _ = _pooled_prior_parts(kappa)
         which = "mean" if population else position_jnp[index]
-        moments = [_ev.pooled_posterior_qr(batch_blocks, i, m_total, prec_M, prec_d, deriv_is_diag, which)
-                   for i in range(num_modes)]
-        return jnp.stack([mean for mean, _ in moments]), jnp.stack([root for _, root in moments])
+        moments = []
+        for i in range(num_modes):
+            if structured:
+                blocks_i, prec_M_i, prec_d_i, _ = _structured_pooled_mode(batch_blocks, i, kappa)
+                mean, root = _ev.pooled_posterior_qr(blocks_i, i, k_rows, prec_M_i, prec_d_i, deriv_is_diag, which)
+                moments.append((P_rows[i] @ mean, jnp.pad(P_rows[i] @ root, ((0, 0), (0, m_total - k_rows)))))
+            else:
+                moments.append(_ev.pooled_posterior_qr(batch_blocks, i, m_total, prec_M, prec_d, deriv_is_diag, which))
+        mean, root = jnp.stack([mean for mean, _ in moments]), jnp.stack([root for _, root in moments])
+        if log_scale is not None and not population:
+            factor = jnp.exp(input_degree_jnp * log_scale[index])
+            mean, root = mean * factor, factor[:, None] * root
+        return mean, root
 
     if pooled and blocked:
         blocked_posterior = jax.jit(_blocked_posterior, static_argnames=("population",))
 
-        def posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None, which=0):
-            """As the stacked solver's posterior (``which``: 0 the target, k trajectory k, ``"mean"`` M)."""
+        def posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None, which=0, log_input_scale=None):
+            """As the stacked solver's posterior (``which``: 0 the target, k trajectory k, ``"mean"`` M); with
+            learned input scales, ``log_input_scale`` is η of every trajectory, shape (num_traj,)."""
             _pooled_selector(which)  # validates which
+            if input_scale != (log_input_scale is not None):
+                raise ValueError("log_input_scale (eta, one per trajectory) is required with learned input scales "
+                                 "and not accepted without them")
+            if input_scale and jnp.shape(log_input_scale) != (num_traj,):
+                raise ValueError(f"log_input_scale must have shape ({num_traj},); got {jnp.shape(log_input_scale)}")
             population = isinstance(which, str)
-            return blocked_posterior(theta_stacked, gamma2, tau_block, 0 if population else which, population)
+            return blocked_posterior(theta_stacked, gamma2, tau_block, 0 if population else which, population,
+                                     log_input_scale)
     elif pooled:
         posterior_O_fn = jax.jit(pooled_posterior_O_fn, static_argnames=("which",))
 

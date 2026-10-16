@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import benchmark_cohort as bc  # noqa: E402
 import benchmark_data as bd  # noqa: E402
 from benchmark_cases import (CASES, COHORT_CASES, COHORT_DESIGN, COHORT_SWEEP_CASES, COHORT_SWEEP_DESIGN,  # noqa: E402
-                             PATIENT_DOSE_DAYS, TUTORIAL_TWIN, PODSettings, describe, production_config)
+                             PATIENT_DOSE_DAYS, TUTORIAL_TWIN, VARIANT_ARMS, VARIANT_CASES, VARIANT_PATIENTS,
+                             VARIANT_SIZE_ARMS, VARIANT_SOURCES, VIRTUAL_PATIENT_DESIGN, VIRTUAL_PATIENTS, PODSettings,
+                             _variant_case, describe, production_config, variant_name)
 
 
 class CohortDesignTests(unittest.TestCase):
@@ -267,6 +269,195 @@ class CohortSweepTests(unittest.TestCase):
             record = bc.pooled_record(CASES[SWEEP_SOURCE + "-cohort-pooled"])
         self.assertEqual(set(record), {"protocol", "rank", "members", "members_sha256", "cohort_basis_sha256",
                                        "trajectory_order"})
+
+
+class VariantRoundTests(unittest.TestCase):
+    """The variant round's new patients and cases (declared before any fit)."""
+
+    def test_virtual_patients_are_the_declared_draw(self):
+        drawn = bc.virtual_patient_parameters()
+        self.assertEqual(drawn["rounded"], VIRTUAL_PATIENTS)
+        self.assertEqual(drawn["names"], tuple(VIRTUAL_PATIENTS))
+        self.assertEqual(drawn["names"], tuple(f"vp{i}" for i in range(1, 10)))
+        twin = np.log([TUTORIAL_TWIN[name] for name in bc.PARAMETERS])
+        # Around the declared cohort's centre, with the cohort's spread; only the patients' own draw is new.
+        np.testing.assert_allclose(np.log(drawn["values"]) - twin, VIRTUAL_PATIENT_DESIGN["log_sd"] * (
+            bc.member_parameters()["centre_z"] + drawn["z"]), atol=1e-12)
+        np.testing.assert_array_equal(drawn["z"], np.random.default_rng(202).standard_normal((9, 3)))
+        rounded = np.array([[VIRTUAL_PATIENTS[name][key] for key in bc.PARAMETERS] for name in drawn["names"]])
+        np.testing.assert_allclose(rounded, drawn["values"], rtol=5e-4)
+
+    def test_variant_cases(self):
+        from dataclasses import replace
+        self.assertEqual(len(VARIANT_CASES), len(VARIANT_SOURCES) * len(VARIANT_PATIENTS) * 7)
+        self.assertEqual(len(set(VARIANT_CASES)), len(VARIANT_CASES))
+        shared = [name for name in VARIANT_CASES if name in COHORT_SWEEP_CASES]
+        self.assertEqual(shared, [variant_name(SWEEP_SOURCE, 8, arm) for arm in ("basis", "pooled")])
+        for name in shared:
+            # The sweep's own cases (tutorial twin, weekly to day 84) are the variant definitions; only the
+            # description differs, so their recorded fingerprints stand.
+            variant = _variant_case(SWEEP_SOURCE, 8, name.rsplit("-", 1)[1], "")
+            self.assertEqual(replace(variant, description=CASES[name].description), CASES[name])
+        fingerprints = set()
+        for source in VARIANT_SOURCES:
+            for patient in VARIANT_PATIENTS:
+                for size, arms in VARIANT_SIZE_ARMS.items():
+                    for arm in arms:
+                        case = CASES[variant_name(source, size, arm, patient)]
+                        structure, mean, drug = VARIANT_ARMS[arm]
+                        with self.subTest(case=case.name):
+                            bc.check_target(case)
+                            self.assertEqual((case.structure, case.operator_prior_mean, case.drug_factor, case.cohort,
+                                              case.cohort_size, case.patient), (structure, mean, drug, "weekly", size,
+                                                                                patient))
+                            self.assertEqual(case.pod, replace(CASES[source].pod, source="cohort_training"))
+                            self.assertEqual({key: getattr(case, key) for key in bc.PARAMETERS},
+                                             VIRTUAL_PATIENTS[patient] if patient else TUTORIAL_TWIN)
+                            self.assertEqual(bd.input_sensitivity(case), COHORT_SWEEP_DESIGN["input_sensitivity"])
+                            # Everything else is the source case's.
+                            self.assertEqual(replace(
+                                case, name=source, description=CASES[source].description, cohort="", cohort_size=0,
+                                operator_prior_mean="zero", structure="free", drug_factor=False,
+                                pod=CASES[source].pod, patient="", input_sensitivity=0., **TUTORIAL_TWIN),
+                                CASES[source])
+                            recipe = describe(case)
+                            self.assertEqual(recipe.get("virtual_patient_design"),
+                                             VIRTUAL_PATIENT_DESIGN if patient else None)
+                            self.assertEqual(recipe.get("drug_factor", False), drug)
+                            self.assertEqual(recipe["production_config"]["operators"],
+                                             "AHN" if structure != "free" else "cAN")
+                            self.assertEqual(bd.DEFAULT_SEEDS[case.name], (48,))
+                            fingerprints.add(recipe["recipe_fingerprint"])
+        self.assertEqual(len(fingerprints), len(VARIANT_CASES))
+        self.assertEqual({CASES[name].pod.rank for name in VARIANT_CASES if "4weekly" in name}, {3})
+        self.assertEqual({CASES[name].pod.rank for name in VARIANT_CASES if name.startswith("reduced-")}, {3})
+
+    def test_variant_rejections(self):
+        from dataclasses import replace
+        vp = CASES[variant_name(SWEEP_SOURCE, 8, "pooled-drug", "vp2")]
+        twin = CASES[variant_name(SWEEP_SOURCE, 8, "pooled-drug")]
+        changes = ((vp, dict(growth_rate=.05)), (vp, dict(sensitivity=.23)), (vp, dict(patient="vp10")),
+                   (vp, dict(input_sensitivity=0.)), (vp, dict(input_sensitivity=.4333)),
+                   (vp, dict(cohort_size=0, drug_factor=False)), (twin, dict(input_sensitivity=.23)),
+                   (twin, dict(drug_factor=1)), (twin, dict(operator_prior_mean="zero")), (twin, dict(cohort_size=0)),
+                   (CASES[variant_name(SWEEP_SOURCE, 8, "projected-pooled")], dict(cohort_size=0)),
+                   (CASES[SWEEP_SOURCE + "-cohort-pooled"], dict(drug_factor=True)))
+        for case, change in changes:
+            with self.subTest(case=case.name, change=change), self.assertRaises(ValueError):
+                replace(case, **change)
+        # A new patient the cohort was not built for (here vp2's parameters with inputs in its own units).
+        stranger = replace(vp, patient="", input_sensitivity=0.)
+        with self.assertRaises(ValueError):
+            bc.check_target(stranger)
+        bc.check_target(replace(stranger, **TUTORIAL_TWIN))
+
+    @unittest.skipUnless((bd.TUMORTWIN / "input_files" / bd.PATIENT).exists(), "TumorTwin patient files")
+    def test_virtual_patient_inputs_are_in_the_cohorts_units(self):
+        """A virtual patient's ROM exposure is the tutorial twin's (sensitivity 0.23), whatever its own sensitivity;
+        its full-order pulses and simulations are its own."""
+        twin = CASES[variant_name(SWEEP_SOURCE, 8, "pooled")]
+        vp = CASES[variant_name(SWEEP_SOURCE, 8, "pooled", "vp2")]
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(bd, "CACHE", Path(folder)):
+            self.assertNotEqual(bd._training_inputs_path(vp), bd._training_inputs_path(twin))
+            ours, theirs = bd._training_inputs(vp), bd._training_inputs(twin)
+            for key in ("input_times", "input_values", "native_inputs_eval"):
+                np.testing.assert_array_equal(ours[key], theirs[key])
+            for strength in vp.future_strengths:
+                np.testing.assert_array_equal(bd.chemo_inputs(vp, strength)["input_values"],
+                                              bd.chemo_inputs(twin, strength)["input_values"])
+        self.assertEqual(vp.pulse_coefficients(.5), tuple(.4333 * (1. if day <= 84. else .5)
+                                                          for day in PATIENT_DOSE_DAYS))
+        self.assertNotEqual(bd.chemo_history_path(vp), bd.chemo_history_path(twin))
+        self.assertNotEqual(bd.chemo_branch_path(vp, .5), bd.chemo_branch_path(twin, .5))
+
+    def test_pooled_record_names_the_drug_factor(self):
+        built = {"design_fingerprint": "f" * 64, "files": {"members": {"sha256": "m", "path": "members.npz"},
+                                                            "K8_basis": {"sha256": "abc", "path": "K8.npz"}},
+                 "sizes": {"8": {"scans": 132, "modes_above_threshold": 8, "singular_value_threshold": 1.5}}}
+        with mock.patch.object(bc, "_sweep_built", return_value=built):
+            plain = bc.pooled_record(CASES[variant_name(SWEEP_SOURCE, 8, "pooled")])
+            for arm in ("pooled-drug", "projected-pooled-drug"):
+                record = bc.pooled_record(CASES[variant_name(SWEEP_SOURCE, 8, arm, "vp1")])
+                self.assertEqual(set(record) - set(plain), {"drug_factor"})
+            record = bc.pooled_record(CASES[variant_name(SWEEP_SOURCE, 8, "projected-pooled", "vp1")])
+        # Without the factor the record is the sweep's (resuming the sweep's fits still matches).
+        self.assertEqual(record, plain)
+        self.assertEqual(set(plain), {"protocol", "rank", "members", "cohort_size", "design_fingerprint",
+                                      "members_sha256", "cohort_basis_sha256", "solver", "trajectory_order"})
+
+    def test_structured_row_maps_from_the_cohort_basis(self):
+        from dataclasses import replace
+        import benchmark_models as bm
+        r = 3
+        case = CASES[variant_name(SWEEP_SOURCE, 8, "projected-pooled-drug", "vp1")]
+        cfg = replace(production_config(case), num_modes=r)
+        rng = np.random.default_rng(1)
+        times = np.linspace(5., 84., 30)
+        observations = {"t_sampled": times, "y": 1. + .1 * rng.standard_normal((r, len(times))),
+                        "input_times": times, "input_values": rng.uniform(0., .3, len(times))}
+        rom = bm._production_structure(case, cfg, observations)
+        V, _ = np.linalg.qr(rng.uniform(0., 1., (50, r)))
+        data = {"metadata": {"sources": {"basis": {"sha256": "abc"}}}, "folder": Path("/no/such/folder")}
+        with mock.patch.object(bc, "cohort_basis", return_value=(V, np.zeros(50), {"sha256": "abc"})) as basis:
+            maps = bm.structured_row_maps(case, case.pod, cfg, rom, data)
+            basis.assert_called_once_with(case, case.pod)
+            np.testing.assert_array_equal(maps, bm.galerkin_row_maps(case.structure, rom, V, r))
+            with self.assertRaises(RuntimeError):
+                bm.structured_row_maps(case, case.pod, cfg, rom,
+                                       {**data, "metadata": {"sources": {"basis": {"sha256": "xyz"}}}})
+        with mock.patch.object(bc, "cohort_basis", return_value=(V, np.ones(50), {"sha256": "abc"})), \
+                self.assertRaises(ValueError):
+            bm.structured_row_maps(case, case.pod, cfg, rom, data)
+        free = CASES[variant_name(SWEEP_SOURCE, 8, "pooled-drug", "vp1")]
+        self.assertIsNone(bm.structured_row_maps(free, free.pod, cfg, rom, data))
+
+    def test_export_with_learned_drug_factors(self):
+        """Each operator draw uses its own draw of the factors eta; the point and the pooled diagnostics their mean;
+        the factors are stored."""
+        from types import SimpleNamespace
+        import jax
+        import jax.numpy as jnp
+        import benchmark_models as bm
+        r, trajectories, draws = 2, 3, bm.PRODUCTION_DRAWS
+        rng = np.random.default_rng(0)
+        posterior = {f"{kind}_{ic}_{i}": np.exp(rng.normal(size=draws))
+                     for kind in ("lengthscale", "variance", "noise") for ic in range(trajectories) for i in range(r)}
+        posterior["log_tau_block"] = rng.normal(size=(draws, 6))
+        posterior["input_scale_sd"] = np.exp(rng.normal(size=draws))
+        posterior["input_scale_z"] = rng.normal(size=(draws, trajectories))
+        guide = SimpleNamespace(sample_posterior=lambda key, params, sample_shape, gamma2: posterior)
+        svi = SimpleNamespace(get_params=lambda state: None)
+        cfg = SimpleNamespace(num_modes=r, operators="cAN", sigma_O=None, seed=42, gp_jitter_rel=None,
+                              ic_uncertainty=True, ic_scale=1.)
+
+        def conditional(theta, gamma2, sigma_O, tau, which=0, log_input_scale=None):
+            if log_input_scale is None:
+                raise AssertionError("every posterior call needs the factors")
+            level = -1. + 0. * log_input_scale[0] if which == "mean" else 10. * (which + 1) + log_input_scale[which]
+            return (jnp.full((r, 1 + 2 * r), level) + 0. * theta[0][0, 0] + 0. * tau[0],
+                    jnp.broadcast_to(1e-3 * jnp.eye(1 + 2 * r), (r, 1 + 2 * r, 1 + 2 * r)))
+
+        observations = {"t_sampled": np.linspace(5., 57., 9), "q0": np.array([3., -1.])}
+        key = jax.random.PRNGKey(0)
+        with tempfile.TemporaryDirectory() as folder:
+            arrays = bm._export_production(Path(folder), cfg, 0., observations, guide, svi, None, conditional, key,
+                                           key, trajectories, True, True)
+        eta = posterior["input_scale_sd"][:, None] * posterior["input_scale_z"]
+        data = [0, 1, 2, 4, 5]
+        np.testing.assert_allclose(arrays["O_samples"][..., data],
+                                   np.broadcast_to(10. + eta[:, :1, None], (draws, r, len(data))), atol=.02)
+        np.testing.assert_array_equal(arrays["log_input_scale_samples"], eta)
+        np.testing.assert_array_equal(arrays["input_scale_sd_samples"], posterior["input_scale_sd"])
+        np.testing.assert_array_equal(arrays["mean_log_input_scale"], eta.mean(0))
+        np.testing.assert_allclose(arrays["O_point"][:, data], 10. + eta.mean(0)[0], rtol=1e-6)
+        np.testing.assert_array_equal(arrays["population_point"][:, data], -1.)
+        for k in range(trajectories):
+            np.testing.assert_allclose(arrays["trajectory_points"][k][:, data], 10. * (k + 1) + eta.mean(0)[k],
+                                       rtol=1e-6)
+        # A fit without learned factors stores none (and the posterior is called without them).
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(AssertionError):
+            bm._export_production(Path(folder), cfg, 0., observations, guide, svi, None, conditional, key, key,
+                                  trajectories, True)
 
 
 if __name__ == "__main__":

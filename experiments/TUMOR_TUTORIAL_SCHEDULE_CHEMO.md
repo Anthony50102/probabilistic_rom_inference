@@ -2836,6 +2836,191 @@ This section's "Why", and its expectation "if pooling again learns mainly
 the average", rest on the earlier statements. As part of the design
 written before any fit, they are left as written.
 
+## Variant round: a drug factor per patient, the projected form and new patients (design written before any fit)
+
+**Why.** Two weaknesses remain after the sweep, and both have a known fix
+to try.
+- **Every patient gets the cohort's drug term.** In TumorTwin the drug
+  kills the same share of cells everywhere: the term is -s C(t) u, with
+  s the patient's sensitivity. On any POD basis it therefore reduces to
+  -(s / 0.23) α(t) q, where α(t) is the exposure input in the twin's
+  units (s = 0.23). Patients differ by one number, s / 0.23. The pooled
+  fits shared one drug term (N_11 -0.84 at K = 8). That is weaker than
+  every past patient's true kill (median -1.36 at K = 8), and the new
+  patient's is -1.00. A learned factor per patient on the drug input lets
+  each patient's kill differ.
+- **The free form regrows in a straight line.** With dense scans, the
+  projected PDE form (logistic crowding) was 1.2-2.4 times more accurate
+  after dose cuts (mid-course design: 5.8 / 4.3 / 3.8%). It has not been
+  tried with sparse scans or with pooling.
+- **Only one new patient so far.** The new patient (the tutorial twin) is
+  out of distribution: it spreads faster than all 64 past patients. So
+  this round adds nine virtual new patients from the past patients' own
+  population, each declared before any fit.
+
+**The two model changes** (`core/weakform_opinf/model.py`).
+- **Drug factor per patient** (`build_model(..., input_scale=True)`,
+  blocked solver only). Patient k's input is multiplied by its own learned
+  factor exp(η_k), with η_k = ω z_k, z_k ~ N(0, 1) and the spread
+  ω ~ log-normal(log 0.5, 1). So, a priori, patients' factors typically
+  differ by ×0.6 to ×1.6. The true sensitivities have a log SD of 0.3. Given
+  the factors, the operators are still solved in closed form. The
+  exported operator of patient k is the one for inputs in the twin's units:
+  its drug columns are multiplied by exp(η_k). M is the operator at η = 0.
+  The factors are learned from the scans; nothing about s is given.
+- **The projected form with pooling.** Each row keeps the linear part A_i
+  free. Two shapes come from projecting the PDE onto the basis: crowding
+  (the projected u², rate h_i) and the drug term (q_i α, rate n_i). The
+  model learns one rate on each shape. That is r + 2 unknowns per mode
+  (6 at rank 4), against 9 for the free form, which has c, A and N. As
+  in the mid-course design (`structure="galerkin_logistic"`). With
+  pooling, M and every δ_k are over these coefficients, each with the
+  κ_M and κ_δ of its block.
+- **Tests** (`core/weakform_opinf/tests/test_partial_pooling.py`):
+  - the blocked solver with the projected rows matches a brute-force
+    Gaussian calculation (evidence and posteriors);
+  - identity row maps reproduce the unstructured solver;
+  - fixed factors give exactly the fit with the inputs scaled by them;
+  - unsupported settings and missing or misshapen factors are refused.
+  A deliberately wrong factor (the drug column not scaled) fails these
+  tests.
+
+**The new patients, drawn before any fit**
+(`benchmark_cases.VIRTUAL_PATIENT_DESIGN`, `VIRTUAL_PATIENTS`;
+`benchmark_cohort.virtual_patient_parameters`). They are drawn from the
+past patients' population: the same centre and log SD 0.3, from a new
+seed (202), rounded to four significant figures. Position z is in
+population SDs (k, D, s). The kill in the twin's units is s / 0.23; the
+pooled fits' shared value was 0.84 at K = 8.
+
+| Patient | Role | k | D | s | z (k, D, s) | Kill (s / 0.23) |
+|---|---|---|---|---|---|---|
+| Twin | development | 0.0521 | 0.0965 | 0.23 | +0.79, +2.03, -0.60 | 1.00 |
+| vp1 | development | 0.07078 | 0.04212 | 0.199 | +1.81, -0.73, -1.09 | 0.87 |
+| vp2 | development | 0.03644 | 0.03709 | 0.4333 | -0.40, -1.15, +1.51 | 1.88 |
+| vp3 | development | 0.05352 | 0.06346 | 0.4207 | +0.88, +0.64, +1.41 | 1.83 |
+| vp4 | confirmation | 0.03432 | 0.03534 | 0.3059 | -0.60, -1.31, +0.35 | 1.33 |
+| vp5 | confirmation | 0.0451 | 0.04055 | 0.3237 | +0.31, -0.86, +0.54 | 1.41 |
+| vp6 | confirmation | 0.06393 | 0.04466 | 0.2922 | +1.47, -0.53, +0.19 | 1.27 |
+| vp7 | confirmation | 0.04558 | 0.06064 | 0.3746 | +0.34, +0.49, +1.02 | 1.63 |
+| vp8 | confirmation | 0.04904 | 0.07976 | 0.2162 | +0.59, +1.40, -0.81 | 0.94 |
+| vp9 | confirmation | 0.03568 | 0.06703 | 0.2414 | -0.47, +0.82, -0.44 | 1.05 |
+
+- The roles follow the draw's order: the first three pick the variant,
+  the other six only confirm it.
+- Only k, D and s differ. Each new patient has the twin's anatomy,
+  baseline tumour, planned course (no dose change), scanner and
+  acquisition seed. Their ROM inputs are in the twin's units (0.23), as
+  in a clinic where the sensitivity is not known. The simulator uses
+  their true s.
+
+**Variants** (`benchmark_cases.VARIANT_ARMS`, `VARIANT_CASES`;
+`variant_name(source, K, arm, patient)`). All use the past patients of the
+sweep (weekly scans, days 5-119) and their K-patient basis:
+
+| Variant | Name | Fit | Form | Drug factor |
+|---|---|---|---|---|
+| A | `cohort8-basis` | new patient alone, K = 8 basis | free | no |
+| B | `cohort8-pooled` | pooled with K = 8 | free | no (the sweep's model) |
+| C | `cohort8-pooled-drug` | pooled with K = 8 | free | yes |
+| D | `cohort64-pooled-drug` | pooled with K = 64 | free | yes |
+| E | `cohort8-projected-basis` | new patient alone, K = 8 basis | projected | no |
+| F | `cohort8-projected-pooled` | pooled with K = 8 | projected | no |
+| G | `cohort8-projected-pooled-drug` | pooled with K = 8 | projected | yes |
+
+**Schedules** (the new patient's scans; same ranks as before):
+- weekly scans to day 84 (12 scans, rank 4);
+- fortnightly to day 84 (7, rank 4);
+- 4-weekly to day 84 (4, rank 3);
+- weekly to day 57 (8, rank 3).
+
+The fortnightly and 4-weekly schedules get the learned trend scale too
+(`VARIANT_LEARNED_TREND_CASES`). Rank 3 means the first three modes of the
+same basis.
+
+**Stage 1: choose the variant.** Weekly scans to day 84, seed 48, all
+seven variants on the four development patients: 28 fits. The twin's A and
+B were already run on the Mac (14.8 / 18.9 / 23.8% and
+7.2 / 8.4 / 10.8%). They are rerun on Azure to measure what the platform
+changes.
+- **Choice.** For each patient, average the error over the three scenario
+  arms (1, 0.75 and 0.5x; days 84-119). The variant with the lowest mean
+  over the four patients wins. If a simpler variant is within 0.5 points
+  of the best, the simpler one wins. From simplest:
+  A < E < B < F < C < G < D. Alone comes before pooled, pooled before
+  pooled with factors, free before projected, and K = 8 before 64.
+- A variant with a failed fit (non-finite) on a development patient cannot
+  be chosen. Failed fits are reported, not rerun.
+
+**Stage 2: confirm and widen.** The winner, B and A:
+- weekly to day 84 on the six confirmation patients;
+- fortnightly to day 84, 4-weekly to day 84 and weekly to day 57 on all
+  ten patients.
+That is up to 108 fits, each run once with seed 48.
+
+**Reported** (no pass or fail rule; the 18.9% bar is drawn for
+reference).
+- Error at 1, 0.75 and 0.5x (0.25 and 0x as stress arms), per patient and
+  as the mean over patients.
+- The day-119 burden against the truth, how often the bands hold the
+  truth, and their width.
+- The learned factors exp(η) of every patient, past and new, against the
+  true s / 0.23, and the spread ω.
+- M's drug term N_11 and each new patient's effective kill.
+- The twin's A and B on Azure against the Mac.
+
+**Expectations (written before any fit).**
+- **Drug factor (C against B).** Better on the strong responders vp2 and
+  vp3 (kill 1.8-1.9, against B's shared 0.84), where B's shared drug term
+  is furthest off. About the same on vp1 (0.87).
+- **Factors.** The past patients' learned factors rank their true
+  sensitivities (rank correlation 0.7 or more across the eight). The new
+  patients' factors move from 1 toward the truth for at least three of the
+  four.
+- **K = 64 with factors (D).** No longer worse than K = 8 (C), since the
+  shared drug term was the likely cause of the sweep's rise. An uncertain
+  call.
+- **Projected form (E, F, G).** Better at 0.5x than the free variants at
+  the same K. Also uncertain: from 12 sparse scans the crowding rate may
+  not be pinned down.
+- **Winner.** C or G.
+- **The twin stays the hardest patient,** being out of distribution.
+
+**Disclosures.**
+- **A best case for the drug factor.** It has exactly the simulator's
+  structure: the drug kills uniformly, and s scales the kill. A real
+  tumour's response varies in space and over time (resistance). The factor
+  does not change the free form's straight-line regrowth.
+- **A best case for pooling.** All patients share one anatomy and one
+  baseline tumour, and the new ones also share the twin's scanner,
+  acquisition seed and planned course. vp1-9 are in the past patients'
+  population by construction. The twin is not.
+- **Seen before.** The twin's A and B on weekly scans to day 84 (the
+  sweep). Every other variant, patient and schedule is new.
+- **One seed per patient.** Seeds differ only in scanner noise; the pooled
+  seeds agreed within 0.1-0.3 points.
+- **Platform.** The runs are on an Azure Linux virtual machine (x86) with
+  the same package versions. The repository and data sit at the same paths
+  as on the Mac, because the sweep's record stores absolute paths. The
+  twin's simulated data are copied from the Mac (checked by SHA-256). The
+  new patients' data are simulated on the virtual machine. Fits are not
+  equal bit for bit across platforms; the twin's reruns measure the
+  difference.
+- **Smoke runs before stage 1** (development seed 45, 20 updates, a
+  separate output folder; not results). They check C, D, F and G end to
+  end, including a new patient's simulation.
+- **Unchanged earlier cases.** All 60 earlier cases' fingerprints are
+  unchanged (checked against the previous commit). The twin's two sweep
+  cases keep their definitions; the variant grid reuses them. Tests: core
+  52 and tumour 77 pass.
+
+```bash
+cd experiments/tumor
+# new patients' simulations are generated on first use (pre-generated once per patient for parallel runs)
+conda run -n prob_rom python 04_unified_benchmark.py midcourse-reduced-trend-chemo-weekly-scans-learned-trend-cohort8-pooled-drug-vp2 --seeds 48
+# likewise every stage-1 case: variant_name(source, K, arm, patient) in benchmark_cases
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
