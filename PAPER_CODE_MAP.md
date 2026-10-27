@@ -42,6 +42,7 @@ to find the code; the manuscript's Appendix A has the same table.
 | Euler, heat and diffusion-reaction experiments | `experiments/{euler,heat,burgers_2d}/04_unified.py` (ours), `05_neural_ode.py` (Neural ODE), `06_compare_methods.py` |
 | Cross-experiment table | `experiments/aggregate_table.py` |
 | Tumour tasks (ours, Neural ODE, comparison) | `experiments/tumor/04_unified_benchmark.py`, `05_neural_ode_benchmark.py`, `06_compare_benchmark.py` |
-| Tumour task definitions and chemotherapy ROM, Eq. `tumor_rom` | `experiments/tumor/benchmark_cases.py` (`CASES`, `galerkin_operators`) |
+| Tumour task definitions and chemotherapy ROM, Eq. `tumor_rom` | `experiments/tumor/benchmark_cases.py` (`CASES`, `galerkin_operators`); reported cases `untreated-growth`, `standard-regimen-trend-chemo` (planned course), `reduced-regimen-trend-chemo` (day-57 decision), `midcourse-reduced-trend-chemo` (day-84 decision) |
+| Input-aware Gaussian-process trend, Eq. `input_kernel` (Sec. 3.4) | `WeakFormConfig.gp_input_trend` (`config.py`); `input_trend_features` (`features.py`); `trajectory_trend` (`gp.py`); switched on per case by `BenchmarkCase.input_aware_gp` (`experiments/tumor/benchmark_cases.py`) |
 | Tumour scans, segmentation and noise-capped POD | `experiments/tumor/benchmark_data.py` (`_segmented_acquisition`, `observed_pod`, `noise_threshold`) |
 | Tumour production fit | `fit_production` (`experiments/tumor/benchmark_models.py`) |

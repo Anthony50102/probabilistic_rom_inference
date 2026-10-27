@@ -3807,25 +3807,193 @@ python 05_neural_ode_benchmark.py midcourse-reduced-trend-chemo --seeds 48 --onl
 python 05_neural_ode_benchmark.py midcourse-reduced-trend-chemo --seeds 48
 ```
 
+### Results (each seed run once)
+
+Everything ran to the end.
+- **Neural ODE:** 9 ensembles of 20 members (180 fits). Every member
+  completed and passed the float64 training replay. The loss filter kept
+  20/20/20 members from day 84, 18/19/20 from day 57 and 19/19/19 on the
+  planned course.
+- **Calibrated PDE:** 9 jobs, all rc=0. Each took 18-20 LM iterations
+  (none at the cap) and 59-73 min.
+- **Ours:** the runs in "Dose modifications with the free ROM" above,
+  unchanged.
+
+Every forecast runs from the first scan.
+
+**Forecast error** (full field, % over the forecast window). Each entry is
+the median over the three seeds; the per-seed values follow in brackets for
+ours and the Neural ODE. At 1x the dose-blind forecast is the true
+trajectory itself, so it equals the floor.
+
+From day 84 (`midcourse-reduced-trend-chemo`, seeds 48-50, forecast
+84-119):
+
+| arm | persistence | dose-blind | Neural ODE | ours | PDE, first scan | PDE, restarted | floor |
+|---|---|---|---|---|---|---|---|
+| 1x | 28.2 | 4.1 | 23.7 (23.1/23.7/28.7) | 9.1 (9.1/9.2/8.7) | 0.27 | 1.39 | 4.1 |
+| 0.75x | 14.0 | 16.5 | 10.2 (9.3/10.2/12.5) | 6.9 (7.0/6.9/6.9) | 0.23 | 1.27 | 4.5 |
+| 0.5x | 17.3 | 30.9 | 16.1 (16.6/16.1/13.2) | 6.7 (6.7/6.6/7.2) | 0.20 | 1.16 | 4.9 |
+| 0.25x (stress) | 30.4 | 43.7 | 30.5 (30.5/30.5/27.3) | 7.5 (7.3/7.5/8.8) | 0.17 | 1.08 | 5.4 |
+| 0x (stress) | 43.0 | 54.6 | 43.1 (43.1/43.7/40.8) | 8.5 (8.2/8.5/10.5) | 0.16 | 1.03 | 6.0 |
+
+From day 57 (`reduced-regimen-trend-chemo`, seeds 48-50, forecast
+57-119):
+
+| arm | persistence | dose-blind | Neural ODE | ours | PDE, first scan | PDE, restarted | floor |
+|---|---|---|---|---|---|---|---|
+| 1x | 42.1 | 5.8 | 67.1 (67.1/10.3/84.3) | 16.6 (16.9/15.4/16.6) | 0.27 | 0.86 | 5.8 |
+| 0.75x | 19.6 | 26.2 | 32.0 (32.0/26.1/44.9) | 12.0 (12.3/11.4/12.0) | 0.23 | 0.76 | 7.4 |
+| 0.5x | 30.1 | 46.4 | 22.6 (19.0/45.9/22.6) | 13.9 (15.1/12.8/13.9) | 0.18 | 0.72 | 9.4 |
+| 0.25x (stress) | 47.8 | 61.4 | 35.5 (35.5/60.3/32.1) | 16.6 (18.1/14.3/16.6) | 0.15 | 0.75 | 11.9 |
+| 0x (stress) | 61.6 | 71.9 | 51.8 (51.8/71.3/48.3) | 20.2 (20.2/18.6/20.4) | 0.16 | 0.87 | 15.0 |
+
+Planned course (`standard-regimen-trend-chemo`, seeds 51-53, forecast
+57-119):
+
+| arm | persistence | dose-blind | Neural ODE | ours | PDE, first scan | PDE, restarted | floor |
+|---|---|---|---|---|---|---|---|
+| 1x | 42.1 | 5.7 | 56.1 (56.1/94.6/53.3) | 16.1 (16.1/15.9/16.3) | 0.26 | 0.86 | 5.7 |
+
+**Dose effect.** This is the day-119 gain: the predicted change from the 1x
+arm divided by the true change. 1 is exact and 0 is no response. Values are
+the median (range) over seeds.
+
+| arm | true change | ours | Neural ODE |
+|---|---|---|---|
+| day 84, 0.75x | +34% | 0.70 (0.67-0.72) | -0.00 |
+| day 84, 0.5x | +79% | 0.72 (0.68-0.74) | -0.01 |
+| day 84, 0.25x | +136% | 0.74 (0.69-0.77) | -0.01 |
+| day 84, 0x | +208% | 0.78 (0.72-0.81) | -0.02 |
+| day 57, 0.75x | +67% | 0.52 (0.47-0.54) | 0.01 |
+| day 57, 0.5x | +167% | 0.56 (0.50-0.60) | -0.01 |
+| day 57, 0.25x | +307% | 0.63 (0.57-0.70) | 0.00 |
+| day 57, 0x | +490% | 0.76 (0.68-0.87) | -0.00 |
+
+**Training window** (median (range) over seeds):
+
+| | ours | Neural ODE |
+|---|---|---|
+| from day 84 | 1.19 (0.98-1.38) | 1.82 (1.55-2.16) |
+| from day 57 | 0.82 (0.75-0.85) | 1.11 (1.06-1.41) |
+| planned course | 0.77 (0.71-0.82) | 1.34 (1.11-1.52) |
+
+**Expectations** (declared above; medians over seeds):
+1. **Met.** The Neural ODE fits the training scans within 1 point of ours:
+   1.82 vs 1.19 (day 84), 1.11 vs 0.82 (day 57), 1.34 vs 0.77 (planned
+   course).
+2. **Met.** Ours is lower at 0.75x and 0.5x from both days: 6.9 vs 10.2
+   and 6.7 vs 16.1 from day 84; 12.0 vs 32.0 and 13.9 vs 22.6 from day 57.
+3. **Met.** The Neural ODE's dose effect at 0.5x is -0.01 from both days.
+4. **Not met.** At 1x ours is lower by far more than 3 points: 9.1 vs 23.7
+   (day 84), 16.6 vs 67.1 (day 57), 16.1 vs 56.1 (planned course). The
+   older single-dose result, where the Neural ODE was better, did not
+   carry over.
+5. **Met.** Ours is lower on the stress arms: 7.5 vs 30.5 and 8.5 vs 43.1
+   from day 84; 16.6 vs 35.5 and 20.2 vs 51.8 from day 57.
+6. **Met.** The PDE's worst error on any arm and seed is 0.30% from the
+   first scan and 1.39% restarted.
+
+**One exception.** Ours is lower than the Neural ODE on 32 of the 33
+arm-acquisition pairs. The exception is the kept arm from day 57 on
+acquisition 49: Neural ODE 10.3%, ours 15.4%. On acquisitions 48 and 50
+the Neural ODE's errors on that arm are 67.1% and 84.3%; its day-119 burden
+there is 1.78 and 2.00 times the truth.
+
+**What else the numbers show.**
+- Ours is lower than persistence on every arm and acquisition. The
+  Neural ODE's median is worse than persistence's on the planned course
+  and in the kept and 0.75x arms from day 57. It is level with it (within
+  0.1 points) on the stress arms from day 84.
+- Ignoring the dose change costs a lot. The dose-blind forecast's error in
+  the changed arms is 16.5-54.6% from day 84 and 26.2-71.9% from day 57.
+  Ours is below it in every changed arm.
+- Ours still under-predicts the regrowth after a cut: its day-119 burden
+  is 0.87-0.95 of the truth at 0.75x and 0.5x from day 84, and 0.70-0.84
+  from day 57. Its error in the kept arm grows with the horizon. On the
+  planned course it is 6.1-6.6% over days 57-88 and 24.8-25.5% over days
+  88-119.
+- Our bands (5-95% of 64 draws) hold the true burden at every forecast
+  time on the planned course, in both kept arms and at 0.75x from day 84.
+  Elsewhere they hold it at 42-64% of the times at 0.75x from day 57,
+  61-66% at 0.5x from day 84, 29-36% at 0.5x from day 57 and 20-54% in the
+  stress arms.
+- The effect band holds the true effect at 5-18 of the 98 forecast times
+  from day 84 and 5-13 of the 196 from day 57, except when the doses are
+  stopped (7-102).
+- The Neural ODE's member band holds the burden less often than ours in
+  29 of the 33 pairs.
+- All 64 of our draws complete everywhere. 53 of the 2,112 have field
+  errors above 25%, all in the stress arms from day 57.
+- The PDE recovers (d, k, s) within 0.8%. Its d is 0.65-0.77% low on every
+  acquisition, k is off by -0.06 to -0.14% and s by -0.19 to +0.01%. With
+  the true parameters the errors change by at most 0.04 points from the
+  first scan and 0.10 points restarted. So the restarted error comes from
+  the noisy starting scan, not from the calibration.
+
+**Disclosures.**
+- **Float32 drift.** The Mac and the Azure machines differ by more than the
+  declared "last bits". A 2-member, 50-update smoke on seed 45 showed final
+  weights differing by up to 0.2% and errors by up to 0.6 points. All 180
+  reported members ran on Azure, so a Mac rerun would not reproduce them
+  bit for bit.
+- **PDE scan-time check.** After the seed-45 smoke, and before any dense
+  fit, it was relaxed from exact equality to 1e-9 days. On Linux the random
+  scan times regenerate 1.4e-14 days from the stored ones, and the reduced
+  scans agree to 1.5e-14. This is recorded in the baseline's
+  `DECLARATION.md`.
+- **pytest** was installed on the PDE machine to run the tests; no run
+  uses it.
+- **Shared machine.** The 9 PDE jobs ran next to Neural-ODE members on the
+  same machine, on different cores.
+- **After the fact:** as declared, the design was chosen after ours and the
+  naive forecasts had been seen.
+- **One virtual patient.** The seeds vary only the scan times and the
+  noise.
+
+**Cost.** The Azure resource group `rg-thesis-node-dense` was deleted at
+18:30 UTC on Oct 27 and confirmed gone. Four F16as_v6 ran for 2.06
+VM-hours ($2.26) and one E16as_v6 for up to 1.77 hours ($1.91). Disks and
+IPs add $0.16, so the total is about $4.33.
+
+**Paper.** The manuscript's tumour section now reports this design (local
+commit, not pushed). It covers untreated growth, the planned course and
+the two dose changes, with these brackets. The table `tab:tumor` is
+generated from these summaries. The figure `tumor_dose_change.png` uses
+seed 48, which was fixed before the Neural-ODE results existed. The
+earlier single-dose and multi-dose cases stay reproducible here.
+
+**Where.** Neural-ODE outputs are in
+`experiments/tumor/results/benchmarks/<case>/segmented_observed_none_r4/seed*/neural_ode/`
+and `evaluation/` (gitignored). The summary and paper scripts are local
+session artifacts, not bundled with the repository:
+- `.../files/node-dense/`: `node_dense_summary.py`, `paper_numbers.py`,
+  `paper_table.py`, `paper_figure.py`, the machine logs and
+  `figures/node_dense_*.png`;
+- `.../files/standard-baseline/`: `calibrated_pde_dense.py`,
+  `results_dense/`, `logs/dense_report.txt`, and `DECLARATION.md` with the
+  dense amendment.
+
 ## Open decisions
 
-The following are not done and await a decision: the Neural-ODE ensembles on
-this design (about 2-3 hours per seed), tutorial-style figures, and moving the
-manuscript's tumour section and dose description to this design. With the
-free model, the only levers were more information in training (a longer
-window, or a scan after a recovery period). The after-the-fact check shows
-that the model change works on the original window. The reported cases
-remain the manuscript's chemo results until then.
+The Neural-ODE ensembles on the dose-change design are done (results
+above). The manuscript's tumour section now reports that design with the
+free ROM and the input-aware GP (local commit, not pushed).
+Tutorial-style figures are not done. With the free model, the only levers
+were more information in training (a longer window, or a scan after a
+recovery period). The after-the-fact check shows that the model change
+works on the original window.
 
 For the mid-course design, the Neural ODE should get the same known physics
 for a like-for-like comparison. That means the same drug term, and no growth
 without tumour. Its exact form (a hybrid with a learned remainder) is still
 to be decided.
 
-Which model and design to report are also open. The free ROM with the
-input-aware GP passes on the protocol's dose cuts, so the manuscript's model
-could stay as it is. The projected form is more accurate, but it adds a
-model section. With the projected form the earlier tutorial-schedule
+The manuscript now reports the free ROM with the input-aware GP, which
+passes on the protocol's dose cuts. The method section is unchanged, and
+the trend is described in the tumour section. The projected form is more
+accurate, but it would add a model section; the paper mentions it only as
+a variant outside the method. With the projected form the earlier tutorial-schedule
 question works too, and it is the more realistic one: data
 to the second MRI, forecast to the third. Its model was chosen on the
 mid-course development seeds, not on seeds 48-50. Those seeds had, however,
@@ -3854,10 +4022,13 @@ pooled error is lowest at 8-16 past patients and back near 4 by 64. The
 likely limit is that every patient shares the cohort's drug term.
 No version passes more than two of the four schedules, and every 8 days to
 day 57 has none. The agreed list of ideas is done. The options are open:
-- state the dense-imaging assumption in the paper;
+- state the dense-imaging assumption in the paper (done: the tumour
+  section states it);
 - report the sparse-scan results as a limitation: the learned trend scale
   (one schedule passes) and partial pooling (both weekly schedules pass),
-  beside the failures;
+  beside the failures (done as an exploratory paragraph in the tumour
+  section, with the single-patient failures and the restarted B and G
+  results from the variant round);
 - test the projected form on the realistic schedules, declared first
   (done in the variant round: E, F and G);
 - move the example to a setting with frequent imaging;
@@ -3873,13 +4044,18 @@ last scan, the best variants are under the 18.9% bar for most patients
 with weekly or fortnightly scans to day 84 (G: 9 of 10 on both). Open:
 - adopt the restart: move it from the session script into
   `benchmark_evaluation.py` with a test, and report both protocols;
-- choose the setting for the Neural-ODE comparison: G (no negative
+- a Neural-ODE comparison on sparse scans, if wanted: G (no negative
   tumours, the smallest worst case on three of four schedules, lowest on
   weekly and fortnightly scans) or B (lowest mean on 4-weekly scans and weekly scans to day 57,
-  by 1.2 points), both forecast from the last scan, and the schedule;
+  by 1.2 points), both forecast from the last scan. The paper's comparison
+  uses the dense design; the sparse results are an exploratory paragraph;
 - confirm the chosen setting on fresh virtual patients, declared first;
 - the remaining weakness: too little regrowth after a dose cut, so the
-  0.5x bands often miss (G holds the truth 58-71% of the time).
+  0.5x bands often miss (G holds the truth 58-71% of the time);
+- a declared misspecification pilot (proposed, not declared or run). The
+  truth would get uneven drug delivery: the kill times a patchy map from
+  the demo patient's contrast scan, about +-20%. A uniform-kill calibrated
+  PDE cannot represent this, but a free drug block can.
 
 Run notes, the pre-declared rule, logs, and plots
 (`figures/reported_burden.png`, `figures/dev45_burden.png`,
