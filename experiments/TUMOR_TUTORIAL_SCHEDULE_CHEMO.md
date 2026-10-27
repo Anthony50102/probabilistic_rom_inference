@@ -3689,6 +3689,124 @@ below zero.
   the protocol is adopted, it moves into `benchmark_evaluation.py` with a
   test.
 
+## The Neural ODE on the dose-change design (design written before any fit)
+
+**Why.** The manuscript's tumour comparison still uses the older design
+(demo grid, prescribed parameters, half-strength drug, arms up to 2x). The
+realistic design is the one in "Dose modifications with the free ROM"
+above: the calibrated twin, the protocol's dose cuts (continue, 75%, 50%;
+stress 25% and stopped) and about 120 scans in training. The free ROM with
+the input-aware GP works there. The paper needs the data-driven
+alternative, the Neural-ODE ensemble, on exactly the same data. It also
+needs brackets that show how hard each forecast is: a naive forecast below
+and the true equation above.
+
+**Already seen** (before any Neural-ODE or dense calibrated-PDE fit).
+- Ours on all three cases: the table above.
+- Two naive forecasts on the same scans, basis and metric (session script
+  `dense_persistence_check.py`, after the fact). **Persistence** holds the
+  last training scan. **Dose-blind** uses the true reduced trajectory of
+  the planned course for every arm. Medians at 1 / 0.75 / 0.5x:
+  - from day 84: persistence 28.2 / 14.0 / 17.3, dose-blind
+    4.1 / 16.5 / 30.9;
+  - from day 57: persistence 42.1 / 19.6 / 30.1, dose-blind
+    5.8 / 26.2 / 46.4.
+- The calibrated PDE on the variant round's weekly scans (session baseline
+  `calibrated_pde.py`), not on these scans.
+- A plumbing smoke of the Neural-ODE runner on development seed 45:
+  2 members, 50 updates each. Its errors mean nothing.
+
+**Runs** (each run once; nothing tuned).
+1. **Neural-ODE ensemble, recipe unchanged.**
+   - 20 members. Each is a tanh MLP from [q, alpha(t)] with 3 hidden
+     layers of 128 units.
+   - Adam at 5e-4 with gradient clipping at norm 1, for 6000 updates in
+     float32. Solver: Tsit5 with adaptive steps.
+   - The reported loss filter drops members whose final loss is more than
+     3 times the median. The headline centre is the median of the kept
+     members.
+   - It runs on the three cases above and their evaluation seeds:
+     mid-course 48-50, 5-57 48-50, standard regimen 51-53. That makes 9
+     ensembles and 180 member fits.
+   - Data: the same data folders as ours, whose observation hashes are
+     checked on loading.
+2. **Calibrated PDE on the same scans.** The session baseline unchanged:
+   TumorTwin's LM calibration of (d, k, s), with its guess, bounds, at most
+   30 iterations and its stopping rule. The only change is the data: all
+   120 segmented scans of each acquisition. That makes 9 jobs, declared as
+   an amendment in the baseline's `DECLARATION.md`.
+3. **Development seed 45:** smoke tests only, never reported as results.
+
+**Scoring.** The benchmark's evaluation is unchanged. Every forecast runs
+from the first scan (day 5), as everywhere in the manuscript. The restart
+from the last scan is not used for ours or the Neural ODE here.
+- **Headline:** the full-field error over the forecast window (84-119 or
+  57-119), per seed and as the median over seeds.
+- **Also reported:**
+  - the training-window error;
+  - the error in each half of the forecast window;
+  - the dose effect: the predicted day-119 change from the 1x arm over the
+    true change, at 0.75, 0.5, 0.25 and 0x;
+  - the day-119 burden over the truth;
+  - the band coverage, next to ours. For the Neural ODE the band is the
+    5-95% range of the 20 members' burdens, an empirical spread, not
+    calibrated. Ours uses 64 posterior draws;
+  - the members that complete, and the members that pass the float64
+    training replay.
+- **Brackets,** on the same scans and metric:
+  - the naive forecasts, persistence and dose-blind;
+  - the basis floor;
+  - the calibrated PDE. It is the true equation, so it is an upper
+    reference (an "inverse crime"), not a competitor. It is scored both
+    from the first scan (like ours) and restarted from the last;
+  - the projected logistic ROM where it was run (1x and 0.5x).
+
+**No pass or fail.** Ours and the Neural ODE are reported arm by arm, as
+measured.
+
+**Expectations** (written before any fit).
+1. The Neural ODE fits its training scans about as well as ours. Its
+   training-window error is at most ours plus 1 point (ours: 1.0-1.4% to
+   day 84, 0.7-0.9% to day 57).
+2. Ours is lower than the Neural ODE at 0.75x and 0.5x, from both cut days.
+   A dose cut needs a dose response learned from one treated course.
+3. The Neural ODE's dose effect at 0.5x is below 0.3 of the true one. In
+   the older design it was about 0.
+4. At 1x the two are within 3 points of each other, either way. Both
+   extrapolate the planned course. In the older single-dose task the
+   Neural ODE was better.
+5. On the stress arms (0.25x, 0x), ours is lower.
+6. The calibrated PDE is under 1% from the first scan and under 2%
+   restarted, on every arm.
+
+**Platform.** The member fits and the dense calibrated-PDE jobs run on
+Azure virtual machines: four F16as_v6 for the members (one member per
+core), and one E16as_v6 for the PDE plus one Neural-ODE seed. The OS is
+Ubuntu 24.04 on x86-64. Packages match the Mac's pins: Python 3.13.5, jax
+0.6.2, torch 2.7.1 CPU. Settings are single-threaded, as in the
+benchmark's environment. Each member's random key depends only on its
+index, so spreading members across machines changes nothing. Float32
+training can differ from a Mac run in the last bits. The evaluation
+replays every member in float64 and checks its training fit to 1e-3
+relative, the benchmark's own check.
+
+**Disclosures.**
+- **After the fact:** this design was chosen after ours had been run on it
+  and after the naive forecasts had been seen. The Neural ODE and the PDE
+  are run once, with their recipes unchanged.
+- **One virtual patient:** the seeds vary only the scan times and the
+  noise.
+- If the paper adopts this design, it replaces the single-dose and
+  multi-dose tasks. Untreated growth stays. The older results stay in the
+  repository.
+
+```bash
+cd experiments/tumor
+# one process per member (any machine; deterministic by index), then the summary and evaluation per seed
+python 05_neural_ode_benchmark.py midcourse-reduced-trend-chemo --seeds 48 --only-members 0 --skip-evaluation
+python 05_neural_ode_benchmark.py midcourse-reduced-trend-chemo --seeds 48
+```
+
 ## Open decisions
 
 The following are not done and await a decision: the Neural-ODE ensembles on
