@@ -29,6 +29,8 @@ def input_trend_features(t_sampled, t_eval, grid_times, grid_values):
 
     Their coefficients have a Gaussian prior and are integrated into the GP
     kernel; these features do not prescribe any ROM operator or fitted mean.
+    An untreated trajectory (an input table that is zero everywhere) has a
+    zero exposure feature: its coefficient then adds nothing to the kernel.
     """
     train_times = np.asarray(t_sampled, dtype=float)
     eval_times = np.asarray(t_eval, dtype=float)
@@ -42,6 +44,8 @@ def input_trend_features(t_sampled, t_eval, grid_times, grid_values):
         eval_times, integrate_linear_input(grid_times, grid_values, eval_times)])
     center = train_values.mean(axis=0)
     scale = train_values.std(axis=0)
+    if scale[1] <= 0 and not np.any(np.asarray(grid_values, dtype=float)):
+        scale[1] = 1.  # untreated: center 0, so the exposure columns are exactly zero
     if np.any(scale <= 0):
         raise ValueError("Input trend requires nonconstant cumulative exposure during training")
     return dict(

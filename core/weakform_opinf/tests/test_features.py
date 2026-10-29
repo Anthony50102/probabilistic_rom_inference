@@ -41,8 +41,16 @@ class InputFeatureTests(unittest.TestCase):
         np.testing.assert_allclose(scaled["scale"][1], first["scale"][1] * 2)
         np.testing.assert_allclose(scaled["eval"], first["eval"])
         np.testing.assert_allclose(scaled["derivative"], first["derivative"])
-        with self.assertRaises(ValueError):
-            input_trend_features(train, query, [0., 1., 2.], [0., 0., 0.])
+
+    def test_untreated_trajectory_has_zero_exposure_feature(self):
+        train, query = [.2, .7, 1.2], [.3, 1.5]
+        untreated = input_trend_features(train, query, [0., 1., 2.], [0., 0., 0.])
+        treated = input_trend_features(train, query, [0., 1., 2.], [0., 2., 2.])
+        for key in ("train", "eval", "derivative"):
+            np.testing.assert_array_equal(untreated[key][:, 2], 0.)
+            np.testing.assert_array_equal(untreated[key][:, :2], treated[key][:, :2])
+        with self.assertRaises(ValueError):  # input only before the training times: constant, nonzero exposure
+            input_trend_features([1.2, 1.5, 1.8], query, [0., 1., 2.], [2., 0., 0.])
 
 
 if __name__ == "__main__":
