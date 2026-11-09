@@ -211,3 +211,24 @@ Scored with `aggregate_table.score` (the paper's table metrics, reduced coordina
 forecast error of the draw median, 5-95% band coverage and width in the forecast window. No pass/fail; the shift
 is adopted for this row only if forecast error is lower AND coverage is not lower. Expectation: little change
 (the paper's run is already 100% stable with 2.4% forecast error).
+
+### Result (9 Nov 2026; stab5, 4 cores each, both fits ~88 s, rc 0)
+
+| run | stable % | train | forecast | coverage | band width (forecast) |
+|---|---|---|---|---|---|
+| paper npz (as published) | 100 | 0.35% | 2.36% | 100% | 0.696 |
+| unchanged rerun (VM) | 100 | 0.35% | 2.36% | 100% | 0.693 |
+| centred (`--feature-shift`) | 96.5 | 0.38% | 1.99% | 100% | 7.31 |
+| Neural ODE (paper) | 100 | 1.95% | 25.1% | 12% | 0.731 |
+
+- Platform check: the rerun matches the paper's metrics to 3 significant figures; individual draws differ (max
+  |diff| 1.4 in reduced units) because the VM's float32 SVI path differs from the Mac's.
+- The declared rule (lower forecast error, coverage not lower) is met: 2.36 -> 1.99%, 100% -> 100%. But the
+  band is 10.5x wider (all three modes, 5.3-8.4 vs 0.61-0.84) and 7 of 200 draws blow up. Band width was left
+  out of the rule; that was my mistake, noticed only after the result. A 10x wider band at the same coverage
+  is a worse uncertainty estimate, and it would turn the row's band from as sharp as the Neural ODE's (ratio
+  1.05) to 10x wider. Reading: centring does not help this benchmark; the paper keeps the uncentred fit.
+- Why plausibly: on a 3-mode basis whose mean is far from 0, the zero-mean operator prior is a weaker
+  constraint about the mean than about 0, so the posterior spreads more. On the cylinder (r >= 9) the same
+  shift helps because the uncentred fit's draws mostly blow up.
+- Scores: session `centring-existing/score_centring.py` -> `centring_scores.json` (aggregate_table.score).
