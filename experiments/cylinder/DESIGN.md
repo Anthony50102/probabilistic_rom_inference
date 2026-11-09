@@ -64,3 +64,23 @@ advection-dominated flow. NODE is not run here (gated).
 - Reference (not a competitor, no NODE): deterministic least-squares OpInf with finite-difference derivatives of
   the noisy reduced data. Its regulariser comes from 1e-6 to 1e6 and is chosen without the truth: the bounded
   forecast with the smallest error against the noisy training data.
+
+## Amendment after the declared fits started (after the fact; disclosed)
+Written on 9 Nov 2026 after 11 of the 12 declared fits had finished. Nothing above is changed. The declared results
+are reported as declared; everything here is labelled "after the fact".
+
+1. **Centring was considered and rejected.** The onset fits blew up (0% stable draws). My first guess was that the
+   uncentred basis makes the columns 1, q₁, q₁² nearly collinear. A noise-free least-squares check (session script
+   `centre_diag.py`) refuted this. On periodic shedding, uncentred least squares is stable with mild
+   regularisation, and centring made it worse. On the onset task, both versions blow up. The cause is the basis: the
+   POD of the training window cannot represent the saturated wake. Its noise-free projection floor over the forecast
+   is 56–71% of the shedding part at r = 5–13. So no ROM on that basis can forecast it. No centred fits were run.
+2. **Posterior-mean rescoring.** The declared point forecast is the median of the stable draws. At larger r, few
+   draws stay finite (64.5% / 22% / 1% at r = 5 / 9 / 13), so that median rests on a handful of draws. The session
+   script `rescore_mean.py` also integrates the posterior-mean operator from the posterior-mean initial state. It
+   reads only the saved `04_unified.npz`; there are no refits. It is reported next to the declared numbers, never
+   instead of them.
+3. **Float64 rerun of r = 21.** The declared r = 21 fit diverged in float32: the SVI loss became NaN after
+   3656 s, and the run stopped with NaN operators. Its declared outcome is "failed". It is rerun once with
+   `--precision float64`, with everything else identical; the output is `lc_dense_low_noise_r21_f64`. If r = 17 also
+   diverges, it gets the same treatment.

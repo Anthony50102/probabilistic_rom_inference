@@ -43,7 +43,8 @@ def make_config(schema):
     return WeakFormConfig(
         operators="cAH", num_modes=schema["modes"], bump_p=6, weakform_mode="ibp", deriv_cov="diag",
         weakform_cov="diag", op_prior_mode="block_hier", num_posterior_samples=500, regularizer=1.0,
-        ic_uncertainty=True, ic_scale=1.0, num_pred_points=schema["num_pred_points"], seed=42)
+        ic_uncertainty=True, ic_scale=1.0, num_pred_points=schema["num_pred_points"], seed=42,
+        precision=schema.get("precision", "default"))
 
 
 class CylinderSpec:
@@ -143,7 +144,7 @@ def summarize(result, prepared, schema, cfg, out_dir):
     out = dict(task=schema["task"], regime=schema["regime"], modes=cfg.num_modes, window=schema["window"],
                num_samples=int(len(tgt.t_sampled)), noise=schema["NOISE_LEVEL"],
                pod_energy=float(basis.cumulative_energy), runtime_s=float(result["runtime"]),
-               full_order_dim=int(X.shape[0]))
+               full_order_dim=int(X.shape[0]), precision=cfg.precision)
     for key in ("train_error", "pred_error", "ci_coverage", "ci_cov_fit", "ci_cov_ext", "ci_width",
                 "stability_pct", "n_stable", "n_total"):
         out[key] = float(result[key])
@@ -213,11 +214,14 @@ def main():
     ap.add_argument("--task", choices=["lc", "tr"], required=True)
     ap.add_argument("--regime", choices=list(REGIMES), required=True)
     ap.add_argument("--modes", type=int, default=9)
+    ap.add_argument("--precision", choices=["default", "float64"], default="default",
+                    help="float64: after-the-fact rerun of a fit whose float32 SVI diverged (output suffix _f64)")
     args = ap.parse_args()
     fom = config.load_fom()
     window = config.task_window(args.task, fom)
-    name = f"{args.task}_{args.regime}_r{args.modes}"
+    name = f"{args.task}_{args.regime}_r{args.modes}" + ("_f64" if args.precision == "float64" else "")
     schema = dict(REGIMES[args.regime], name=name, task=args.task, regime=args.regime, modes=args.modes,
+                  precision=args.precision,
                   window=tuple(float(w) for w in window),
                   num_pred_points=int(round(window[2] / np.median(np.diff(fom["t"])))) + 1)
     cfg = make_config(schema)
