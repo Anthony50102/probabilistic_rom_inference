@@ -104,15 +104,15 @@ are reported as declared; everything here is labelled "after the fact".
 | lc dense r21 float64* | 1.0 | 2.7 | — | 0% | 0.3016 | 151 | 152 min (8 cores) |
 | lc sparse r9 | 5.8 | 21.5 | 36.0 | 7.5% | 0.304 | 142 | 46 min |
 | lc 10% noise r9 | 7.5 | 18.2 | 19.9 | 13.5% | 0.302 | 171 | 15 min |
-| tr dense r5 / r9 / r13 | 71 / 61 / 58 | blows up | — | 0% | — | 126–141 | 13–55 min |
+| tr dense r5 / r9 / r13 | 71 / 61 / 58 | blows up | — | 0% | — | 125–141 | 13–55 min |
 | tr sparse r9 | 61 | blows up | — | 0% | — | 134 | 6 min |
 | tr 10% noise r9 | 62 | 158 | 100 | 1.5% | — | 144 | 23 min |
 
-The LS column is the reduced error; the full-order value is hypot(reduced, floor), and it differs by less than 1
-point. The declared reduced-coordinate metrics (tab:aggregate style) are in `after_the_fact/results_table.txt`.
+The LS column is the reduced error. Full order = hypot(ratio × reduced, floor), where ratio is 0.99–1.0 for lc
+(under 1 point of difference) and 0.78–0.86 for tr (122–136% full order). The declared reduced-coordinate metrics (tab:aggregate style) are in `after_the_fact/results_table.txt`.
 
 **Reading.**
-1. **Point forecasts scale.** At r = 5–13 the posterior mean sits within 0.2 points of the projection floor. It
+1. **Point forecasts scale.** At r = 5–13 the posterior mean sits within 0.25 points of the projection floor. It
    reproduces the Strouhal number and the amplitude, and it stays bounded at 10× the training window.
    r = 13 is about twice the largest r in the paper. At r = 17 and 21 the mean drifts above the floor
    (1.9 and 2.7 vs 1.0). LS fails everywhere (≥ 96%).
