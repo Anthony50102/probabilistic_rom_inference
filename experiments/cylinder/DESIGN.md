@@ -109,7 +109,7 @@ are reported as declared; everything here is labelled "after the fact".
 | tr 10% noise r9 | 62 | 158 | 100 | 1.5% | — | 144 | 23 min |
 
 The LS column is the reduced error. Full order = hypot(ratio × reduced, floor), where ratio is 0.99–1.0 for lc
-(under 1 point of difference) and 0.78–0.86 for tr (122–136% full order). The declared reduced-coordinate metrics (tab:aggregate style) are in `after_the_fact/results_table.txt`.
+(under 1 point of difference) and 0.78–0.86 for tr (121–136% full order). The declared reduced-coordinate metrics (tab:aggregate style) are in `after_the_fact/results_table.txt`.
 
 **Reading.**
 1. **Point forecasts scale.** At r = 5–13 the posterior mean sits within 0.25 points of the projection floor. It
