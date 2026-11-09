@@ -190,3 +190,24 @@ but the mean error rose to 406% (free 13.5%); its operators were 5–11× larger
 window: EP costs little (reduced forecast error r5 0.078 vs 0.064, r9 0.102 vs 0.070, r13 0.111 vs 0.071), all
 bounded at 10×; the Q = I certificate was ≈ 0 and never negative; a centred POD basis made EP fits bad (30–155%), so
 the basis stays uncentred. (c) A crude Bayesian stand-in (Savitzky–Golay derivatives) was inconclusive.
+
+## Centring the existing benchmarks (design written before any fit; 9 Nov 2026)
+
+Question (user): does fitting the operator about the mean training state (`feature_shift=training_mean`), which
+helped the cylinder, also improve the paper's existing benchmarks?
+
+Which benchmarks it can touch (checked in code before any fit):
+- Euler: the basis subtracts the mean of the training snapshots before POD (`euler/config.py` `fit`), so the
+  mean reduced training state is 0 and the shift is the identity -> same fit; not run.
+- Heat: also mean-shifted, and its library has inputs (cAHBN), which `feature_shift` does not support; not run.
+- Tumour (dose change): uncentred basis but with inputs (cAN); shifting there adds a pure-input term, i.e. a
+  different model; not run (needs its own design).
+- 2D diffusion-reaction (`burgers_2d`, dense medium noise, cAH, r = 3, plain uncentred POD): the only one it
+  applies to. Run: `04_unified.py dense_medium_noise --feature-shift` (output `dense_medium_noise_shift`) and,
+  on the same machine, the unchanged `04_unified.py dense_medium_noise` into a copy of the repo (platform check
+  against the paper's saved npz).
+
+Scored with `aggregate_table.score` (the paper's table metrics, reduced coordinates): stable %, training and
+forecast error of the draw median, 5-95% band coverage and width in the forecast window. No pass/fail; the shift
+is adopted for this row only if forecast error is lower AND coverage is not lower. Expectation: little change
+(the paper's run is already 100% stable with 2.4% forecast error).

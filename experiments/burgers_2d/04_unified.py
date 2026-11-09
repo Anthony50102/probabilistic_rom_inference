@@ -48,6 +48,7 @@ def make_config(schema):
         ic_scale=1.0,
         num_pred_points=400,
         seed=42,
+        feature_shift=schema.get("feature_shift", "none"),
     )
 
 
@@ -99,9 +100,15 @@ class BurgersSpec:
 
 
 def main(schema_names=None):
+    # --feature-shift: operator fitted about the mean training reduced state (cylinder DESIGN.md
+    # "Centring the existing benchmarks"); outputs go to <schema>_shift so the paper's run is untouched.
+    shift = bool(schema_names) and "--feature-shift" in schema_names
+    schema_names = [s for s in (schema_names or []) if s != "--feature-shift"]
     spec = BurgersSpec()
     schemas = SCHEMAS if not schema_names else [
         s for s in SCHEMAS if s["name"] in schema_names]
+    if shift:
+        schemas = [dict(s, name=s["name"] + "_shift", feature_shift="training_mean") for s in schemas]
     if not schemas:
         print(f"Unknown schema(s): {schema_names}; available "
               f"{[s['name'] for s in SCHEMAS]}")
