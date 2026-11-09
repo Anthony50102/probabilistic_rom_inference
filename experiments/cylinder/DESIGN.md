@@ -84,3 +84,51 @@ are reported as declared; everything here is labelled "after the fact".
    3656 s, and the run stopped with NaN operators. Its declared outcome is "failed". It is rerun once with
    `--precision float64`, with everything else identical; the output is `lc_dense_low_noise_r21_f64`. If r = 17 also
    diverges, it gets the same treatment.
+
+## Results (9 Nov 2026; one Azure F16as_v6, each fit pinned to 4 cores)
+**FOM.** Medium: Cd_max 3.2167, Cl_max 0.9853, St 0.3019. Fine: 3.2245 / 0.9862 / 0.3019. The two agree within
+0.25%, so the medium mesh passes the declared check ("in range or within 2% of fine"). Cd_max and Cl_max sit
+0.1–0.5% below the reference ranges on both meshes.
+
+**Full-order forecast error, % of the fluctuating part.** "Declared" is the median of the stable draws.
+"PM*" is the posterior mean, scored after the fact (Amendment 2). "Floor" is the POD projection error.
+"LS" is least-squares OpInf.
+
+| run | floor | PM* | declared | stable draws | St PM* (truth 0.3019) | LS | fit time |
+|---|---|---|---|---|---|---|---|
+| lc dense r5 | 13.4 | 13.5 | 14.1 | 64.5% | 0.3019 | 158 | 8 min |
+| lc dense r9 | 3.1 | 3.2 | 8.2 | 22% | 0.3019 | 96 | 15 min |
+| lc dense r13 | 1.2 | 1.4 | 55.3 | 1% | 0.3018 | 135 | 25 min |
+| lc dense r17 | 1.0 | 1.9 | — | 0% | 0.3019 | 149 | 73 min |
+| lc dense r21 (float32, declared) | — | — | failed (SVI NaN) | — | — | — | 61 min |
+| lc dense r21 float64* | 1.0 | 2.7 | — | 0% | 0.3016 | 151 | 152 min (8 cores) |
+| lc sparse r9 | 5.8 | 21.5 | 36.0 | 7.5% | 0.304 | 142 | 46 min |
+| lc 10% noise r9 | 7.5 | 18.2 | 19.9 | 13.5% | 0.302 | 171 | 15 min |
+| tr dense r5 / r9 / r13 | 71 / 61 / 58 | blows up | — | 0% | — | 126–141 | 13–55 min |
+| tr sparse r9 | 61 | blows up | — | 0% | — | 134 | 6 min |
+| tr 10% noise r9 | 62 | 158 | 100 | 1.5% | — | 144 | 23 min |
+
+The LS column is the reduced error; the full-order value is hypot(reduced, floor), and it differs by less than 1
+point. The declared reduced-coordinate metrics (tab:aggregate style) are in `after_the_fact/results_table.txt`.
+
+**Reading.**
+1. **Point forecasts scale.** At r = 5–13 the posterior mean sits within 0.2 points of the projection floor. It
+   reproduces the Strouhal number and the amplitude, and it stays bounded at 10× the training window.
+   r = 13 is about twice the largest r in the paper. At r = 17 and 21 the mean drifts above the floor
+   (1.9 and 2.7 vs 1.0). LS fails everywhere (≥ 96%).
+2. **Sampling-based UQ does not scale.** The stable fraction falls from 64.5% to 22%, 1% and 0% as r grows,
+   so the declared median degrades and is undefined at r ≥ 17. The posterior is wide in quadratic directions
+   that the limit cycle never excites, and draws pick up unstable growth there (`draw_diag.py`). The mean is
+   stable. Candidate fix, not tested: a stability-aware operator prior, or rejecting unstable draws inside the
+   sampler.
+3. **The onset task is infeasible on a training-window basis.** The floor is 56–71% at every r (Amendment 1).
+   This limits POD-based ROMs, not the fitting method.
+4. **Cost.** Fit time grows roughly like r² to r³ on 4 cores (8 → 73 min from r = 5 to 17). float64 at r = 21 took
+   152 min on 8 cores. The sparse r9 fit (46 min vs 15 for dense) was slow for a reason I did not find; it was not
+   hung (py-spy showed it inside SVI).
+
+**Disclosures.**
+- Posterior-mean scoring, the centring check and the float64 rerun were all added after the fact (Amendment).
+- The r = 17 and r = 21 posterior-mean results are in the same category.
+- No refit used the truth.
+- NODE was not run.
