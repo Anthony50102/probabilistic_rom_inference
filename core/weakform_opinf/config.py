@@ -128,6 +128,15 @@ class WeakFormConfig:
     precision: str = "default"
     """'default' preserves the caller's JAX setting; or select float32/float64."""
 
+    # ── Stability-motivated operator structure (Goyal, Pontes Duff & Benner 2023) ─
+    quad_constraint: str = "none"
+    """'none' (default) or 'energy_preserving': condition the operator posterior on the quadratic term conserving
+    ½‖q‖² (Σ_i q_i H_i(q⊗q) ≡ 0), exactly (linear constraint on a Gaussian); the evidence is that of the
+    constrained prior. Needs a quadratic polynomial library without inputs and a single, unpooled operator."""
+    feature_shift: str = "none"
+    """'none' (default) or 'training_mean': fit the operator to features of q − q̄ (q̄ the mean training reduced
+    state) under the same prior, then map it back to q exactly (O_q = O_z Gᵀ). Needs a library without inputs."""
+
     # ── Least-squares ROM prior fit (structure only; values marginalised) ─
     regularizer: float = 1.0
 
@@ -152,6 +161,8 @@ class WeakFormConfig:
             raise ValueError("gp_trend_scale='learned' needs the input trend (gp_input_trend=True)")
         _one_of("precision", self.precision, {"default", "float32", "float64"})
         _one_of("infer", self.infer, {"svi", "nuts"})
+        _one_of("quad_constraint", self.quad_constraint, {"none", "energy_preserving"})
+        _one_of("feature_shift", self.feature_shift, {"none", "training_mean"})
         _one_of("weak_slack", self.weak_slack, {"grid", "support", "legacy"})
         _one_of("closure", self.closure, {"tempered", "slack"})
         if self.closure == "tempered":

@@ -33,6 +33,7 @@ import numpyro.distributions as dist
 from . import gp as _gp
 from . import weakform as _wf
 from . import evidence as _ev
+from . import constraints as _cons
 
 
 def _block_id_from_rom(rom):
@@ -451,6 +452,25 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         operator_prior["mean"] = dict(rule="given", max_abs=float(np.abs(mean_np).max()),
                                       row_norms=np.linalg.norm(mean_np, axis=1).tolist())
 
+    shifted = cfg.feature_shift != "none"
+    constrained = cfg.quad_constraint != "none"
+    if shifted or constrained:
+        if pooled or structured or centred or input_scale:
+            raise ValueError("quad_constraint / feature_shift support a single unpooled operator without structured "
+                             "rows, a prior mean or input scales")
+        if any(tr.get("inputs_eval") is not None for tr in trajectories):
+            raise ValueError("quad_constraint / feature_shift need a library without inputs")
+    if shifted:
+        shift_np = np.concatenate([np.asarray(tr["snapshots_comp"], dtype=float) for tr in trajectories],
+                                  axis=1).mean(axis=1)
+        shift_G = jnp.asarray(_cons.shift_matrix(rom, num_modes, shift_np))
+        shift_col = jnp.asarray(shift_np)[:, None]
+        operator_prior["feature_shift"] = dict(rule="training_mean", shift=shift_np.tolist())
+    if constrained:
+        constraint_C = jnp.asarray(_cons.energy_preserving_matrix(rom, num_modes))
+        operator_prior["quad_constraint"] = dict(rule="energy_preserving", n_constraints=int(constraint_C.shape[0]),
+                                                 reference="Goyal, Pontes Duff & Benner 2023, arXiv:2308.13819")
+
     def _centre(blocks):
         """Rows y ≈ A Oᵢ refitted as y − A Mᵢ ≈ A (Oᵢ − Mᵢ), so the zero-mean evidence applies."""
         if not centred:
@@ -616,7 +636,7 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         extra = () if trend_scales is None else (trend_scales,)
         Xs, mu_zs, K_posts_Z, K_posts_X, mlls = ctx["batch_gp"](
             ells, sig2s, nus, ctx["y_obs"], *extra)
-        f_X = rom.model._assemble_data_matrix(Xs, inputs=ctx["inputs_eval"])
+        f_X = rom.model._assemble_data_matrix(Xs - shift_col if shifted else Xs, inputs=ctx["inputs_eval"])
         if tempered:
             blocks, correction = _tempered_blocks(ctx, Xs, f_X, mu_zs, K_posts_Z, K_posts_X, sig2s, ells)
             return _centre(blocks), Xs, jnp.sum(mlls), correction
@@ -776,16 +796,21 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         if pooled:
             traj_blocks = _pooled_blocks(traj_blocks)
         total_evidence = 0.0
+        moments = []
         for i in range(num_modes):
             if structured:
                 blocks_i, prec_i, log_cov_i = _structured_mode(traj_blocks, i, kappa_block)
                 log_p_i, _, _ = evidence_fn(
                     blocks_i, i, k_rows, prec_i, log_cov_i, deriv_is_diag)
             else:
-                log_p_i, _, _ = evidence_fn(
+                log_p_i, mu_i, lower_i = evidence_fn(
                     traj_blocks, i, m_fit, prior_prec, log_prior_cov,
                     deriv_is_diag)
+                moments.append((mu_i, lower_i))
             total_evidence = total_evidence + log_p_i
+        if constrained:
+            total_evidence = total_evidence + _cons.constraint_log_correction(
+                constraint_C, jnp.stack([mu for mu, _ in moments]), jnp.stack([lo for _, lo in moments]), prior_prec)
         numpyro.factor("marg_O_evidence", total_evidence + correction)
 
     @jax.jit
@@ -824,7 +849,10 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
                     mi = mi + mean_O[i]
             mu_all.append(mi)
             C_all.append(Ci)
-        return jnp.stack(mu_all), jnp.stack(C_all)
+        mean, root = jnp.stack(mu_all), jnp.stack(C_all)
+        if shifted:
+            mean, root = mean @ shift_G.T, jnp.einsum("jk,ikl->ijl", shift_G, root)
+        return mean, root
 
     def pooled_posterior_O_fn(theta_stacked, gamma2, sigma_O_val, tau_block=None, which=0):
         """Closed-form posterior of trajectory ``which``'s operator (0: the target) or of M (``"mean"``) given θ

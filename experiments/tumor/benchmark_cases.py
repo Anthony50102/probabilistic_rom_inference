@@ -731,6 +731,10 @@ def describe(case: BenchmarkCase, pod: PODSettings | None = None) -> dict:
         # And from before the learned trend scale, whose config field is likewise left out.
         fields.pop("gp_trend_scale")
         config.pop("gp_trend_scale")
+    for key, default in (("quad_constraint", "none"), ("feature_shift", "none")):
+        # Config fields added for the cylinder stability prior; at their defaults every recipe keeps its fingerprint.
+        if config[key] == default:
+            config.pop(key)
     if fields["cohort"]:
         # The cohort's declared design is part of the recipe (benchmark_cohort.py builds it from these values).
         fields["cohort_design"] = COHORT_SWEEP_DESIGN if case.cohort_size else COHORT_DESIGN

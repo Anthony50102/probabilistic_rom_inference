@@ -132,3 +132,61 @@ The LS column is the reduced error. Full order = hypot(ratio × reduced, floor),
 - The r = 17 and r = 21 posterior-mean results are in the same category.
 - No refit used the truth.
 - NODE was not run.
+
+## Stability prior (design written before any fit; Nov 2026)
+
+**Why.** The posterior mean forecasts well, but most posterior draws blow up at r ≥ 9 (Results, reading 2). Goyal,
+Pontes Duff & Benner (2023, arXiv:2308.13819) make quadratic OpInf models stable by (i) an energy-preserving (EP)
+quadratic term, Σᵢ qᵢ Hᵢ(q⊗q) ≡ 0, plus (ii) a learned trapping region. Incompressible Navier–Stokes with the
+Galerkin quadratic term has property (i) exactly in the fluctuation (the convective term conserves kinetic energy).
+
+**What is tested.** Property (i) only, as an exact constraint on the Gaussian operator posterior
+(`WeakFormConfig.quad_constraint="energy_preserving"`, `core/weakform_opinf/constraints.py`): C vec(O) = 0 is linear,
+so the constrained posterior and its evidence are closed form (Matheron's rule per draw; the evidence gains
+log N(0; Cμ, CΣCᵀ) − log N(0; 0, CΣ₀Cᵀ), so the GP hyperparameters are fitted under the constrained model).
+Part (ii) is not tested: with Q = I the trapping certificate is never negative even on noise-free EP least-squares
+fits (below), and a learned Q needs a nonlinear parameterisation that loses the closed form. The certificate is
+reported as a diagnostic only.
+
+**Shifted features** (`feature_shift="training_mean"`). On the limit cycle the first POD coefficient is nearly
+constant, so the constant, linear and q₁-quadratic columns are almost collinear. The operator is therefore fitted to
+features of z = q − q̄ (q̄ = mean training reduced state) under the same prior, then mapped back to q exactly
+(O_q = O_z Gᵀ; H unchanged, so the constraint is the same in both coordinates). The GP, the observations and the
+prior scales (computed from q, as before) are unchanged.
+
+**Runs** (all float64, lc task, the declared data regimes and settings otherwise; `04_unified.py` flags):
+
+| variant | flags | runs |
+|---|---|---|
+| f64 control | `--precision float64` | dense r9, r13 |
+| EP | `+ --quad-constraint energy_preserving` | dense r5, r9, r13, r17, r21 |
+| shift | `+ --feature-shift training_mean` | dense r9, r13 |
+| **EP + shift (primary)** | both | dense r5, r9, r13, r17, r21; sparse r9; 10% noise r9 |
+
+16 fits. The earlier float32 runs (Results) are the free reference at r5 and r17, and the r21 float64 run.
+Practicality rule: a fit not finished 8 h after its start is stopped and reported as not run.
+
+**Metrics** (unchanged definitions): stable fraction of the 500 draws; declared median of stable draws (full-order
+forecast error); posterior mean PM* (mean of the 500 draws; `after_the_fact/rescore_mean.py`); long-horizon bounded
+draws (10× window); band coverage in the forecast window (`ci_cov_ext`); Strouhal. Diagnostics: relative EP violation
+‖C vec(PM*)‖/‖C‖‖PM*‖ (≈ 0 by construction for EP variants) and the Q = I trapping certificate of PM*.
+
+**Reading rule.** The stability prior "fixes the sampling UQ" at a given r if EP + shift has ≥ 80% stable draws and
+its declared median is within 3 points (full order) of the free PM* at that r. Judged at r9 and r13 (where the free
+mean is near the floor); r5, r17, r21 and the sparse/noisy runs are reported, not judged.
+
+**Expectations** (written before any fit):
+1. EP + shift raises the stable fraction at every r above the free runs (64.5/22/1/0/0%).
+2. EP + shift PM* is within 3 points of the free PM* at r ≤ 13 (the constraint costs a little accuracy).
+3. EP without the shift gives a clearly worse PM* than EP + shift (collinearity; see disclosure).
+4. Shift alone does not fix stability (stable < 50% at r13).
+5. The Q = I trapping certificate is never negative (no certified trapping region).
+I am least sure of 1 at r17/r21 and of the reading rule at r13.
+
+**Disclosure: after-the-fact diagnostics that shaped this design** (session scripts, no refits, no repo change).
+(a) Projecting the stored r5 posterior draws onto EP (Matheron with per-row sample moments): 94% stable (free 61.4%)
+but the mean error rose to 406% (free 13.5%); its operators were 5–11× larger with near-identical training residuals
+(0.62 vs 0.39%) → collinearity, which motivated the shift. (b) Noise-free least squares on the truth's training
+window: EP costs little (reduced forecast error r5 0.078 vs 0.064, r9 0.102 vs 0.070, r13 0.111 vs 0.071), all
+bounded at 10×; the Q = I certificate was ≈ 0 and never negative; a centred POD basis made EP fits bad (30–155%), so
+the basis stays uncentred. (c) A crude Bayesian stand-in (Savitzky–Golay derivatives) was inconclusive.

@@ -24,6 +24,7 @@ from numpyro.optim import ClippedAdam
 from scipy.interpolate import interp1d
 
 from .model import build_model
+from .constraints import condition_on_constraint, energy_preserving_matrix
 from .gp import trajectory_gp_conditional
 from core.bayesian_opinf import generate_rom_predictions
 
@@ -150,11 +151,17 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
     rng_key, ok = random.split(rng_key)
     keys = jax.random.split(ok, npost)
 
+    constraint_C = (jnp.asarray(energy_preserving_matrix(rom, num_modes))
+                    if cfg.quad_constraint == "energy_preserving" else None)
+
     @jax.jit
     def _draw_O(theta_s, key, tau_s):
         mu_O, C_O = posterior_O_fn(theta_s, gamma2, sigma_O_j, tau_s)
         eps = jax.random.normal(key, shape=mu_O.shape)
-        return mu_O + jnp.einsum("ijk,ik->ij", C_O, eps)
+        draw = mu_O + jnp.einsum("ijk,ik->ij", C_O, eps)
+        if constraint_C is not None:
+            draw = condition_on_constraint(draw, C_O, constraint_C)  # exact draw of the constrained posterior
+        return draw
 
     O_samples = []
     for s in range(npost):
