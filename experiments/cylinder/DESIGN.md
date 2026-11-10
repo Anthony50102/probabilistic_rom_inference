@@ -191,6 +191,77 @@ window: EP costs little (reduced forecast error r5 0.078 vs 0.064, r9 0.102 vs 0
 bounded at 10×; the Q = I certificate was ≈ 0 and never negative; a centred POD basis made EP fits bad (30–155%), so
 the basis stays uncentred. (c) A crude Bayesian stand-in (Savitzky–Golay derivatives) was inconclusive.
 
+### Results (9-10 Nov 2026; 5 Azure F16as_v6, float64; `after_the_fact/score_extra.py` + `report_stability.py`)
+
+13 of the 16 declared fits finished; r5 EP, r5 EP + shift and sparse r9 EP + shift hit the 8 h limit (rc 124)
+and are not run. Azure: rg-thesis-stability, VMs 15:42-01:55 UTC (34 VM-hours), deleted (ResourceGroupNotFound);
+cost estimate ~$38.
+
+Full-order forecast error, % of the fluctuating part; floor = POD projection. "Stable" = draw stays finite over
+the window (the declared definition), so a stable draw can still be wildly wrong. Long = draws bounded at 10x.
+
+| run | floor | PM* | declared median | stable % | long | St (PM*) |
+|---|---|---|---|---|---|---|
+| r5 free (earlier) | 13.5 | 13.5 | 14.1 | 64.5 | 25/50 | 0.302 |
+| r5 EP | 13.5 | not run (8 h limit) | | | | |
+| r5 EP + shift | 13.5 | not run (8 h limit) | | | | |
+| r9 free (earlier) | 3.1 | 3.2 | 8.2 | 22.0 | 2/50 | 0.302 |
+| r9 f64 control | 3.1 | 5.3 | 7.6 | 18.5 | 2/50 | 0.302 |
+| r9 shift | 3.1 | 3.1 | 3.1 | 37.5 | 5/50 | 0.302 |
+| r9 EP | 3.1 | 260 | 203 | 100 | 49/50 | 0.332 |
+| r9 EP + shift | 3.1 | 79.8 | 213 | 99.5 | 4/50 | 0.303 |
+| r13 free (earlier) | 1.2 | 1.4 | 55.3 | 1.0 | 0/50 | 0.302 |
+| r13 f64 control | 1.2 | 12.1 | 29.6 | 1.5 | 0/50 | 0.303 |
+| r13 shift | 1.2 | 1.2 | 1.4 | 20.5 | 0/50 | 0.302 |
+| r13 EP | 1.2 | 2.2 | 156 | 100 | 50/50 | 0.302 |
+| r13 EP + shift | 1.2 | 1.2 | 15.5 | 100 | 7/50 | 0.302 |
+| r17 free (earlier) | 1.0 | 1.9 | - | 0 | 0/50 | 0.302 |
+| r17 EP | 1.0 | 3.5 | 250 | 100 | 50/50 | 0.302 |
+| r17 EP + shift | 1.0 | 168 | 112 | 100 | 8/50 | 0.506 |
+| r21 free (earlier, f64) | 1.0 | 2.7 | - | 0 | 0/50 | 0.302 |
+| r21 EP | 1.0 | 1.9 | 344 | 100 | 50/50 | 0.302 |
+| r21 EP + shift | 1.0 | 2.0 | 1.0e8 | 100 | 0/50 | 0.302 |
+| sparse r9 free (earlier) | 5.8 | 21.5 | 36.0 | 7.5 | 1/50 | 0.304 |
+| sparse r9 EP + shift | 5.8 | not run (8 h limit) | | | | |
+| 10% noise r9 free (earlier) | 7.5 | 18.2 | 19.9 | 13.5 | 2/50 | 0.302 |
+| 10% noise r9 EP + shift | 7.5 | 10.5 | 69.7 | 100 | 13/50 | 0.303 |
+
+**Declared reading.** The stability prior does NOT fix the sampling UQ at r9 (99.5% stable but declared median
+213 vs free PM* 3.2) or r13 (100% stable, 15.5 vs 1.4 + 3). Expectations (judged only where the fits ran): 1 MET at r9-r21 (r5 not run), 2 NOT MET
+(r9 PM* 79.8), 3 NOT MET (EP alone is better than EP + shift at r17 and ties at r21), 4 MET (shift alone 20.5%
+stable at r13), 5 MET (certificate min 3e-4, never negative).
+
+**What the energy-preserving constraint does.** It makes every draw finite (99.5-100%) and keeps the posterior
+mean close to the floor at r13-r21 (1.2-3.5%; Strouhal exact). But the draws are not useful forecasts: the median
+of the "stable" draws is 15-344% (1e8% at r21 with the shift), because the constraint only removes energy
+production by the quadratic term; the linear part can still amplify, and with the shift the operators are huge
+(|PM*| 1374-5806), so draws are stiff and grow without leaving the finite range inside the window. At r5 and on the sparse data the
+draws were so stiff that the 500-draw forecast did not finish in 8 h.
+
+**Run-to-run spread.** The float64 controls differ from the earlier float32 runs at the same settings (PM* r9
+5.3 vs 3.2, r13 12.1 vs 1.4; stable 18.5 vs 22, 1.5 vs 1), so a single fit's PM* moves by several points with
+the arithmetic path alone. Comparisons above are within this round where possible (shift vs f64 control).
+
+**After the fact (not declared): the shift alone.** Fitting about the mean training state, with no constraint,
+puts the declared median of the stable draws at the floor (r9 3.09 vs 3.07; r13 1.41 vs 1.16) and the posterior
+mean at the floor too, with 100% band coverage. It doubles (r9 22 -> 37.5%) or 20x (r13 1 -> 20.5%) the stable
+fraction, but most draws still blow up, and few stay bounded at 10x (5/50, 0/50). This finding was not a declared
+expectation (expectation 4 only said it would not fix stability), so it needs its own declared run before it is
+claimed (proposed: shift alone at r5, r17, r21, sparse and 10% noise).
+
+**Disclosures.**
+- An ssh connection problem with stab3 during the round (session record); both stab3 fits ended with rc 0.
+- Core layout per fit: 4 cores (r5-r13, sparse, 10%), 8 (r17), 16 (r21, one fit per VM); declared settings otherwise.
+- Expectation 3's "clearly worse" was operationalised as "> 1 point worse at every r" before any result was read.
+- f64 r13 control was queued behind the sparse run on stab5 and relaunched early on idle cores (same command);
+  the queue's lane-1 shell was killed to do so, so the sparse run wrote no .rc (exit status from its .time file).
+- Runs that hit the 8 h limit did so while integrating stiff posterior draws with explicit RK45 (py-spy on the
+  VM: `generate_rom_predictions` -> `solve_ivp` -> `rk_step`), inside the main forecast (`_predict_targets`), before
+  `04_unified.npz` is written. Per the practicality rule they are reported as not run. (During the round I wrote
+  `summary_fallback.py` for runs killed later, in the 10x long-horizon check; no run ended up needing it.)
+- `timeout` killed `/usr/bin/time` too, so killed runs have an empty `.time` file.
+- `report_stability.py` figure 2 gained the shift-alone column after the results were seen.
+
 ## Centring the existing benchmarks (design written before any fit; 9 Nov 2026)
 
 Question (user): does fitting the operator about the mean training state (`feature_shift=training_mean`), which
