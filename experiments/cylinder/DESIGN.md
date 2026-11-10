@@ -303,3 +303,34 @@ is adopted for this row only if forecast error is lower AND coverage is not lowe
   constraint about the mean than about 0, so the posterior spreads more. On the cylinder (r >= 9) the same
   shift helps because the uncentred fit's draws mostly blow up.
 - Scores: session `centring-existing/score_centring.py` -> `centring_scores.json` (aggregate_table.score).
+
+## Higher-mode variant: choosing the Reynolds number (written before any run at Re ≠ 100; 10 Nov 2026)
+Why: at Re 100 the flow needs only about 11 modes. With 1% noise, the forecast-window POD floor (relative to the
+fluctuating part) is 3.1% at r9, 1.2% at r13 and plateaus near 1% (the noise in the basis) from r15. So the r17/r21
+fits do not test scalability. Goal: a variant of the same benchmark that needs ≥ 20 modes for good accuracy. Raising
+Re adds harmonics and sharper wake structures, so the POD spectrum decays more slowly.
+
+- Only change: viscosity ν = 0.1/Re via `fom_dolfinx.py --nu` (default unchanged; Re 100 data untouched). Same
+  geometry, inflow, observed grid, saving (every 0.005), lc task (train [16, 17], forecast to 19), regimes.
+- Scout runs (Azure, serial FEniCSx jobs, no ROM fits):
+  - medium mesh (h 0.004 / 0.0125 / 0.03, dt 6.25e-4, T 24) at Re 150, 200, 300, 400, 600, 800, 1000;
+  - fine mesh (h 0.002 / 0.008 / 0.02, dt 3.125e-4, save_every 16, T 20) at Re 300, 400, 600, 800, 1000.
+  - A run that stops with a non-finite drag is rerun once at half the time step (disclosed).
+- Scout quantities (`scout_modes.py`; reproduces the stored Re 100 floors: r9 3.07%, r13 1.16%, r17 0.99%):
+  - Cd_max, Cl_max, St over t ≥ 16;
+  - periodicity over t ≥ 16: range of per-cycle lift amplitudes and periods (relative), share of the lift's
+    fluctuating power at the fundamental and its harmonics;
+  - POD floor vs r (1-48), basis built exactly as `04_unified.prepare` (250 samples, 1% noise, seed 42), and
+    r_2% = the smallest r with floor ≤ 2% (Re 100: 11).
+- Selection rule (applied once, to the scout table):
+  1. periodic: amplitude range ≤ 2%, period range ≤ 1%, harmonic share ≥ 0.99 (Re 100: 0%, 0%, 1.000), on every mesh
+     run at that Re. A quasi-periodic or chaotic wake cannot be forecast from a 3-period window by any model and is
+     excluded.
+  2. needs ≥ 20 modes: r_2% ≥ 20 on the production mesh.
+  3. mesh check, where a fine run exists: medium within 2% of fine on Cd_max, Cl_max and St, and r_2% within ±2.
+     Medium is production if it passes; otherwise fine is production (T 20 covers the lc window).
+  - Choose the lowest Re meeting 1-3 (fewest modes that still reach 20; cheapest fits).
+  - If none qualifies, report the table and do not run fits. The fallback (a periodic Re with the largest r_2%, or a
+    different geometry) is then a separate, declared decision.
+- The ROM fits (r sweep, regimes, expectations, time limit) are declared in a separate section after the scout,
+  before any fit.

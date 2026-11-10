@@ -15,6 +15,7 @@ Drag and lift coefficients are saved at every step for validation against the be
 
 Run in the FEniCSx environment (serial):
     python fom_dolfinx.py --out cylinder_fom.npz --T 20 --dt 6.25e-4 --save_every 8
+--nu sets the viscosity (default 1e-3, Re 100); --nu 2.5e-4 gives Re 400 (higher-mode variant, DESIGN.md).
 """
 import argparse
 import time
@@ -153,7 +154,7 @@ def solve(args):
     u_, u_s, u_n, u_n1 = fem.Function(V), fem.Function(V), fem.Function(V), fem.Function(V)
     p_, phi = fem.Function(Q), fem.Function(Q)
     k = fem.Constant(msh, PETSc.ScalarType(args.dt))
-    mu = fem.Constant(msh, PETSc.ScalarType(NU))
+    mu = fem.Constant(msh, PETSc.ScalarType(args.nu))
     dx = ufl.dx
 
     F1 = (ufl.dot(u - u_n, v) / k * dx
@@ -201,6 +202,7 @@ def solve(args):
     snaps[0] = sampler(u_)
     j = 1
     t = 0.0
+    print(f"Re = {U_MEAN * D / args.nu:g} (nu {args.nu:g})", flush=True)
     print(f"mesh: {msh.topology.index_map(2).size_global} cells, velocity dofs "
           f"{V.dofmap.index_map.size_global * 2}, pressure dofs {Q.dofmap.index_map.size_global}, "
           f"grid {sampler.shape}, steps {num_steps}", flush=True)
@@ -253,7 +255,7 @@ def solve(args):
             print(f"  t = {t:7.3f}  Cd {cd[i]:.4f}  Cl {cl[i]:+.4f}  ({time.time() - t_start:.0f} s)", flush=True)
     xs, ys, _, _, inside = sampling_grid()
     np.savez(args.out, t=t_save[:j], snapshots=snaps[:j], t_steps=t_steps, cd=cd, cl=cl, xs=xs, ys=ys,
-             inside=inside, dt=args.dt, h_cyl=args.h_cyl, h_wake=args.h_wake, h_far=args.h_far,
+             inside=inside, dt=args.dt, nu=args.nu, h_cyl=args.h_cyl, h_wake=args.h_wake, h_far=args.h_far,
              cells=msh.topology.index_map(2).size_global, runtime=time.time() - t_start)
     print(f"saved {args.out}: {j} snapshots, {time.time() - t_start:.0f} s", flush=True)
 
@@ -278,4 +280,5 @@ if __name__ == "__main__":
     ap.add_argument("--h_cyl", type=float, default=0.004)
     ap.add_argument("--h_wake", type=float, default=0.0125)
     ap.add_argument("--h_far", type=float, default=0.03)
+    ap.add_argument("--nu", type=float, default=NU, help="kinematic viscosity; Re = U_MEAN * D / nu (default 100)")
     solve(ap.parse_args())
