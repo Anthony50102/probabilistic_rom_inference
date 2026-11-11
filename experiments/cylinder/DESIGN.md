@@ -384,3 +384,42 @@ rule 1 requires.
   and fine check) use T 10 (200 D/U). Everything else is as declared.
 - The fine cylinder runs (Re 300/400/600, at t 7-9.5 of 20) were stopped: no Re qualified, so rule 3 does not apply to
   them, and they were slowing the pinball runs. The scout table above is the medium mesh only.
+
+### Pinball scout outcome (11 Nov 2026; T 10, pinball mesh, all runs rc 0, none diverged)
+
+| Re | St (D/U) | amplitude range | period range | harmonic share | floor r9 / 13 / 21 / 29 | best floor (r ≤ 96) | r_2% |
+|---:|---:|---:|---:|---:|---|---:|---:|
+| 60 | 0.159 | 19.0% | 1.5% | 0.998 | 17.7 / 14.0 / 11.8 / 11.6% | 11.5% | never |
+| 75 | 0.170 | 13.0% | 5.8% | 0.986 | 24.9 / 21.6 / 19.9 / 19.2% | 19.1% | never |
+| 90 | 0.191 | 55.6% | 7.8% | 0.986 | 34.2 / 32.0 / 30.7 / 30.3% | 30.3% | never |
+| 105 | 0.184 | 50.6% | 56.3% | 0.685 | 75.3 / 74.2 / 72.4 / 71.9% | 71.7% | never |
+| 120 | 0.237 | 96.5% | 59.2% | 0.640 | 79.9 / 79.3 / 78.3 / 77.9% | 77.7% | never |
+
+**No pinball Re qualifies; per the declaration, report and stop.** Every run fails rule 1. At Re 60-90 the shedding is
+still growing at t = 10 (Cd still drifting; mean lift away from zero, i.e. a slow symmetry break), so the forecast
+window holds states the training window never visits and the floor plateaus at 12-30% whatever the rank. At Re 105
+and 120 the wake is irregular (harmonic share 0.64-0.69). Rule 3 was not run. No ROM was fitted.
+
+Reading: the lc task needs a flow that has settled onto a periodic cycle. With 30% blockage the pinball's shedding
+saturates more slowly than 200 D/U at Re ≤ 90, and is already irregular at Re ≥ 105. Longer runs might let Re 60-75
+settle, but a settled single-frequency cycle is the case where the single cylinder needed only 11-14 modes, so this
+was not pursued.
+
+Disclosures (run events):
+- The first stop of the T 20 pinball runs and the fine cylinder runs (amendment 1) missed its PIDs. These jobs ran
+  alongside the T 10 relaunch for about 1.5 minutes until they were killed by PID (03:03 UTC). None of them wrote an
+  output file. Their logs are kept in the VM's `logs/pinball_T20_stopped/` and `logs/fine_stopped/` (session copy).
+- The T 10 logs contain stray null bytes, so the VM's divergence watchdog (a plain `grep`) could not read them. No
+  divergence happened: Cd stayed at 6.4-7.4 in every run (checked by hand during the runs), and all runs ended rc 0.
+- Azure VM (F16as_v6, eastus) ran 23:19 UTC 10 Nov to 08:30 UTC 11 Nov (~9.2 h, ~$10.5 with disk and IP). The
+  resource group was deleted. The FOM files (5 cylinder Re, 5 pinball Re; 2.4 GB) were kept in the session store,
+  sha256 checked.
+
+### Where this leaves "20+ modes"
+A periodic two-dimensional wake (one cylinder at Re 100-600, or the pinball where it is periodic) needs at most
+14 modes for 2%. Flows that need 20+ modes either never settle onto the cycle seen in training (onset transients,
+irregular wakes), so no basis from one short window can forecast them, or mix several cycles. The only forecastable
+20+-mode setting found is parametric: one basis over 2-5 Reynolds numbers (r_2% 23-28 for 2 Re, 33-38 for 3, 48-55
+for 5; exploratory scout, no fits). This needs ν as an input to the model, and `feature_shift` does not yet support
+inputs. A held-out Re is not representable on such a basis (floor 7-13%), so only in-sample Re can be forecast.
+Not declared; awaiting a decision.
