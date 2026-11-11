@@ -334,3 +334,43 @@ Re adds harmonics and sharper wake structures, so the POD spectrum decays more s
     different geometry) is then a separate, declared decision.
 - The ROM fits (r sweep, regimes, expectations, time limit) are declared in a separate section after the scout,
   before any fit.
+
+### Re scout outcome (medium mesh; fine Re 300/400/600 still running when written)
+| Re | Cd_max | Cl_max | St | amp / period range | harmonic share | r_2% | floor r9 / r13 / r17 / r21 |
+|---|---|---|---|---|---|---|---|
+| 150 | 3.2094 | 1.6583 | 0.3131 | 0.00% / 0.00% | 1.0000 | 11 | 3.66 / 1.47 / 0.96 / 0.89% |
+| 200 | 3.2762 | 2.1203 | 0.3206 | 0.00% / 0.00% | 1.0000 | 13 | 3.95 / 1.74 / 1.04 / 0.87% |
+| 300 | 3.3784 | 2.6075 | 0.3321 | 0.00% / 0.00% | 1.0000 | 14 | 4.19 / 2.05 / 1.21 / 0.92% |
+| 400 | 3.4353 | 2.8227 | 0.3434 | 0.00% / 0.00% | 1.0000 | 14 | 4.37 / 2.14 / 1.29 / 0.94% |
+| 600 | 3.6360 | 3.0349 | 0.3527 | 0.00% / 0.00% | 1.0000 | 14 | 4.50 / 2.28 / 1.38 / 1.01% |
+
+- Re 800 and 1000 diverged on both meshes (drag grew to 1e27-1e83 without turning non-finite, so the declared
+  automatic rerun never triggered). Medium 800/1000 were killed by hand and rerun once at half dt; both diverged again
+  and were killed. Fine 800/1000 were killed by hand. Fine 800 was not rerun at half dt (≈ 20 h; it could only matter
+  if nothing ≤ 600 qualified, and the medium half-dt run had already failed). Disclosed deviation.
+- The 12 jobs ran at once on 16 cores and were ~3× slower than a lone run (memory bandwidth).
+- **No Re qualifies**: every resolvable Re is strictly periodic, but r_2% saturates at 14. A single 2-D cylinder wake
+  stays low-dimensional. No ROM fits at higher Re.
+- Exploratory checks after the outcome (session scripts, no fits, not part of the rule):
+  - the start-up transient (onset to the limit cycle) still has a 9-12% floor at r29;
+  - a joint basis of several Re needs 24-28 modes for 2 Re and 33-38 for 3 Re, but a held-out Re is not
+    representable (floor plateau 7-13%), so only in-sample multi-Re forecasts would be possible.
+
+## Fallback: the fluidic pinball (written before any pinball run; 11 Nov 2026)
+Why: the decision deferred by the rule above. The fluidic pinball (three cylinders on an equilateral triangle; Deng,
+Noack, Morzyński & Pastur 2020, JFM 884 A37) is a standard ROM benchmark. Its periodic regimes have gap jets and a
+deflected wake, so they may need more modes than one cylinder at the same Re, without leaving the periodic class that
+rule 1 requires.
+
+- `fom_dolfinx.py --geometry pinball`: three cylinders of D = 0.05, side 1.5 D, pointing upstream, front centre
+  (0.2, 0.2); same channel, inflow, observed grid, saving and lc task. Re = 0.05/ν; forces summed over the cylinders.
+  Blockage 0.125/0.41 = 30% (the unconfined bifurcation Re, about 18 / 68 / 104 / 115 for shedding / asymmetric /
+  quasi-periodic / chaotic, will shift; hence a scan).
+- Scout (Azure, no ROM fits): pinball mesh h 0.002 / 0.00625 / 0.015 (the medium mesh scaled to D = 0.05), dt
+  3.125e-4, save_every 16, T 20, at Re 60, 75, 90, 105, 120. Non-finite or divergent runs: rerun once at half dt.
+- `scout_modes.py` as for the cylinder (cylinder output unchanged; pinball: lift crossings about the mean lift,
+  Strouhal with D = 0.05, floors to r 96).
+- Selection: rules 1 and 2 above unchanged (periodic; r_2% ≥ 20). Choose the lowest qualifying Re. Rule 3 (mesh
+  check) on that Re only, against a finer pinball mesh (h 0.0013 / 0.0042 / 0.01, dt 2.0833e-4, save_every 24, T 20).
+- If none qualifies: report and stop. The ROM fits for a qualifying Re are declared in a separate section, before
+  any fit.

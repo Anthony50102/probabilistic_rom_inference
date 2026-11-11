@@ -12,6 +12,10 @@ For one FOM file (fom_dolfinx.py output) this reports, without any ROM fit:
   - r_2pct: the smallest r with the 1%-noise floor <= 2% (the selection quantity).
 
     python scout_modes.py FOM.npz OUT.json
+
+Pinball runs (fom_dolfinx.py --geometry pinball): the reference diameter is read from the file (0.05), lift
+crossings are counted about the window's mean lift (the pinball's lift need not oscillate about zero), and floors
+are reported up to r = 96. Cylinder runs are analysed exactly as before.
 """
 import json
 import sys
@@ -27,9 +31,11 @@ def _rel_fluct(a, b):
     return float(np.linalg.norm(a - b) / np.linalg.norm(b - b.mean(axis=-1, keepdims=True)))
 
 
-def periodicity(t, cl, t_from):
+def periodicity(t, cl, t_from, d_ref=0.1, centre=False):
     keep = t >= t_from
     t, cl = t[keep], cl[keep]
+    if centre:
+        cl = cl - cl.mean()
     up = np.flatnonzero((cl[:-1] < 0) & (cl[1:] >= 0))
     tc = t[up] - cl[up] * (t[up + 1] - t[up]) / (cl[up + 1] - cl[up])
     periods = np.diff(tc)
@@ -48,7 +54,7 @@ def periodicity(t, cl, t_from):
                 period_range_rel=float(np.ptp(periods) / np.mean(periods)),
                 amplitude_median=float(np.median(amps)), amplitude_range_rel=float(np.ptp(amps) / np.median(amps)),
                 harmonic_power_share=float(power[harmonic].sum() / power[1:].sum()),
-                strouhal=float(0.1 / np.mean(periods)))               # D / (U_mean T)
+                strouhal=float(d_ref / np.mean(periods)))             # D / (U_mean T)
 
 
 def floors(V, truth, fc):
@@ -66,13 +72,17 @@ def main(path, out_path):
     res = dict(file=path, t_end=t_end)
     d = np.load(path)
     res["nu"] = float(d["nu"]) if "nu" in d.files else 1e-3
-    res["Re"] = 0.1 / res["nu"]
+    res["geometry"] = str(d["geometry"]) if "geometry" in d.files else "cylinder"
+    d_ref = float(d["D"]) if "D" in d.files else 0.1
+    pinball = res["geometry"] == "pinball"
+    r_max = 96 if pinball else R_MAX
+    res["Re"] = d_ref / res["nu"]
     keep = fom["t_steps"] >= config.LC_START
     res["cd_max"] = float(fom["cd"][keep].max())
     res["cd_mean"] = float(fom["cd"][keep].mean())
     res["cl_max"] = float(fom["cl"][keep].max())
     res["cl_min"] = float(fom["cl"][keep].min())
-    res.update(periodicity(fom["t_steps"], fom["cl"], config.LC_START))
+    res.update(periodicity(fom["t_steps"], fom["cl"], config.LC_START, d_ref, centre=pinball))
 
     start, train, total = config.LC_START, config.LC_TRAIN, config.LC_TOTAL
     t_full, truth, spline = config.window_states(fom, start, total)
@@ -85,9 +95,9 @@ def main(path, out_path):
     noisy = config.noise(clean, 0.01)
     for name, snaps in (("noisy_1pct", noisy), ("clean", clean)):
         U, s, _ = np.linalg.svd(snaps, full_matrices=False)
-        V = U[:, :R_MAX]
+        V = U[:, :r_max]
         res[f"floor_{name}"] = floors(V, truth, fc)
-        res[f"sv_{name}"] = [float(v) for v in s[:R_MAX + 1]]
+        res[f"sv_{name}"] = [float(v) for v in s[:r_max + 1]]
     f = np.array(res["floor_noisy_1pct"])
     hit = np.flatnonzero(f <= 0.02)
     res["r_2pct"] = int(hit[0] + 1) if len(hit) else None
@@ -99,7 +109,7 @@ def main(path, out_path):
     print(f"Re {res['Re']:g}: Cd_max {res['cd_max']:.4f} Cl_max {res['cl_max']:.4f} St {res['strouhal']:.4f}; "
           f"amp range {res['amplitude_range_rel']:.2%}, period range {res['period_range_rel']:.2%}, "
           f"harmonic share {res['harmonic_power_share']:.4f}; r_2pct {res['r_2pct']} r_3pct {res['r_3pct']}; "
-          f"floor r9/13/17/21/25/29 " + " ".join(f"{f[r - 1]:.2%}" for r in (9, 13, 17, 21, 25, 29)))
+          f"floor r9/13/17/21/25/29 " + " ".join(f"{f[r - 1]:.2%}" for r in (9, 13, 17, 21, 25, 29) if r <= len(f)))
 
 
 if __name__ == "__main__":

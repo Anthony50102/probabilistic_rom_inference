@@ -16,6 +16,9 @@ Drag and lift coefficients are saved at every step for validation against the be
 Run in the FEniCSx environment (serial):
     python fom_dolfinx.py --out cylinder_fom.npz --T 20 --dt 6.25e-4 --save_every 8
 --nu sets the viscosity (default 1e-3, Re 100); --nu 2.5e-4 gives Re 400 (higher-mode variant, DESIGN.md).
+--geometry pinball replaces the cylinder by the fluidic pinball (Deng, Noack, Morzynski & Pastur 2020, JFM 884 A37):
+three cylinders of diameter 0.05 on an equilateral triangle of side 1.5 diameters pointing upstream, front centre
+(0.2, 0.2); same channel, inflow and grid. Re = U_MEAN * 0.05 / nu; forces are summed over the three cylinders.
 """
 import argparse
 import time
@@ -37,14 +40,27 @@ INLET, OUTLET, WALLS, CYLINDER = 2, 3, 4, 5
 GRID_STEP = 0.01
 
 
-def build_mesh(h_cyl, h_wake, h_far):
+def cylinders(geometry):
+    """[(cx, cy, r), ...] and the reference diameter for the chosen geometry."""
+    if geometry == "cylinder":
+        return [(CX, CY, R)], D
+    if geometry == "pinball":
+        rp, side = 0.025, 0.075
+        dx, dy = side * np.cos(np.pi / 6), side / 2
+        return [(CX, CY, rp), (CX + dx, CY + dy, rp), (CX + dx, CY - dy, rp)], 2 * rp
+    raise ValueError(f"unknown geometry {geometry!r}")
+
+
+def build_mesh(h_cyl, h_wake, h_far, geometry="cylinder"):
+    cyls, _ = cylinders(geometry)
+    r_ref = cyls[0][2]
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     gmsh.model.add("cylinder")
     occ = gmsh.model.occ
     rect = occ.addRectangle(0, 0, 0, L, H)
-    disk = occ.addDisk(CX, CY, 0, R, R)
-    occ.cut([(2, rect)], [(2, disk)])
+    disks = [(2, occ.addDisk(cx, cy, 0, r, r)) for cx, cy, r in cyls]
+    occ.cut([(2, rect)], disks)
     occ.synchronize()
     surfaces = gmsh.model.getEntities(dim=2)
     gmsh.model.addPhysicalGroup(2, [s[1] for s in surfaces], 1)
@@ -69,12 +85,12 @@ def build_mesh(h_cyl, h_wake, h_far):
     field.setNumber(near, "InField", dist)
     field.setNumber(near, "SizeMin", h_cyl)
     field.setNumber(near, "SizeMax", h_wake)
-    field.setNumber(near, "DistMin", 0.25 * R)
-    field.setNumber(near, "DistMax", 2 * R)
+    field.setNumber(near, "DistMin", 0.25 * r_ref)
+    field.setNumber(near, "DistMax", 2 * r_ref)
     wake = field.add("Box")
     field.setNumber(wake, "VIn", h_wake)
     field.setNumber(wake, "VOut", h_far)
-    field.setNumber(wake, "XMin", CX - 2 * R)
+    field.setNumber(wake, "XMin", CX - 2 * r_ref)
     field.setNumber(wake, "XMax", L)
     field.setNumber(wake, "YMin", 0)
     field.setNumber(wake, "YMax", H)
@@ -90,19 +106,21 @@ def build_mesh(h_cyl, h_wake, h_far):
     return msh, facets
 
 
-def sampling_grid():
+def sampling_grid(geometry="cylinder"):
     xs = np.round(np.arange(0, L + 1e-9, GRID_STEP), 10)
     ys = np.round(np.arange(0, H + 1e-9, GRID_STEP), 10)
     X, Y = np.meshgrid(xs, ys, indexing="xy")              # (len(ys), len(xs))
-    inside = (X - CX) ** 2 + (Y - CY) ** 2 <= R ** 2
+    inside = np.zeros(X.shape, dtype=bool)
+    for cx, cy, r in cylinders(geometry)[0]:
+        inside |= (X - cx) ** 2 + (Y - cy) ** 2 <= r ** 2
     return xs, ys, X, Y, inside
 
 
 class PointSampler:
     """Evaluates a vector P2 field at the fluid grid points (zero inside the cylinder)."""
 
-    def __init__(self, msh):
-        xs, ys, X, Y, inside = sampling_grid()
+    def __init__(self, msh, geometry="cylinder"):
+        xs, ys, X, Y, inside = sampling_grid(geometry)
         self.shape, self.inside = X.shape, inside
         pts = np.zeros((X.size, 3))
         pts[:, 0], pts[:, 1] = X.ravel(), Y.ravel()
@@ -129,7 +147,8 @@ def ramp(t, t_ramp=0.5):
 
 def solve(args):
     t_start = time.time()
-    msh, facets = build_mesh(args.h_cyl, args.h_wake, args.h_far)
+    msh, facets = build_mesh(args.h_cyl, args.h_wake, args.h_far, args.geometry)
+    d_ref = cylinders(args.geometry)[1]
     V = fem.functionspace(msh, element("Lagrange", msh.basix_cell(), 2, shape=(2,)))
     Q = fem.functionspace(msh, element("Lagrange", msh.basix_cell(), 1))
     fdim = msh.topology.dim - 1
@@ -189,11 +208,11 @@ def solve(args):
     n_cyl = -ufl.FacetNormal(msh)                            # out of the cylinder, into the fluid
     ds_cyl = ufl.Measure("ds", domain=msh, subdomain_data=facets, subdomain_id=CYLINDER)
     sigma = -p_ * ufl.Identity(2) + mu * (ufl.grad(u_) + ufl.grad(u_).T)
-    coef = 2.0 / (U_MEAN ** 2 * D)
+    coef = 2.0 / (U_MEAN ** 2 * d_ref)
     drag = fem.form(coef * ufl.dot(sigma, n_cyl)[0] * ds_cyl)
     lift = fem.form(coef * ufl.dot(sigma, n_cyl)[1] * ds_cyl)
 
-    sampler = PointSampler(msh)
+    sampler = PointSampler(msh, args.geometry)
     num_steps = int(round(args.T / args.dt))
     n_save = num_steps // args.save_every + 1
     snaps = np.zeros((n_save, 2 * sampler.npts), dtype=np.float32)
@@ -202,7 +221,7 @@ def solve(args):
     snaps[0] = sampler(u_)
     j = 1
     t = 0.0
-    print(f"Re = {U_MEAN * D / args.nu:g} (nu {args.nu:g})", flush=True)
+    print(f"{args.geometry}: Re = {U_MEAN * d_ref / args.nu:g} (nu {args.nu:g})", flush=True)
     print(f"mesh: {msh.topology.index_map(2).size_global} cells, velocity dofs "
           f"{V.dofmap.index_map.size_global * 2}, pressure dofs {Q.dofmap.index_map.size_global}, "
           f"grid {sampler.shape}, steps {num_steps}", flush=True)
@@ -253,9 +272,9 @@ def solve(args):
             j += 1
         if (i + 1) % max(1, num_steps // 40) == 0:
             print(f"  t = {t:7.3f}  Cd {cd[i]:.4f}  Cl {cl[i]:+.4f}  ({time.time() - t_start:.0f} s)", flush=True)
-    xs, ys, _, _, inside = sampling_grid()
+    xs, ys, _, _, inside = sampling_grid(args.geometry)
     np.savez(args.out, t=t_save[:j], snapshots=snaps[:j], t_steps=t_steps, cd=cd, cl=cl, xs=xs, ys=ys,
-             inside=inside, dt=args.dt, nu=args.nu, h_cyl=args.h_cyl, h_wake=args.h_wake, h_far=args.h_far,
+             inside=inside, dt=args.dt, nu=args.nu, geometry=args.geometry, D=d_ref, h_cyl=args.h_cyl, h_wake=args.h_wake, h_far=args.h_far,
              cells=msh.topology.index_map(2).size_global, runtime=time.time() - t_start)
     print(f"saved {args.out}: {j} snapshots, {time.time() - t_start:.0f} s", flush=True)
 
@@ -281,4 +300,5 @@ if __name__ == "__main__":
     ap.add_argument("--h_wake", type=float, default=0.0125)
     ap.add_argument("--h_far", type=float, default=0.03)
     ap.add_argument("--nu", type=float, default=NU, help="kinematic viscosity; Re = U_MEAN * D / nu (default 100)")
+    ap.add_argument("--geometry", choices=("cylinder", "pinball"), default="cylinder")
     solve(ap.parse_args())
