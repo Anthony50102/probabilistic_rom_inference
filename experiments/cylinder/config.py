@@ -24,7 +24,7 @@ FOM_PATH = os.environ.get("CYL_FOM", os.path.join(HERE, "data", "fom_medium.npz"
 LC_START = 16.0
 LC_TRAIN, LC_TOTAL = 1.0, 3.0
 TR_LOW, TR_HIGH, TR_TOTAL_FACTOR = 0.1, 0.6, 3.0
-SAMPLES_PER_TIME = {"dense": 250, "sparse": 55}       # per time unit: the Euler counts over a 1.0 window
+SAMPLES_PER_TIME = {"dense": 250, "sparse": 55}       # per 10 D/U (a 1.0 window for the cylinder): the Euler counts
 
 
 class Basis(opinf.basis.PODBasis):
@@ -38,8 +38,11 @@ class Basis(opinf.basis.PODBasis):
 
 def load_fom(path=FOM_PATH):
     d = np.load(path)
+    D = float(d["D"]) if "D" in d.files else 0.1
     return dict(t=d["t"], snapshots=d["snapshots"], t_steps=d["t_steps"], cl=d["cl"], cd=d["cd"],
-                xs=d["xs"], ys=d["ys"], inside=d["inside"])
+                xs=d["xs"], ys=d["ys"], inside=d["inside"], D=D, time_scale=D / 0.1,
+                geometry=str(d["geometry"]) if "geometry" in d.files else "cylinder",
+                nu=float(d["nu"]) if "nu" in d.files else 1e-3)
 
 
 def cycle_amplitudes(t_steps, cl):
@@ -54,12 +57,16 @@ def cycle_amplitudes(t_steps, cl):
 
 
 def task_window(task, fom):
-    """(start, training length, total length) of a task, in the FOM's absolute time."""
+    """(start, training length, total length) of a task, in the FOM's absolute time.
+
+    lc is defined in convective units (D/U): for a geometry with reference diameter D the times scale by D / 0.1
+    (the pinball, D = 0.05: train [8, 8.5], forecast to 9.5); the cylinder's window is unchanged."""
     if task == "lc":
-        return LC_START, LC_TRAIN, LC_TOTAL
+        s = fom.get("time_scale", 1.0)
+        return s * LC_START, s * LC_TRAIN, s * LC_TOTAL
     if task == "tr":
         times, amps = cycle_amplitudes(fom["t_steps"], fom["cl"])
-        a_inf = np.median(amps[times >= LC_START])
+        a_inf = np.median(amps[times >= fom.get("time_scale", 1.0) * LC_START])
         rel = amps / a_inf
         k_b = int(np.flatnonzero(rel >= TR_HIGH)[0])
         below = np.flatnonzero(rel[:k_b] <= TR_LOW)

@@ -57,7 +57,7 @@ class CylinderSpec:
     def prepare(self, cfg, schema):
         start, train, total = schema["window"]
         t_full, true_states, spline = config.window_states(self.fom, start, total)
-        n = int(round(config.SAMPLES_PER_TIME[schema["density"]] * train))
+        n = int(round(config.SAMPLES_PER_TIME[schema["density"]] * train / self.fom["time_scale"]))
         t_samp = np.sort(np.random.uniform(0, train, n))
         t_samp[0], t_samp[-1] = 0.0, train
         snaps_samp = config.noise(spline(t_samp).T, schema["NOISE_LEVEL"])
@@ -157,7 +157,8 @@ def summarize(result, prepared, schema, cfg, out_dir):
     lead = int(np.argmax(np.std(truth_c[:, fc], axis=1)))
     out["lead_mode"] = lead
     T_true = _period(t[fc], truth_c[lead, fc])
-    out["strouhal_true"] = 0.1 / T_true
+    D = prepared.fom_D
+    out["strouhal_true"] = D / T_true
     out["amplitude_true"] = float(np.std(truth_c[lead, fc]))
 
     sols = np.asarray(score["rom_solves"])
@@ -175,9 +176,9 @@ def summarize(result, prepared, schema, cfg, out_dir):
         out["full_order_error_forecast"] = _rel(full_med[:, fc], X[:, fc])
         out["full_order_error_forecast_fluct"] = _rel_fluct(full_med[:, fc], X[:, fc])
         T_med = _period(t[fc], med[lead, fc])
-        out["strouhal_median"] = 0.1 / T_med
+        out["strouhal_median"] = D / T_med
         out["amplitude_median"] = float(np.std(med[lead, fc]))
-        st_draws = np.array([0.1 / _period(t[fc], s[lead, fc]) for s in sols])
+        st_draws = np.array([D / _period(t[fc], s[lead, fc]) for s in sols])
         st_draws = st_draws[np.isfinite(st_draws)]
         if len(st_draws):
             out["strouhal_draws_5_50_95"] = [float(v) for v in np.percentile(st_draws, [5, 50, 95])]
@@ -203,7 +204,7 @@ def summarize(result, prepared, schema, cfg, out_dir):
         out["least_squares"] = dict(
             stable=True, regularizer=lam, train_error=_rel(sol[:, fit], truth_c[:, fit]),
             pred_error=_rel(sol[:, fc], truth_c[:, fc]), pred_error_fluct=_rel_fluct(sol[:, fc], truth_c[:, fc]),
-            strouhal=0.1 / _period(t[fc], sol[lead, fc]), amplitude=float(np.std(sol[lead, fc])))
+            strouhal=D / _period(t[fc], sol[lead, fc]), amplitude=float(np.std(sol[lead, fc])))
         plot["least_squares"] = sol[:PLOT_MODES]
     with open(os.path.join(out_dir, "summary.json"), "w") as f:
         json.dump(out, f, indent=1)
@@ -228,6 +229,8 @@ def main():
     name = (f"{args.task}_{args.regime}_r{args.modes}" + ("_f64" if args.precision == "float64" else "")
             + ("_ep" if args.quad_constraint == "energy_preserving" else "")
             + ("_shift" if args.feature_shift == "training_mean" else ""))
+    if fom["geometry"] != "cylinder":                         # e.g. pinball_re90_lc_dense_low_noise_r25
+        name = f"{fom['geometry']}_re{fom['D'] / fom['nu']:.0f}_{name}"
     schema = dict(REGIMES[args.regime], name=name, task=args.task, regime=args.regime, modes=args.modes,
                   precision=args.precision, quad_constraint=args.quad_constraint, feature_shift=args.feature_shift,
                   window=tuple(float(w) for w in window),
@@ -240,6 +243,7 @@ def main():
     def prepare(cfg_, schema_):
         prepared = original(cfg_, schema_)
         prepared.fom_grid = (fom["xs"], fom["ys"], fom["inside"])
+        prepared.fom_D = fom["D"]
         prepared_holder["p"] = prepared
         return prepared
 
