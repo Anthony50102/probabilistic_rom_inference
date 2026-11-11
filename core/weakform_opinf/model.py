@@ -458,16 +458,18 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         if pooled or structured or centred or input_scale:
             raise ValueError("quad_constraint / feature_shift support a single unpooled operator without structured "
                              "rows, a prior mean or input scales")
-        if any(tr.get("inputs_eval") is not None for tr in trajectories):
-            raise ValueError("quad_constraint / feature_shift need a library without inputs")
+        traj_inputs = [tr.get("inputs_eval") for tr in trajectories]
+        if any(u is None for u in traj_inputs) and any(u is not None for u in traj_inputs):
+            raise ValueError("Either every trajectory or none must supply inputs_eval")
+        num_inputs = 0 if traj_inputs[0] is None else int(np.atleast_2d(np.asarray(traj_inputs[0])).shape[0])
     if shifted:
         shift_np = np.concatenate([np.asarray(tr["snapshots_comp"], dtype=float) for tr in trajectories],
                                   axis=1).mean(axis=1)
-        shift_G = jnp.asarray(_cons.shift_matrix(rom, num_modes, shift_np))
+        shift_G = jnp.asarray(_cons.shift_matrix(rom, num_modes, shift_np, num_inputs))
         shift_col = jnp.asarray(shift_np)[:, None]
         operator_prior["feature_shift"] = dict(rule="training_mean", shift=shift_np.tolist())
     if constrained:
-        constraint_C = jnp.asarray(_cons.energy_preserving_matrix(rom, num_modes))
+        constraint_C = jnp.asarray(_cons.energy_preserving_matrix(rom, num_modes, num_inputs))
         operator_prior["quad_constraint"] = dict(rule="energy_preserving", n_constraints=int(constraint_C.shape[0]),
                                                  reference="Goyal, Pontes Duff & Benner 2023, arXiv:2308.13819")
 

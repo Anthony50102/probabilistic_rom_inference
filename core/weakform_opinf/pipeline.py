@@ -151,7 +151,9 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
     rng_key, ok = random.split(rng_key)
     keys = jax.random.split(ok, npost)
 
-    constraint_C = (jnp.asarray(energy_preserving_matrix(rom, num_modes))
+    num_inputs = (0 if prepared.trajectories[0].get("inputs_eval") is None
+                  else int(np.atleast_2d(np.asarray(prepared.trajectories[0]["inputs_eval"])).shape[0]))
+    constraint_C = (jnp.asarray(energy_preserving_matrix(rom, num_modes, num_inputs))
                     if cfg.quad_constraint == "energy_preserving" else None)
 
     @jax.jit

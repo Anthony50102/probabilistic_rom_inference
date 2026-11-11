@@ -7,8 +7,10 @@ choosing which index is the row — so it is a linear constraint C vec(O) = 0 on
 Gaussian operator posterior on it is exact and closed form. It is invariant under a shift of the state, since the
 quadratic coefficients do not change.
 
-Shifted features: the operator is fitted to features of z = q − q̄ (q̄ fixed); for a polynomial library without
-inputs, features(q − q̄) = G features(q) for a constant G, so the operator in q-coordinates is O_q = O_z Gᵀ exactly.
+Shifted features: the operator is fitted to features of z = q − q̄ (q̄ fixed); for a polynomial library,
+features(q − q̄, u) = G features(q, u) for a constant G, so the operator in q-coordinates is O_q = O_z Gᵀ exactly.
+Inputs are not shifted: u ⊗ (q − q̄) = u ⊗ q − u ⊗ q̄ only mixes state-input columns into input columns.
+Every helper takes num_inputs (0 = no inputs) and probes the library with random positive inputs.
 """
 
 from __future__ import annotations
@@ -21,22 +23,29 @@ import jax.experimental
 import jax.numpy as jnp
 
 
-def _features(rom, states):
-    """The ROM's own feature assembly at probe states, in float64 whatever the caller's precision."""
+def _features(rom, states, inputs=None):
+    """The ROM's own feature assembly at probe states (and inputs), in float64 whatever the caller's precision."""
     with jax.experimental.enable_x64(True):
-        return np.asarray(rom.model._assemble_data_matrix(jnp.asarray(states), inputs=None), dtype=float)
+        return np.asarray(rom.model._assemble_data_matrix(
+            jnp.asarray(states), inputs=None if inputs is None else jnp.asarray(inputs)), dtype=float)
 
 
 def _probe_states(num_modes, n):
     return np.random.default_rng(0).uniform(-1.5, 1.5, size=(num_modes, n))
 
 
-def quadratic_columns(rom, num_modes):
+def _probe_inputs(num_inputs, n):
+    if num_inputs == 0:
+        return None
+    return np.random.default_rng(1).uniform(0.5, 1.5, size=(num_inputs, n))
+
+
+def quadratic_columns(rom, num_modes, num_inputs=0):
     """{(j, k): column} for the pure quadratic columns q_j q_k (j ≤ k), read off the ROM's own feature assembly.
 
     Raises unless every pair appears exactly once."""
     Q = _probe_states(num_modes, 4 * num_modes ** 2 + 20)
-    F = _features(rom, Q)
+    F = _features(rom, Q, _probe_inputs(num_inputs, Q.shape[1]))
     found = {}
     for j, k in itertools.combinations_with_replacement(range(num_modes), 2):
         target = Q[j] * Q[k]
@@ -47,9 +56,9 @@ def quadratic_columns(rom, num_modes):
     return found
 
 
-def energy_preserving_matrix(rom, num_modes):
+def energy_preserving_matrix(rom, num_modes, num_inputs=0):
     """C (C(r+2, 3) × r·m), acting on vec(O) row-major (index i·m + column): C vec(O) = 0 ⇔ Σ_i q_i H_i(q⊗q) ≡ 0."""
-    cols = quadratic_columns(rom, num_modes)
+    cols = quadratic_columns(rom, num_modes, num_inputs)
     m = rom.model.operator_matrix.shape[1]
     rows = []
     for triple in itertools.combinations_with_replacement(range(num_modes), 3):
@@ -62,14 +71,15 @@ def energy_preserving_matrix(rom, num_modes):
     return np.asarray(rows)
 
 
-def shift_matrix(rom, num_modes, shift):
-    """G (m × m) with features(q − shift) = features(q) G (row-feature convention), so O_q = O_z Gᵀ.
+def shift_matrix(rom, num_modes, shift, num_inputs=0):
+    """G (m × m) with features(q − shift, u) = features(q, u) G (row-feature convention), so O_q = O_z Gᵀ.
 
     Fitted on probe states and checked to round-off; raises if the library is not closed under shifts."""
     shift = np.asarray(shift, dtype=float).reshape(num_modes, 1)
     m = rom.model.operator_matrix.shape[1]
     Q = _probe_states(num_modes, 4 * m + 20) + shift
-    F, F_shift = _features(rom, Q), _features(rom, Q - shift)
+    U = _probe_inputs(num_inputs, Q.shape[1])
+    F, F_shift = _features(rom, Q, U), _features(rom, Q - shift, U)
     G = np.linalg.lstsq(F, F_shift, rcond=None)[0]
     misfit = np.linalg.norm(F @ G - F_shift) / np.linalg.norm(F_shift)
     if not misfit < 1e-9:

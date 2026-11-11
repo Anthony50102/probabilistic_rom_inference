@@ -29,6 +29,22 @@ def _cah_rom(r, shift=None):
         operators=operators, operator_matrix=np.zeros((r, m)), _assemble_data_matrix=assemble))
 
 
+def _cahbn_rom(r, shift=None):
+    """cAHBN ROM, one input, opinf's layout [1 | q | ckron(q) | u | u ⊗ q]; optionally fitted to features of
+    (q − shift, u)."""
+    pairs = [(j, i) for i in range(r) for j in range(i + 1)]
+    m = 2 + 2 * r + len(pairs)
+
+    def assemble(states, inputs):
+        q = states if shift is None else states - jnp.asarray(shift)[:, None]
+        u = jnp.atleast_2d(inputs)[0]
+        return jnp.column_stack([jnp.ones(q.shape[1]), *q, *(q[j] * q[i] for j, i in pairs), u, *(u * q)])
+    operators = [SimpleNamespace(entries=np.zeros(shape))
+                 for shape in ((r,), (r, r), (r, len(pairs)), (r, 1), (r, r))]
+    return SimpleNamespace(model=SimpleNamespace(
+        operators=operators, operator_matrix=np.zeros((r, m)), _assemble_data_matrix=assemble))
+
+
 class _Float64:
     def setUp(self):
         context = jax.experimental.enable_x64(True)
@@ -73,6 +89,23 @@ class EnergyPreservingMatrixTests(_Float64, unittest.TestCase):
         quad = 1 + r + np.arange(r * (r + 1) // 2)
         np.testing.assert_allclose(G[np.ix_(quad, quad)], np.eye(len(quad)), atol=1e-12)
         np.testing.assert_allclose(G[np.ix_(quad, np.arange(1 + r))], 0.0, atol=1e-12)
+
+
+    def test_shift_and_constraint_with_inputs(self):
+        r, shift = 3, np.array([1.3, -0.4, 0.7])
+        rom = _cahbn_rom(r)
+        G = constraints.shift_matrix(rom, r, shift, num_inputs=1)
+        rng = np.random.default_rng(1)
+        q, u = rng.normal(size=(r, 7)), rng.uniform(0.2, 3.0, size=(1, 7))
+        np.testing.assert_allclose(constraints._features(rom, q, u) @ G,
+                                   constraints._features(rom, q - shift[:, None], u), atol=1e-12)
+        # the energy constraint touches the same quadratic columns as without inputs
+        nq = 1 + r + r * (r + 1) // 2
+        C, C_cah = (constraints.energy_preserving_matrix(rom, r, 1),
+                    constraints.energy_preserving_matrix(_cah_rom(r), r))
+        m = rom.model.operator_matrix.shape[1]
+        np.testing.assert_array_equal(C.reshape(-1, r, m)[:, :, :nq], C_cah.reshape(-1, r, nq))
+        np.testing.assert_array_equal(C.reshape(-1, r, m)[:, :, nq:], 0.0)
 
 
 class ConditioningTests(_Float64, unittest.TestCase):
@@ -176,6 +209,37 @@ class ModelTests(unittest.TestCase):
                                            rtol=1e-9, atol=1e-12)
             np.testing.assert_allclose(ours[3]["operator_prior"]["feature_shift"]["shift"], shift)
 
+    def test_shift_with_inputs_is_the_fit_on_shifted_features_mapped_back(self):
+        cfg = replace(self.cfg, sigma_O=1.0)
+        trajectories = [dict(self.trajectory, inputs_eval=np.full((1, 40), nu)) for nu in (0.8, 1.3)]
+        trajectories[1]["snapshots_comp"] = 0.9 * self.trajectory["snapshots_comp"] + 0.1
+        shift = np.concatenate([tr["snapshots_comp"] for tr in trajectories], axis=1).mean(axis=1)
+        values = {f"{kind}_{k}_{i}": self.theta[j][i] for k in range(2)
+                  for j, kind in enumerate(("lengthscale", "variance", "noise")) for i in range(2)}
+        tau = np.array([.5, 2., 1.5, .7, 1.1])
+        values["log_tau_block"] = jnp.log(jnp.asarray(tau))
+
+        def evidence(model):
+            trace = handlers.trace(handlers.substitute(model, data=values)).get_trace()
+            return float(trace["marg_O_evidence"]["fn"].log_factor)
+
+        def posterior(fn):
+            hypers = tuple(jnp.asarray(np.stack([x, x])) for x in self.theta)
+            mean, root = fn(hypers, None, None, jnp.asarray(tau))
+            return np.asarray(mean), np.asarray(root)
+        with pipeline.precision_context(cfg):
+            ours = build_model(_cahbn_rom(2), trajectories, replace(cfg, feature_shift="training_mean"))
+            manual = build_model(_cahbn_rom(2, shift), trajectories, cfg)
+            self.assertAlmostEqual(evidence(ours[0]), evidence(manual[0]), places=9)
+            G = constraints.shift_matrix(_cahbn_rom(2), 2, shift, num_inputs=1)
+            (mean_q, root_q), (mean_z, root_z) = posterior(ours[1]), posterior(manual[1])
+            np.testing.assert_allclose(mean_q, mean_z @ G.T, rtol=1e-10, atol=1e-12)
+            for i in range(2):
+                np.testing.assert_allclose(root_q[i] @ root_q[i].T, G @ root_z[i] @ root_z[i].T @ G.T,
+                                           rtol=1e-9, atol=1e-12)
+            # u (q_j − s_j) = u q_j − s_j u: the shifted state-input features draw on the input column
+            np.testing.assert_allclose(G[6, 7:], -shift, atol=1e-12)
+
     def test_unsupported_settings_raise(self):
         with self.assertRaises(ValueError):
             WeakFormConfig(num_modes=2, quad_constraint="trapping")
@@ -184,7 +248,8 @@ class ModelTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build_model(_cah_rom(2), [self.trajectory], cfg, prior_mean=np.zeros((2, 6)))
             with self.assertRaises(ValueError):
-                build_model(_cah_rom(2), [dict(self.trajectory, inputs_eval=np.ones((1, 40)))], cfg)
+                build_model(_cahbn_rom(2), [dict(self.trajectory, inputs_eval=np.ones((1, 40))), self.trajectory],
+                            cfg)
 
 
 if __name__ == "__main__":
