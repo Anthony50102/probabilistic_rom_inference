@@ -374,3 +374,13 @@ rule 1 requires.
   check) on that Re only, against a finer pinball mesh (h 0.0013 / 0.0042 / 0.01, dt 2.0833e-4, save_every 24, T 20).
 - If none qualifies: report and stop. The ROM fits for a qualifying Re are declared in a separate section, before
   any fit.
+
+### Amendment 1 (11 Nov 2026, 03:05 UTC, before any pinball result; runs at t ≤ 0.5 were stopped)
+- The first launch crashed at start-up (a `PointSampler` argument shadowed `dolfinx.geometry`; fixed in 334c850, no
+  step taken). The relaunch ran at ~2,600 s per time unit, so T 20 would take ~14.5 h and the fine check > 40 h.
+- The lc task is now defined in convective units (D/U), as it should be for a different diameter. The cylinder's
+  [16, 17] → 19 is 160 / 10 / 30 D/U, so the pinball's (D = 0.05) is train [8, 8.5], forecast to 9.5, with the same 250
+  basis samples (`scout_modes.py`; cylinder output unchanged, checked on the stored Re 100 file). Pinball runs (scout
+  and fine check) use T 10 (200 D/U). Everything else is as declared.
+- The fine cylinder runs (Re 300/400/600, at t 7-9.5 of 20) were stopped: no Re qualified, so rule 3 does not apply to
+  them, and they were slowing the pinball runs. The scout table above is the medium mesh only.

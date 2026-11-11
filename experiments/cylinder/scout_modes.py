@@ -15,7 +15,9 @@ For one FOM file (fom_dolfinx.py output) this reports, without any ROM fit:
 
 Pinball runs (fom_dolfinx.py --geometry pinball): the reference diameter is read from the file (0.05), lift
 crossings are counted about the window's mean lift (the pinball's lift need not oscillate about zero), and floors
-are reported up to r = 96. Cylinder runs are analysed exactly as before.
+are reported up to r = 96. The lc task is the cylinder's in convective units (D/U): times scale by D/0.1, so the
+pinball task is train [8, 8.5], forecast to 9.5, with the same 250 basis samples. Cylinder runs are analysed exactly
+as before.
 """
 import json
 import sys
@@ -77,18 +79,20 @@ def main(path, out_path):
     pinball = res["geometry"] == "pinball"
     r_max = 96 if pinball else R_MAX
     res["Re"] = d_ref / res["nu"]
-    keep = fom["t_steps"] >= config.LC_START
+    scale = d_ref / 0.1                                        # convective time units relative to the cylinder
+    start, train, total = (scale * v for v in (config.LC_START, config.LC_TRAIN, config.LC_TOTAL))
+    res["lc_window"] = [start, start + train, start + total]
+    keep = fom["t_steps"] >= start
     res["cd_max"] = float(fom["cd"][keep].max())
     res["cd_mean"] = float(fom["cd"][keep].mean())
     res["cl_max"] = float(fom["cl"][keep].max())
     res["cl_min"] = float(fom["cl"][keep].min())
-    res.update(periodicity(fom["t_steps"], fom["cl"], config.LC_START, d_ref, centre=pinball))
+    res.update(periodicity(fom["t_steps"], fom["cl"], start, d_ref, centre=pinball))
 
-    start, train, total = config.LC_START, config.LC_TRAIN, config.LC_TOTAL
     t_full, truth, spline = config.window_states(fom, start, total)
     fc = t_full > train
     np.random.seed(42)
-    n = int(round(config.SAMPLES_PER_TIME["dense"] * train))
+    n = int(round(config.SAMPLES_PER_TIME["dense"] * train / scale))
     t_samp = np.sort(np.random.uniform(0, train, n))
     t_samp[0], t_samp[-1] = 0.0, train
     clean = spline(t_samp).T
