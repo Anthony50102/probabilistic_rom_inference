@@ -423,3 +423,40 @@ irregular wakes), so no basis from one short window can forecast them, or mix se
 for 5; exploratory scout, no fits). This needs ν as an input to the model, and `feature_shift` does not yet support
 inputs. A held-out Re is not representable on such a basis (floor 7-13%), so only in-sample Re can be forecast.
 Not declared; awaiting a decision.
+
+## Parametric multi-Re ROM (design written before any fit; 11 Nov 2026)
+Why: the only forecastable 20+-mode setting found above. One POD basis is shared by two Reynolds numbers, and the
+viscosity enters as a known input, so a single learned model covers both flows.
+
+- Data: medium-mesh cylinder FOMs at Re 150 and 300 (training) and Re 200 (held out), the same files as the Re scan.
+  lc task, training window [16, 17], forecast to 19. 250 samples per Re (random times, ends pinned, drawn in turn from
+  the pipeline's seeded RNG), 1% noise. The scout used seed 42 for every Re, so floors here may differ slightly; the
+  floors reported are those of the run.
+- Basis: uncentred POD of the stacked noisy training samples of both Re (scout r_2%: 24 at Re 150, 25 at Re 300).
+- Model: Galerkin Navier–Stokes with ν = ν_ref·u is exactly `cAHBN` with a constant input u = Re_ref / Re (Re_ref
+  200; u 4/3 at Re 150, 2/3 at Re 300, 1 at Re 200): dq/dt = c + Aq + H(q⊗q) + u(b + Nq). Same weak-form Bayesian
+  method, settings and float64 precision as `04_unified.py`; one GP per trajectory; input-aware `feature_shift` and
+  `quad_constraint` (commit 6ac04d6, tests). Runner `05_multi_re.py` (commit 91d8fcf; smoke at r3 on subsampled
+  files only, not results).
+- Sweep: r ∈ {17, 21, 25, 29} × {free, shift (`--feature-shift training_mean`)} = 8 fits. The energy-preserving
+  constraint is not run (its draws were stiff and its forecasts 15-344% in the stability round).
+- Scored per Re (`summary.json` `per_re`): training Re on the forecast window (17, 19]; held-out Re on all of
+  (16, 19], since the model never saw it. PM* = the mean operator from the mean initial state (as in
+  `after_the_fact/rescore_mean.py`): full-order fluctuation error, Strouhal, bounded to 10× the training length.
+  Draws: median forecast error, % stable, 5-95% band coverage, 50 long draws bounded. Floor = the true state projected
+  on the basis. LS reference = deterministic cAHBN OpInf on both trajectories (λ: smallest training misfit among the
+  values bounded at both training Re; no truth used).
+- Primary reading (fixed now): the shift arm at r 25 succeeds if PM* is bounded and ≤ 5% full-order fluctuation error
+  at BOTH training Re, with the Strouhal number within 2%. Everything else is descriptive.
+- Practicality: a fit not finished 14 h after its start is stopped and reported as "not run".
+- Azure: 4 × F16as_v6 (one region each), two fits per VM on 8 cores each (pairs r29+r17 and r25+r21, one arm per VM).
+  Estimate 8-13 h for r29, ≤ $60. The VM smoke (r5, `--smoke`) is a plumbing check, not a result.
+
+Expectations (written before any fit):
+1. Floors at r 25 ≤ 2.5% at both training Re.
+2. Primary: shift r 25 PM* ≤ 5% at both training Re, St within 2%.
+3. In the shift arm, PM* error falls from r 17 to r 25 at both training Re.
+4. Draws: < 50% stable at r ≥ 21 in both arms; the stable-draw median is not near the floor.
+5. Held-out Re 200: PM* error ≥ its floor (~8%) and ≤ 20%.
+6. LS: unbounded or > 50% at every r.
+7. Every fit finishes within 14 h.
