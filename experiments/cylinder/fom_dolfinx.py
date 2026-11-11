@@ -119,8 +119,8 @@ def sampling_grid(geometry="cylinder"):
 class PointSampler:
     """Evaluates a vector P2 field at the fluid grid points (zero inside the cylinder)."""
 
-    def __init__(self, msh, geometry="cylinder"):
-        xs, ys, X, Y, inside = sampling_grid(geometry)
+    def __init__(self, msh, geom="cylinder"):
+        xs, ys, X, Y, inside = sampling_grid(geom)
         self.shape, self.inside = X.shape, inside
         pts = np.zeros((X.size, 3))
         pts[:, 0], pts[:, 1] = X.ravel(), Y.ravel()
