@@ -30,6 +30,12 @@ def test_sindy_recovers_sparse_operator_with_standard_unbiasing():
     np.testing.assert_array_equal(fitted != 0, expected != 0)
 
 
+def test_sindy_retained_ridge_matches_dense_ridge_at_zero_threshold():
+    X, Y, _, _, _ = regression_fixture()
+    np.testing.assert_allclose(sparse_coefficients(X, Y, .1, 0., unbias=False),
+                               ridge_coefficients(X, Y, .1), atol=1e-10)
+
+
 def test_training_score_does_not_drop_a_failed_reynolds_case():
     t = np.linspace(0, 1, 51)
     training = [dict(t_obs=t, obs=np.array([np.exp(-2*t)])) for _ in range(2)]

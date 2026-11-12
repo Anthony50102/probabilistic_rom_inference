@@ -926,3 +926,20 @@ POD coordinates need not have sparse governing equations; the library omits
 Re200 have already been inspected during development. Do not infer universal
 method superiority, or equate this classical SINDy baseline with specialized
 trapping/stability-constrained SINDy. Preserve the original fits and paper.
+
+### Narrow follow-up after the initial screen
+
+The initial 222-candidate screen selected all-zero operators for all six
+SINDy cases. Nonzero candidates generally failed the training rollout guard;
+these were not numerical fitting exceptions. Before interpreting this as a
+failure of sparse modeling, test one implementation choice: retain the
+STLSQ ridge penalty on its final support (`unbias=False`) rather than using
+the default final unregularized least-squares refit. Ill-conditioned POD
+libraries can make that refit consequential.
+
+Keep both derivative routes, all three cases, the identical alpha/threshold
+grid, and the same training-only selection. This adds 162 candidate fits and
+six selected models. Preserve all original results and disclose that this
+follow-up was declared after seeing them. It is not a fresh independent
+validation set. No further hyperparameter grid is selected from forecast
+truth. Test that zero-threshold retained-ridge STLSQ agrees with dense ridge.

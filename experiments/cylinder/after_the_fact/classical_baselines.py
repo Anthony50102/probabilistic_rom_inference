@@ -19,6 +19,7 @@ from experiments.cylinder.after_the_fact.stabilization import features, integrat
 CASES = ("jac20", "jac20-noise43", "jac20-r29")
 REYNOLDS = (150, 300, 200)
 METHODS = ("opinf_fd", "sindy_fd", "opinf_gp", "sindy_gp")
+REGULARIZED_METHODS = ("sindy_fd_regularized", "sindy_gp_regularized")
 RIDGES = np.logspace(-7, 2, 10)
 SPARSE_RIDGES = (1e-4, 1e-2, 1e-1)
 THRESHOLDS = (1e-4, 1e-3, 1e-2, 3e-2, 1e-1, 3e-1, 1., 3., 10.)
@@ -117,11 +118,11 @@ def ridge_coefficients(design, response, alpha):
     return Vh.T @ ((s / (s * s + alpha * alpha))[:, None] * (U.T @ response))
 
 
-def sparse_coefficients(design, response, alpha, threshold):
+def sparse_coefficients(design, response, alpha, threshold, unbias=True):
     import pysindy as ps
 
     optimizer = ps.STLSQ(threshold=threshold, alpha=alpha * alpha,
-                        max_iter=30, normalize_columns=False, unbias=True)
+                        max_iter=30, normalize_columns=False, unbias=unbias)
     optimizer.fit(design, response)
     return optimizer.coef_.T
 
@@ -146,7 +147,9 @@ def training_score(operator, training):
 
 
 def fit_method(training, method):
-    family, route = method.split("_")
+    family, route, *variant = method.split("_")
+    if method not in METHODS + REGULARIZED_METHODS:
+        raise ValueError(f"Unknown method {method}")
     design, response, fscale, yscale = regression_data(training, route)
     parameters = ([dict(alpha=float(a), threshold=None) for a in RIDGES] if family == "opinf" else
                   [dict(alpha=a, threshold=t) for a in SPARSE_RIDGES for t in THRESHOLDS])
@@ -157,7 +160,7 @@ def fit_method(training, method):
             warnings.simplefilter("always")
             try:
                 coefficients = (ridge_coefficients(design, response, parameter["alpha"]) if family == "opinf"
-                                else sparse_coefficients(design, response, **parameter))
+                                else sparse_coefficients(design, response, **parameter, unbias=not variant))
             except np.linalg.LinAlgError as error:
                 candidates.append(dict(**parameter, training_error=None, numerical_failure=str(error)))
                 print(f"{method} {parameter}: numerical failure {error}", flush=True)
@@ -198,7 +201,7 @@ def evaluate(operator, data, name, plots):
     return targets
 
 
-def fit_case(inputs, case, output, source_commit):
+def fit_case(inputs, case, output, source_commit, regularized_only=False):
     import importlib.metadata
 
     output.mkdir(parents=True, exist_ok=True)
@@ -210,7 +213,7 @@ def fit_case(inputs, case, output, source_commit):
     training = [{key: data[f"{key}_{k}"] for key in ("obs", "t_obs", "gp_states", "gp_rates")} for k in (0, 1)]
     plots = {key: value for key, value in data.items() if key.startswith(("truth_", "t_", "obs_", "reference_"))}
     models, operators = [], {}
-    for method in METHODS:
+    for method in (REGULARIZED_METHODS if regularized_only else METHODS):
         operator, report = fit_method(training, method)
         report["targets"] = None if operator is None else evaluate(operator, data, method, plots)
         if operator is not None:
@@ -231,7 +234,7 @@ def fit_case(inputs, case, output, source_commit):
                   ("numpy", "scipy", "scikit-learn", "pysindy")}))
 
 
-def report(results, output):
+def report(results, output, regularized=None):
     import matplotlib
     matplotlib.use("Agg")
     from matplotlib import pyplot as plt
@@ -240,11 +243,24 @@ def report(results, output):
     summaries = [json.loads((results / case / "summary.json").read_text()) for case in CASES]
     if len({s["source_commit"] for s in summaries}) != 1:
         raise ValueError("Mixed comparator source revisions")
+    if regularized is not None:
+        followups = [json.loads((regularized / case / "summary.json").read_text()) for case in CASES]
+        if len({s["source_commit"] for s in followups}) != 1:
+            raise ValueError("Mixed follow-up source revisions")
+        for summary, extra in zip(summaries, followups):
+            if summary["training_basis_hash"] != extra["training_basis_hash"] or summary["case"] != extra["case"]:
+                raise ValueError("Unmatched follow-up training data or basis")
+            summary["regularized_source_commit"] = extra["source_commit"]
+            summary["models"].extend(extra["models"])
     labels = {"reference": "Bayesian contraction", "opinf_fd": "OpInf / FD", "sindy_fd": "SINDy / FD",
-              "opinf_gp": "OpInf / GP", "sindy_gp": "SINDy / GP"}
+              "opinf_gp": "OpInf / GP", "sindy_gp": "SINDy / GP",
+              "sindy_fd_regularized": "SINDy / FD (ridge retained)",
+              "sindy_gp_regularized": "SINDy / GP (ridge retained)"}
     colors = {"reference": "black", "opinf_fd": "#8c8c8c", "sindy_fd": "#c44e52",
-              "opinf_gp": "#2878b5", "sindy_gp": "#e39c24"}
-    methods = ("reference",) + METHODS
+              "opinf_gp": "#2878b5", "sindy_gp": "#e39c24",
+              "sindy_fd_regularized": "#b86b93", "sindy_gp_regularized": "#7658a0"}
+    methods = ("reference",) + METHODS + (() if regularized is None else REGULARIZED_METHODS)
+    width = .75 / len(methods)
     rows = []
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
     for ax, summary in zip(axes, summaries):
@@ -268,9 +284,9 @@ def report(results, output):
                                  alpha=None if selection is None else selection["alpha"],
                                  threshold=None if selection is None else selection["threshold"],
                                  nonzero=None if selection is None else selection["nonzero"]))
-                x = k + (j-2)*.15
+                x = k + (j-(len(methods)-1)/2)*width
                 if error is not None:
-                    ax.bar(x, 100*error, width=.14, color=colors[method],
+                    ax.bar(x, 100*error, width=.95*width, color=colors[method],
                            label=labels[method] if k == 0 else None)
                 else:
                     ax.text(x, 1.01, "FAIL", transform=ax.get_xaxis_transform(), rotation=90,
@@ -284,41 +300,49 @@ def report(results, output):
         ax.set_yscale("log")
         ax.grid(axis="y", alpha=.2)
     axes[0].set_ylabel("Full-field fluctuation-relative forecast error (%)")
-    fig.legend(*axes[0].get_legend_handles_labels(), loc="lower center", ncol=5)
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="lower center", ncol=4, fontsize=8)
     fig.suptitle("Matched cylinder baselines; dashed green = POD floor; FAIL is not zero error")
-    fig.tight_layout(rect=(0, .1, 1, .87))
+    fig.tight_layout(rect=(0, .16, 1, .87))
     fig.savefig(output / "01_forecast_errors.png", dpi=160)
     plt.close(fig)
 
     for number, summary in enumerate(summaries, 2):
-        with np.load(results / summary["case"] / "plotdata.npz") as data:
-            fig, axes = plt.subplots(3, 3, figsize=(13, 9))
-            for k, re in enumerate(REYNOLDS):
-                t = data[f"t_{k}"]
-                for mode, ax in enumerate(axes[k]):
-                    ax.plot(t+16, data[f"truth_{k}"][mode], color="#16843d", lw=1.5, label="truth")
-                    for method in methods:
-                        key = f"{method}_{k}"
-                        if key in data:
-                            ax.plot(t+16, data[key][mode], color=colors[method], lw=1,
-                                    linestyle="--" if method == "reference" else "-", label=labels[method])
-                    if k < 2:
-                        ax.plot(data[f"t_obs_{k}"][::6]+16, data[f"obs_{k}"][mode, ::6], "k*", ms=3,
-                                label="observations (subset)")
-                        ax.axvline(17, color="gray", linestyle=":", lw=1)
+        with np.load(results / summary["case"] / "plotdata.npz") as archive:
+            data = {key: archive[key] for key in archive.files}
+        if regularized is not None:
+            with np.load(regularized / summary["case"] / "plotdata.npz") as archive:
+                for key in archive.files:
+                    if key in data:
+                        np.testing.assert_array_equal(data[key], archive[key])
                     else:
-                        ax.plot([16], data[f"reference_{k}"][mode, :1], "k*", ms=4)
-                    ax.set(xlabel="time", ylabel=f"Re{re}, POD {mode+1}")
-                failed = [labels[m["method"]] + ": " + ("selection failed" if m["targets"] is None
-                          else m["targets"][k]["short"]["reason"]) for m in summary["models"]
-                          if m["targets"] is None or not m["targets"][k]["short"]["bounded"]]
-                if failed:
-                    axes[k, 0].text(.02, .02, "\n".join(failed), transform=axes[k, 0].transAxes, fontsize=7)
-            fig.suptitle(f"r={summary['modes']}, seed {summary['seed']}; incomplete trajectories are omitted and labelled")
-            fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="lower center", ncol=4, fontsize=8)
-            fig.tight_layout(rect=(0, .09, 1, .95))
-            fig.savefig(output / f"{number:02d}_{summary['case']}_trajectories.png", dpi=160)
-            plt.close(fig)
+                        data[key] = archive[key]
+        fig, axes = plt.subplots(3, 3, figsize=(13, 9))
+        for k, re in enumerate(REYNOLDS):
+            t = data[f"t_{k}"]
+            for mode, ax in enumerate(axes[k]):
+                ax.plot(t+16, data[f"truth_{k}"][mode], color="#16843d", lw=1.5, label="truth")
+                for method in methods:
+                    key = f"{method}_{k}"
+                    if key in data:
+                        ax.plot(t+16, data[key][mode], color=colors[method], lw=1,
+                                linestyle="--" if method == "reference" else "-", label=labels[method])
+                if k < 2:
+                    ax.plot(data[f"t_obs_{k}"][::6]+16, data[f"obs_{k}"][mode, ::6], "k*", ms=3,
+                            label="observations (subset)")
+                    ax.axvline(17, color="gray", linestyle=":", lw=1)
+                else:
+                    ax.plot([16], data[f"reference_{k}"][mode, :1], "k*", ms=4)
+                ax.set(xlabel="time", ylabel=f"Re{re}, POD {mode+1}")
+            failed = [labels[m["method"]] + ": " + ("selection failed" if m["targets"] is None
+                      else m["targets"][k]["short"]["reason"]) for m in summary["models"]
+                      if m["targets"] is None or not m["targets"][k]["short"]["bounded"]]
+            if failed:
+                axes[k, 0].text(.02, .02, "\n".join(failed), transform=axes[k, 0].transAxes, fontsize=7)
+        fig.suptitle(f"r={summary['modes']}, seed {summary['seed']}; incomplete trajectories are omitted and labelled")
+        fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="lower center", ncol=4, fontsize=8)
+        fig.tight_layout(rect=(0, .09, 1, .95))
+        fig.savefig(output / f"{number:02d}_{summary['case']}_trajectories.png", dpi=160)
+        plt.close(fig)
     write_json(output / "summary.json", dict(cases=summaries, rows=rows))
     with (output / "results.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator="\n")
@@ -350,13 +374,15 @@ if __name__ == "__main__":
     fit.add_argument("--case", choices=CASES, required=True)
     fit.add_argument("--output", type=Path, required=True)
     fit.add_argument("--source-commit", required=True)
+    fit.add_argument("--regularized-only", action="store_true")
     show = commands.add_parser("report")
     show.add_argument("--results", type=Path, required=True)
     show.add_argument("--output", type=Path, required=True)
+    show.add_argument("--regularized", type=Path)
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args.fits, args.fom, args.output)
     elif args.command == "fit":
-        fit_case(args.inputs, args.case, args.output, args.source_commit)
+        fit_case(args.inputs, args.case, args.output, args.source_commit, args.regularized_only)
     else:
-        report(args.results, args.output)
+        report(args.results, args.output, args.regularized)
