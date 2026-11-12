@@ -156,7 +156,11 @@ def prepare(saved, fom_dir, output):
                          state_scale=float(S), fluct_range=[float(amp.min()), float(amp.max())])))
 
 
-def cases():
+def cases(jacobian_global=False):
+    if jacobian_global:
+        return [dict(id=f"jacglobal{i:02d}", shift=False, prior="global", multiplier=1., power=1.,
+                     damping=damp, jac_sd=sd)
+                for i, (damp, sd) in enumerate((d, s) for d in (0., 1., 5., 20.) for s in (.3, 1., 3., 10.))]
     rows = []
     for shift in (False, True):
         for prior in ("global", "row", "balanced"):
@@ -310,6 +314,7 @@ if __name__ == "__main__":
     p.add_argument("output", type=Path)
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--draws", type=int, default=32)
+    p.add_argument("--jacobian-global", action="store_true")
     args = parser.parse_args()
     if args.command == "check":
         check()
@@ -318,5 +323,6 @@ if __name__ == "__main__":
     else:
         args.output.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(args.workers, mp_context=multiprocessing.get_context("spawn")) as pool:
-            results = list(pool.map(run_one, [(args.cache, args.output, case, args.draws) for case in cases()]))
+            results = list(pool.map(run_one, [(args.cache, args.output, case, args.draws)
+                                             for case in cases(args.jacobian_global)]))
         (args.output / "summary.json").write_text(json.dumps(results, indent=2))

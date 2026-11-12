@@ -608,3 +608,15 @@ scale changing with the data), separating more observations from automatic extra
 two short-window fits on fix1; all other rules stay unchanged. A screen-only status-label correction now names
 an original-state-cap failure explicitly rather than leaving its successful numerical-solver message; bounded
 flags and every reported score are unchanged.
+
+**Feedback and Jacobian ablations, declared before any stage-2 forecast is read.** Two further r25 runs,
+`modular42` and `modular43`, use fixed SD multiplier 0.3 and the original data windows/seeds 42/43. Fit the
+GP hyperparameter posterior to observations only (same priors, AutoNormal, 6000 updates), then sample the
+unchanged closed-form conditional operator posterior given each GP draw. This removes feedback from the
+operator evidence into the smoother while retaining GP uncertainty. It is modular Bayesian inference, not
+the paper's joint posterior, and will be labelled separately even if it helps.
+
+The first local-Jacobian screens used the row-scaled shifted prior, whose own mean fit was poor. To avoid
+attributing that baseline's bias to the stability idea, repeat the same 16 damping/SD combinations on the
+unshifted global prior (multiplier 1), still with fixed GP hypers and 32 draws. No new parameter grid is
+selected from forecast truth. All 78 conditional screens and 13 full/modular fits will be reported.

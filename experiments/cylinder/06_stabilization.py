@@ -21,11 +21,13 @@ sys.path.insert(0, str(HERE.parents[1]))
 sys.path.insert(0, str(HERE))
 import jax
 import jax.numpy as jnp
+import numpyro
 from numpyro.infer import SVI, Trace_ELBO, autoguide, init_to_median
 from numpyro.optim import ClippedAdam
 
 from core.weakform_opinf import WeakFormConfig
-from core.weakform_opinf.model import build_model
+from core.weakform_opinf import gp
+from core.weakform_opinf.model import _prior_locs, _sample_gp_hypers, build_model
 from core.weakform_opinf.pipeline import _ic_sigma, _stack_theta
 from after_the_fact.stabilization import integrate
 
@@ -41,8 +43,20 @@ def atomic_pickle(value, path):
     temporary.replace(path)
 
 
-def inference(prepared, cfg, out):
+def inference(prepared, cfg, out, gp_only=False):
     model, posterior, grids, priors = build_model(prepared.rom, prepared.trajectories, cfg)
+    if gp_only:
+        locs = [_prior_locs(tr, cfg) for tr in prepared.trajectories]
+        batches = [gp.trajectory_gp_conditional(tr, cfg)(grid)[1]
+                   for tr, grid in zip(prepared.trajectories, grids)]
+
+        def model(gamma2=None):
+            total = 0.
+            for th, batch, tr in zip(_sample_gp_hypers(locs, cfg), batches, prepared.trajectories):
+                total += jnp.sum(batch(*th, jnp.asarray(tr["snapshots_comp"]))[4])
+            numpyro.factor("gp_mll", total)
+
+        priors["inference"] = "modular: GP posterior uses observations only; O conditional remains Gaussian"
     (out / "priors.json").write_text(json.dumps(priors, indent=2))
     gamma = priors["gamma2"]
     guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
@@ -178,13 +192,18 @@ def main(args):
                          num_eval_points=args.eval_points, ic_uncertainty=True)
     if cfg.num_steps < 100 or cfg.num_steps % 100:
         raise ValueError("Steps must be a positive multiple of 100")
+    if args.gp_only and cfg.op_prior_mode != "fixed":
+        raise ValueError("GP-only inference requires fixed operator-prior scales")
     window = (14., 3., 5.) if args.longer else (16., 1., 3.)
     spec = multi_re.MultiReSpec([150., 300.], [200.], window=window, samples=450 if args.longer else 250)
-    request = dict(config=asdict(cfg), window=window, samples=spec.samples)
+    request = dict(config=asdict(cfg), window=window, samples=spec.samples, gp_only=args.gp_only)
     args.output.mkdir(parents=True, exist_ok=True)
     request_path = args.output / "request.json"
-    if request_path.exists() and json.loads(request_path.read_text()) != json.loads(json.dumps(request)):
-        raise ValueError("Existing experiment has a different request")
+    if request_path.exists():
+        previous = json.loads(request_path.read_text())
+        previous.setdefault("gp_only", False)
+        if previous != json.loads(json.dumps(request)):
+            raise ValueError("Existing experiment has a different request")
     request_path.write_text(json.dumps(request, indent=2))
     np.random.seed(cfg.seed)
     prepared = spec.prepare(cfg, {})
@@ -193,8 +212,9 @@ def main(args):
         with np.load(args.output / "posterior.npz") as data:
             arrays = {key: data[key] for key in data.files}
     else:
-        arrays = inference(prepared, cfg, args.output)
+        arrays = inference(prepared, cfg, args.output, args.gp_only)
     result = score(prepared, cfg, arrays, args.output)
+    result["gp_only"] = args.gp_only
     result["seconds_this_invocation"] = time.time() - started
     (args.output / "summary.json").write_text(json.dumps(result, indent=2))
 
@@ -211,4 +231,5 @@ if __name__ == "__main__":
     parser.add_argument("--draws", type=int, default=500)
     parser.add_argument("--eval-points", type=int, default=200)
     parser.add_argument("--longer", action="store_true")
+    parser.add_argument("--gp-only", action="store_true", help="modular GP posterior without operator-evidence feedback")
     main(parser.parse_args())
