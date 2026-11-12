@@ -770,3 +770,32 @@ The rank29 mean maintains oscillations at the training Re, while its held-out-Re
 decays in the long plot, illustrating why boundedness alone is not an accuracy claim. The broad control,
 fixed shrinkage, narrow hierarchy, longer-history controls and warm starts have 0/50 long survivors at
 both training Re; modular42 has only 1/50 at Re300 and zero at Re150.
+
+### Completed convergence check
+
+The `modular43` continuation completed all 12000 updates. Its settings differ only in the requested
+update count; the original 6000 losses are an exact prefix, and the basis and observations are unchanged.
+The last two 500-update loss means differ by only 0.049 (last-1000 individual-loss SD 6.70), but the
+forecasts barely change:
+
+| Fit | Mean-operator error (%), Re150 / Re300 / Re200 | Bounded draws (%) |
+|---|---|---|
+| modular43-continued | 17.76 / 4.40 / 68.24 | 82.2 / 82.4 / 23.0 |
+
+All three expanded-budget long checks have 0/50 survivors, with every failure hitting the amplitude cap.
+Thus merely doubling this optimizer run does not rescue the GP-only comparator. Flat losses are not a
+proof of a global optimum, but the original seed sensitivity is not explained by this small remaining
+optimization drift. Keep the original result and its continuation separately in all tables.
+
+The final report contains 78 conditional screens, 19 full/modular fits and this one continuation.
+All 20 evaluations reproduce their original short mean trajectories and long-survival counts before
+raising the long-horizon work budget. Complete numerical tables and compact summaries are retained in
+`after_the_fact/stabilization_results/`; the nine figures, detailed JSON and definitions are exported to
+`~/Downloads/cylinder_plots/multi_re/stabilization/`. Start with `09_rank29_uncertainty.png`.
+
+All fit and final-report artifacts were downloaded and SHA256-verified before retiring the workers.
+The six Azure F16as_v6 workers are deallocated, and deletion of this study's resource group
+`rg-thesis-rom-stability-20261112` was verified at 2026-11-12 11:54 UTC. No unrelated groups were removed.
+Cached public Linux on-demand rates times creation-to-deallocation lifetimes give a compute estimate of
+$27.98; allowing roughly $1 for disks/public IPs gives about $29 total, not a billed-spend figure.
+Per-worker times, rates and assumptions are in `after_the_fact/stabilization_results/cloud_run.json`.

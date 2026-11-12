@@ -1,0 +1,3807 @@
+{
+  "conditional_cases": 78,
+  "full_refits": 19,
+  "checkpoint_continuations": 1,
+  "joint": {
+    "longer-fixed09": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 600,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.9,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.018443325407658584,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 2.9500764039128575,
+              "calls": 12776,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 3.0614036844405224,
+              "calls": 13382,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 499,
+            "RHS evaluation budget exhausted": 1
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 2.9500764039165293,
+            "calls": 12776,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 2.9500764039165293,
+            "calls": 12776,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.016813166528167223,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 2.4060445744419208,
+              "calls": 9350,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 2.424396612335569,
+              "calls": 9518,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 1,
+          "survival": 0.002,
+          "failures": {
+            "cap": 496,
+            "RHS evaluation budget exhausted": 3
+          },
+          "median_error": 1.215013623509563,
+          "coverage_survivors": 0.0,
+          "width_over_fluct": 0.0,
+          "mean_long": {
+            "bounded": false,
+            "stop": 2.4060445744455925,
+            "calls": 9350,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 2.4060445744455925,
+            "calls": 9350,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07772128780593546,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 3.127559913936351,
+              "calls": 13076,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 3.199688166662455,
+              "calls": 13418,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 499,
+            "RHS evaluation budget exhausted": 1
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.1275599139400225,
+            "calls": 13076,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.1275599139400225,
+            "calls": 13076,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        }
+      ],
+      "seconds_this_invocation": 16714.42342066765
+    },
+    "noise43": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 43
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.019316536880006268,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.815718261010324,
+              "calls": 4292,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.8261514241523376,
+              "calls": 4232,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.8157182610158147,
+            "calls": 4292,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.8157182610158147,
+            "calls": 4292,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.017197643730984525,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.6749541369564187,
+              "calls": 4022,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.6738728346675165,
+              "calls": 3986,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.6749541369619094,
+            "calls": 4022,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.6749541369619094,
+            "calls": 4022,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07784836586711884,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.9195835450582455,
+              "calls": 4688,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.843555348153235,
+              "calls": 4520,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.9195835450637362,
+            "calls": 4688,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.9195835450637362,
+            "calls": 4688,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "seconds_this_invocation": 3427.134041070938
+    },
+    "narrow03": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "block_hier",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 0.35,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13862,
+              "reason": "complete",
+              "error": 0.0978577883377346
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13754,
+              "reason": "complete",
+              "error": 0.15179329184417342
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 4.484024204699743,
+            "calls": 20522,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 16034,
+              "reason": "complete",
+              "error": 0.20734716693467758
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 16130,
+              "reason": "complete",
+              "error": 0.3607128288148019
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.7189204643702336,
+            "calls": 19988,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.7189204643702336,
+            "calls": 19988,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.656622762903774,
+              "calls": 8096,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.656517467239011,
+              "calls": 8282,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.6566227629092647,
+            "calls": 8096,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.6566227629092647,
+            "calls": 8096,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "seconds_this_invocation": 3452.072584629059
+    },
+    "broad-control": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "block_hier",
+        "op_prior_scale": 1.0,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13790,
+              "reason": "complete",
+              "error": 0.11065510746999035
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13658,
+              "reason": "complete",
+              "error": 0.20577997516514596
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 4.185605416924395,
+            "calls": 18800,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 4.185605416924395,
+            "calls": 18800,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 16058,
+              "reason": "complete",
+              "error": 0.2636036097455257
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 16238,
+              "reason": "complete",
+              "error": 0.49625960498141175
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.3745396568035386,
+            "calls": 18464,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.3745396568035386,
+            "calls": 18464,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.64351189045317,
+              "calls": 8150,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.6581222226493944,
+              "calls": 8396,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.6435118904586608,
+            "calls": 8150,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.6435118904586608,
+            "calls": 8150,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "seconds_this_invocation": 3448.113057613373
+    },
+    "noise44": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 44
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.019125406357770415,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.2358592167328686,
+              "calls": 2954,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.2360613797962614,
+              "calls": 2942,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.2358592167383593,
+            "calls": 2954,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.2358592167383593,
+            "calls": 2954,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.017261291192601457,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.5766876908083969,
+              "calls": 3770,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.6261632009552587,
+              "calls": 3908,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.5766876908138876,
+            "calls": 3770,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.5766876908138876,
+            "calls": 3770,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778207975920958,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.2190380010112754,
+              "calls": 2924,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.217100194464567,
+              "calls": 2894,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.219038001016766,
+            "calls": 2924,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.219038001016766,
+            "calls": 2924,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "seconds_this_invocation": 3469.7627413272858
+    },
+    "warm42": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11180,
+              "reason": "complete",
+              "error": 1.3963236911272083
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11228,
+              "reason": "complete",
+              "error": 1.2141899501032276
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 107,
+          "survival": 0.214,
+          "failures": {
+            "cap": 393
+          },
+          "median_error": 0.13525707006986576,
+          "coverage_survivors": 0.9957,
+          "width_over_fluct": 3.8303683449888766,
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.3388848638946187,
+            "calls": 12422,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.3388848638946187,
+            "calls": 12422,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11642,
+              "reason": "complete",
+              "error": 1.3349870428392856
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11648,
+              "reason": "complete",
+              "error": 1.2606672902276046
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 92,
+          "survival": 0.184,
+          "failures": {
+            "cap": 408
+          },
+          "median_error": 0.1475842698868649,
+          "coverage_survivors": 1.0,
+          "width_over_fluct": 3.4281564374060403,
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.311103147702922,
+            "calls": 12866,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.311103147702922,
+            "calls": 12866,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11048,
+              "reason": "complete",
+              "error": 1.5335827699195732
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 10898,
+              "reason": "complete",
+              "error": 1.4247651575173066
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 48,
+          "survival": 0.096,
+          "failures": {
+            "cap": 452
+          },
+          "median_error": 0.5500257868744474,
+          "coverage_survivors": 0.8240666666666666,
+          "width_over_fluct": 3.7839331739616906,
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.2750959753694073,
+            "calls": 12086,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.2750959753694073,
+            "calls": 12086,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": false,
+      "init_data_gp": true,
+      "seconds_this_invocation": 3555.5328261852264
+    },
+    "fixed03": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.6738037002239473,
+              "calls": 1580,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.675910343094303,
+              "calls": 1592,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.673803700229438,
+            "calls": 1580,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.673803700229438,
+            "calls": 1580,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.6926669927034859,
+              "calls": 1712,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.6964817704246002,
+              "calls": 1682,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.6926669927089766,
+            "calls": 1712,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.6926669927089766,
+            "calls": 1712,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.6816465294544803,
+              "calls": 1592,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.6825234687249517,
+              "calls": 1604,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.6816465294599711,
+            "calls": 1592,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.6816465294599711,
+            "calls": 1592,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "seconds_this_invocation": 3454.8238570690155
+    },
+    "rank29": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 29,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.013334457315151536,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.9357406836605361,
+              "calls": 2228,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.9304390232021365,
+              "calls": 2204,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.9357406836660268,
+            "calls": 2228,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.9357406836660268,
+            "calls": 2228,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01385212461135866,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.9639627557540243,
+              "calls": 2258,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.9532048294773942,
+              "calls": 2252,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.9639627557595151,
+            "calls": 2258,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.9639627557595151,
+            "calls": 2258,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07712883810830375,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.9757832983671476,
+              "calls": 2396,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.9682221940731542,
+              "calls": 2282,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.9757832983726383,
+            "calls": 2396,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.9757832983726383,
+            "calls": 2396,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "seconds_this_invocation": 4905.5374302864075
+    },
+    "jac20": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 1.0,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 12944,
+              "reason": "complete",
+              "error": 0.020754485458647453
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13016,
+              "reason": "complete",
+              "error": 0.020756328824987055
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 500,
+          "survival": 1.0,
+          "failures": {},
+          "median_error": 0.020650483056945952,
+          "coverage_survivors": 0.8914,
+          "width_over_fluct": 0.07548003308255284,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 43196,
+            "reason": "complete"
+          },
+          "long_survival": 0.7,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 15
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 14000,
+              "reason": "complete",
+              "error": 0.023722590387421832
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13952,
+              "reason": "complete",
+              "error": 0.023609724381194932
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 496,
+          "survival": 0.992,
+          "failures": {
+            "cap": 4
+          },
+          "median_error": 0.023321986166878625,
+          "coverage_survivors": 0.9301,
+          "width_over_fluct": 0.1728254887218133,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 47126,
+            "reason": "complete"
+          },
+          "long_survival": 0.72,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 14
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11438,
+              "reason": "complete",
+              "error": 0.2371323250856938
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11246,
+              "reason": "complete",
+              "error": 0.23846647997438483
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 493,
+          "survival": 0.986,
+          "failures": {
+            "cap": 7
+          },
+          "median_error": 0.2917905820662003,
+          "coverage_survivors": 0.791,
+          "width_over_fluct": 1.1374730951782632,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 30620,
+            "reason": "complete"
+          },
+          "long_survival": 0.8,
+          "long_n_draws": 50,
+          "long_survival_original": 0.1,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 10
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": false,
+      "init_data_gp": true,
+      "jac_damping": 20.0,
+      "jac_sd": 3.0,
+      "seconds_this_invocation": 4021.4938423633575
+    },
+    "jac20-noise43": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 1.0,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 43
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.019316536880006268,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13124,
+              "reason": "complete",
+              "error": 0.02031940315669979
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13154,
+              "reason": "complete",
+              "error": 0.020261480003778223
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 500,
+          "survival": 1.0,
+          "failures": {},
+          "median_error": 0.02026060908855138,
+          "coverage_survivors": 0.9135,
+          "width_over_fluct": 0.050049210529273615,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 43712,
+            "reason": "complete"
+          },
+          "long_survival": 0.8,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 10
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.017197643730984525,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 14816,
+              "reason": "complete",
+              "error": 0.020190716568587327
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 14804,
+              "reason": "complete",
+              "error": 0.020311596456820777
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 499,
+          "survival": 0.998,
+          "failures": {
+            "cap": 1
+          },
+          "median_error": 0.020299612898730873,
+          "coverage_survivors": 0.9507,
+          "width_over_fluct": 0.10605321628297479,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 49280,
+            "reason": "complete"
+          },
+          "long_survival": 0.76,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 12
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07784836586711884,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11420,
+              "reason": "complete",
+              "error": 0.27692242882793194
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11336,
+              "reason": "complete",
+              "error": 0.2822925175319081
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 497,
+          "survival": 0.994,
+          "failures": {
+            "cap": 3
+          },
+          "median_error": 0.32424154478150335,
+          "coverage_survivors": 0.6847333333333333,
+          "width_over_fluct": 0.8802531951577941,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 29138,
+            "reason": "complete"
+          },
+          "long_survival": 0.92,
+          "long_n_draws": 50,
+          "long_survival_original": 0.06,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 4
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": false,
+      "init_data_gp": true,
+      "jac_damping": 20.0,
+      "jac_sd": 3.0,
+      "seconds_this_invocation": 4075.3728222846985
+    },
+    "warm43": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 43
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.019316536880006268,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 12062,
+              "reason": "complete",
+              "error": 2.0287498736710488
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11882,
+              "reason": "complete",
+              "error": 2.257781260013149
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 26,
+          "survival": 0.052,
+          "failures": {
+            "cap": 474
+          },
+          "median_error": 0.5348727309597232,
+          "coverage_survivors": 0.9966,
+          "width_over_fluct": 5.878386537244392,
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.3951567131765117,
+            "calls": 13820,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.3951567131765117,
+            "calls": 13820,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.017197643730984525,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11348,
+              "reason": "complete",
+              "error": 2.0559599193649896
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 2.9708196613096516,
+              "calls": 10850,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 63,
+          "survival": 0.126,
+          "failures": {
+            "cap": 437
+          },
+          "median_error": 0.235024622106711,
+          "coverage_survivors": 0.9997,
+          "width_over_fluct": 4.02978067999316,
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.144282679763996,
+            "calls": 11984,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.144282679763996,
+            "calls": 11984,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07784836586711884,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11744,
+              "reason": "complete",
+              "error": 1.878907508265325
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11600,
+              "reason": "complete",
+              "error": 2.4336093560500403
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 22,
+          "survival": 0.044,
+          "failures": {
+            "cap": 478
+          },
+          "median_error": 0.7321668906315099,
+          "coverage_survivors": 0.8308666666666666,
+          "width_over_fluct": 4.183110010178045,
+          "mean_long": {
+            "bounded": false,
+            "stop": 3.1460608522131674,
+            "calls": 12416,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 3.1460608522131674,
+            "calls": 12416,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": false,
+      "init_data_gp": true,
+      "seconds_this_invocation": 3581.755567550659
+    },
+    "longer-fixed03": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 600,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.018443325407658584,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.9217175193526822,
+              "calls": 1022,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.9199863746782638,
+              "calls": 1082,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.9217175193563539,
+            "calls": 1022,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.9217175193563539,
+            "calls": 1022,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.016813166528167223,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.7517970166277045,
+              "calls": 956,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.7548747926283891,
+              "calls": 956,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.7517970166313762,
+            "calls": 956,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.7517970166313762,
+            "calls": 956,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07772128780593546,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.9035104438411538,
+              "calls": 1100,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.9046711730865135,
+              "calls": 1100,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.9035104438448255,
+            "calls": 1100,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.9035104438448255,
+            "calls": 1100,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        }
+      ],
+      "seconds_this_invocation": 16606.787664175034
+    },
+    "fixed1": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 1.0,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13472,
+              "reason": "complete",
+              "error": 0.06637306681832658
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13418,
+              "reason": "complete",
+              "error": 0.057407664789466385
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 11,
+          "survival": 0.022,
+          "failures": {
+            "cap": 489
+          },
+          "median_error": 0.29817211962137324,
+          "coverage_survivors": 0.9929,
+          "width_over_fluct": 1.8154155826971508,
+          "mean_long": {
+            "bounded": false,
+            "stop": 7.49546797522311,
+            "calls": 33620,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15362,
+              "reason": "complete",
+              "error": 0.12731474523058678
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15494,
+              "reason": "complete",
+              "error": 0.11938173299764987
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 2,
+          "survival": 0.004,
+          "failures": {
+            "cap": 498
+          },
+          "median_error": 0.46158618971057963,
+          "coverage_survivors": 0.4618,
+          "width_over_fluct": 0.8444038885559996,
+          "mean_long": {
+            "bounded": false,
+            "stop": 5.157128123317171,
+            "calls": 26870,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15686,
+              "reason": "complete",
+              "error": 0.9299652750240606
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15416,
+              "reason": "complete",
+              "error": 0.8783889384770217
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 4.9528911994962215,
+            "calls": 25328,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "seconds_this_invocation": 3543.809727907181
+    },
+    "modular43-continued": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 12000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 43
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.019316536880006268,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13694,
+              "reason": "complete",
+              "error": 0.17761015934308896
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13748,
+              "reason": "complete",
+              "error": 0.17912602081617682
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 411,
+          "survival": 0.822,
+          "failures": {
+            "cap": 89
+          },
+          "median_error": 0.16275785351809538,
+          "coverage_survivors": 0.9153,
+          "width_over_fluct": 1.8683686774778183,
+          "mean_long": {
+            "bounded": false,
+            "stop": 5.801220192635566,
+            "calls": 27968,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.017197643730984525,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15566,
+              "reason": "complete",
+              "error": 0.04395673718498825
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15758,
+              "reason": "complete",
+              "error": 0.039086397372633724
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 412,
+          "survival": 0.824,
+          "failures": {
+            "cap": 88
+          },
+          "median_error": 0.033843479556487796,
+          "coverage_survivors": 0.9996,
+          "width_over_fluct": 1.391510184558046,
+          "mean_long": {
+            "bounded": false,
+            "stop": 7.645719830118889,
+            "calls": 38456,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07784836586711884,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15380,
+              "reason": "complete",
+              "error": 0.6823918684942445
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15332,
+              "reason": "complete",
+              "error": 0.681134984455194
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 115,
+          "survival": 0.23,
+          "failures": {
+            "cap": 385
+          },
+          "median_error": 0.4931744360001542,
+          "coverage_survivors": 0.8097333333333333,
+          "width_over_fluct": 3.6395633385578385,
+          "mean_long": {
+            "bounded": false,
+            "stop": 4.842357241053648,
+            "calls": 24836,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": true,
+      "init_data_gp": false,
+      "jac_damping": null,
+      "jac_sd": null,
+      "seconds_this_invocation": 1208.7420217990875
+    },
+    "fixed01": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.1,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.954689475021547,
+              "calls": 824,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.9494078817505125,
+              "calls": 830,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.9546894750270377,
+            "calls": 824,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.9546894750270377,
+            "calls": 824,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.1610212853489186,
+              "calls": 1130,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.166058662717934,
+              "calls": 1100,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.1610212853544093,
+            "calls": 1130,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.1610212853544093,
+            "calls": 1130,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.1514961301596633,
+              "calls": 1010,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.1451598782898642,
+              "calls": 1040,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.151496130165154,
+            "calls": 1010,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.151496130165154,
+            "calls": 1010,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "seconds_this_invocation": 3417.838851213455
+    },
+    "modular42": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13406,
+              "reason": "complete",
+              "error": 0.04314106988046716
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13406,
+              "reason": "complete",
+              "error": 0.046046444817730695
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 487,
+          "survival": 0.974,
+          "failures": {
+            "cap": 13
+          },
+          "median_error": 0.03092892492056539,
+          "coverage_survivors": 0.9983,
+          "width_over_fluct": 0.7561746977227104,
+          "mean_long": {
+            "bounded": false,
+            "stop": 6.83158104311979,
+            "calls": 32330,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15974,
+              "reason": "complete",
+              "error": 0.023070068750443
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 16076,
+              "reason": "complete",
+              "error": 0.02261846862314191
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 496,
+          "survival": 0.992,
+          "failures": {
+            "cap": 4
+          },
+          "median_error": 0.024359175464266972,
+          "coverage_survivors": 0.9992,
+          "width_over_fluct": 0.49966516432360963,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 54548,
+            "reason": "complete"
+          },
+          "long_survival": 0.02,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 49
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15128,
+              "reason": "complete",
+              "error": 0.6926801130341848
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15164,
+              "reason": "complete",
+              "error": 0.6520395920626747
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 225,
+          "survival": 0.45,
+          "failures": {
+            "cap": 275
+          },
+          "median_error": 0.5256611663487419,
+          "coverage_survivors": 0.8224666666666667,
+          "width_over_fluct": 3.5216655669241868,
+          "mean_long": {
+            "bounded": false,
+            "stop": 5.828049417438385,
+            "calls": 29594,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": true,
+      "init_data_gp": false,
+      "jac_damping": null,
+      "jac_sd": null,
+      "seconds_this_invocation": 1144.1885974407196
+    },
+    "jac20-r29": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 29,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 1.0,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.013334457315151536,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 14216,
+              "reason": "complete",
+              "error": 0.01393772551889478
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 14174,
+              "reason": "complete",
+              "error": 0.013957833768642725
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 500,
+          "survival": 1.0,
+          "failures": {},
+          "median_error": 0.013980637564456054,
+          "coverage_survivors": 0.9435344827586207,
+          "width_over_fluct": 0.052356204057091925,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 46952,
+            "reason": "complete"
+          },
+          "long_survival": 0.86,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 7
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01385212461135866,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 16382,
+              "reason": "complete",
+              "error": 0.0166330958641941
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 16382,
+              "reason": "complete",
+              "error": 0.016735638434350657
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 499,
+          "survival": 0.998,
+          "failures": {
+            "cap": 1
+          },
+          "median_error": 0.016634850024309346,
+          "coverage_survivors": 0.9533620689655172,
+          "width_over_fluct": 0.15486431984607146,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 54650,
+            "reason": "complete"
+          },
+          "long_survival": 0.74,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 13
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07712883810830375,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11846,
+              "reason": "complete",
+              "error": 0.22567009097588545
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11846,
+              "reason": "complete",
+              "error": 0.22922476249062007
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 484,
+          "survival": 0.968,
+          "failures": {
+            "cap": 16
+          },
+          "median_error": 0.29515051235192374,
+          "coverage_survivors": 0.8255172413793104,
+          "width_over_fluct": 1.132385417582096,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 31562,
+            "reason": "complete"
+          },
+          "long_survival": 0.84,
+          "long_n_draws": 50,
+          "long_survival_original": 0.08,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 8
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": false,
+      "init_data_gp": true,
+      "jac_damping": 20.0,
+      "jac_sd": 3.0,
+      "seconds_this_invocation": 5483.171787023544
+    },
+    "jac5": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 1.0,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.01894733291572097,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 9830,
+              "reason": "complete",
+              "error": 0.10173508713428267
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 9806,
+              "reason": "complete",
+              "error": 0.10190572894022272
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 500,
+          "survival": 1.0,
+          "failures": {},
+          "median_error": 0.09402552636917366,
+          "coverage_survivors": 0.8243,
+          "width_over_fluct": 0.5377782081457622,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 27788,
+            "reason": "complete"
+          },
+          "long_survival": 0.78,
+          "long_n_draws": 50,
+          "long_survival_original": 0.02,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 11
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.01816843342277474,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11114,
+              "reason": "complete",
+              "error": 0.037690759733306343
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 11048,
+              "reason": "complete",
+              "error": 0.039553247621788544
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 497,
+          "survival": 0.994,
+          "failures": {
+            "cap": 3
+          },
+          "median_error": 0.04552216503659782,
+          "coverage_survivors": 0.8684,
+          "width_over_fluct": 0.8900698514508829,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 37796,
+            "reason": "complete"
+          },
+          "long_survival": 0.66,
+          "long_n_draws": 50,
+          "long_survival_original": 0.04,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 17
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.0778382119218571,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 7772,
+              "reason": "complete",
+              "error": 0.7427810825856798
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 7544,
+              "reason": "complete",
+              "error": 0.754064482835605
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 499,
+          "survival": 0.998,
+          "failures": {
+            "cap": 1
+          },
+          "median_error": 0.7036240537276476,
+          "coverage_survivors": 0.48846666666666666,
+          "width_over_fluct": 0.9544742381483087,
+          "mean_long": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 18524,
+            "reason": "complete"
+          },
+          "long_survival": 0.92,
+          "long_n_draws": 50,
+          "long_survival_original": 0.46,
+          "mean_long_original": {
+            "bounded": true,
+            "stop": 10.0,
+            "calls": 18524,
+            "reason": "complete"
+          },
+          "long_failures": {
+            "cap": 4
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": false,
+      "init_data_gp": true,
+      "jac_damping": 5.0,
+      "jac_sd": 1.0,
+      "seconds_this_invocation": 3957.26464509964
+    },
+    "modular43": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 200,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "fixed",
+        "op_prior_scale": 0.3,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 43
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.019316536880006268,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13790,
+              "reason": "complete",
+              "error": 0.17946234733094615
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 13880,
+              "reason": "complete",
+              "error": 0.18080523740049595
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 412,
+          "survival": 0.824,
+          "failures": {
+            "cap": 88
+          },
+          "median_error": 0.16583047996425782,
+          "coverage_survivors": 0.9131,
+          "width_over_fluct": 1.8819242544087929,
+          "mean_long": {
+            "bounded": false,
+            "stop": 5.78330134872979,
+            "calls": 27950,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.017197643730984525,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15656,
+              "reason": "complete",
+              "error": 0.042276048957370194
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15818,
+              "reason": "complete",
+              "error": 0.03751053148591116
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 417,
+          "survival": 0.834,
+          "failures": {
+            "cap": 83
+          },
+          "median_error": 0.03324707113655875,
+          "coverage_survivors": 0.9997,
+          "width_over_fluct": 1.4040282872171046,
+          "mean_long": {
+            "bounded": false,
+            "stop": 7.646894807865791,
+            "calls": 38696,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07784836586711884,
+          "means": {
+            "rao_blackwell": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15362,
+              "reason": "complete",
+              "error": 0.688349802177933
+            },
+            "sample_mean": {
+              "bounded": true,
+              "stop": 2.9999999999917826,
+              "calls": 15146,
+              "reason": "complete",
+              "error": 0.6871383713884758
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 115,
+          "survival": 0.23,
+          "failures": {
+            "cap": 385
+          },
+          "median_error": 0.5032805397290943,
+          "coverage_survivors": 0.8086666666666666,
+          "width_over_fluct": 3.653672200772429,
+          "mean_long": {
+            "bounded": false,
+            "stop": 4.8407565095279805,
+            "calls": 24842,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "reason": "RHS evaluation budget exhausted",
+            "calls": 20001
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 80000
+        }
+      ],
+      "gp_only": true,
+      "init_data_gp": false,
+      "jac_damping": null,
+      "jac_sd": null,
+      "seconds_this_invocation": 1117.126693725586
+    },
+    "longer-broad": {
+      "config": {
+        "operators": "cAHBN",
+        "num_modes": 25,
+        "num_eval_points": 600,
+        "ell_prior_mode": "principled",
+        "sig2_prior_scale": 1.0,
+        "nu_prior_scale": 1.0,
+        "gp_jitter_rel": null,
+        "gp_input_trend": false,
+        "gp_noise_prior": "spectrum",
+        "gp_trend_scale": "fixed",
+        "window_size": 20,
+        "bump_p": 6,
+        "num_test_funcs": null,
+        "bump_radius_frac": null,
+        "weakform_mode": "ibp",
+        "deriv_cov": "diag",
+        "weakform_cov": "diag",
+        "deriv_weight": 1.0,
+        "weakform_weight": 1.0,
+        "op_prior_mode": "block_hier",
+        "op_prior_scale": 1.0,
+        "sigma_O": null,
+        "hier_tau_scale": 3.0,
+        "operator_solver": "qr",
+        "closure": "tempered",
+        "gamma2": null,
+        "gamma2_nd": 0.1,
+        "weak_slack": "grid",
+        "mll_weight": 1.0,
+        "infer": "svi",
+        "num_steps": 6000,
+        "learning_rate": 0.003,
+        "num_posterior_samples": 500,
+        "nuts_warmup": 500,
+        "nuts_samples": 500,
+        "precision": "float64",
+        "quad_constraint": "none",
+        "feature_shift": "none",
+        "regularizer": 1.0,
+        "num_pred_points": 400,
+        "ic_uncertainty": true,
+        "ic_scale": 1.0,
+        "seed": 42
+      },
+      "targets": [
+        {
+          "re": 150.0,
+          "held_out": false,
+          "floor": 0.018443325407658584,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 1.1579255192389546,
+              "calls": 4340,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 1.049247975868601,
+              "calls": 3932,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 1.1579255192426263,
+            "calls": 4340,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 1.1579255192426263,
+            "calls": 4340,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        },
+        {
+          "re": 300.0,
+          "held_out": false,
+          "floor": 0.016813166528167223,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.8098656214566022,
+              "calls": 3566,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.8197817537032137,
+              "calls": 3440,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.809865621460274,
+            "calls": 3566,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.809865621460274,
+            "calls": 3566,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        },
+        {
+          "re": 200.0,
+          "held_out": true,
+          "floor": 0.07772128780593546,
+          "means": {
+            "rao_blackwell": {
+              "bounded": false,
+              "stop": 0.3394391508259309,
+              "calls": 1172,
+              "reason": "cap"
+            },
+            "sample_mean": {
+              "bounded": false,
+              "stop": 0.3448099863081579,
+              "calls": 1184,
+              "reason": "cap"
+            }
+          },
+          "n_draws": 500,
+          "n_bounded": 0,
+          "survival": 0.0,
+          "failures": {
+            "cap": 500
+          },
+          "mean_long": {
+            "bounded": false,
+            "stop": 0.33943915082960263,
+            "calls": 1172,
+            "reason": "cap"
+          },
+          "long_survival": 0.0,
+          "long_n_draws": 50,
+          "long_survival_original": 0.0,
+          "mean_long_original": {
+            "bounded": false,
+            "stop": 0.33943915082960263,
+            "calls": 1172,
+            "reason": "cap"
+          },
+          "long_failures": {
+            "cap": 50
+          },
+          "long_max_rhs": 120000
+        }
+      ],
+      "seconds_this_invocation": 16680.548275470734
+    }
+  }
+}

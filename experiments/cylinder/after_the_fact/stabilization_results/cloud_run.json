@@ -1,0 +1,74 @@
+{
+  "resource_group": "rg-thesis-rom-stability-20261112",
+  "deleted": true,
+  "deletion_verified_utc": "2026-11-12T11:54:07.741387+00:00",
+  "full_fits": 19,
+  "checkpoint_continuations": 1,
+  "conditional_screens": 78,
+  "workers": [
+    {
+      "name": "fix1",
+      "region": "eastus",
+      "size": "Standard_F16as_v6",
+      "created_utc": "2026-11-12T04:57:46.7502695+00:00",
+      "deallocated_utc": "2026-11-12T11:48:23.199779+00:00",
+      "estimated_billable_hours": 6.843458197222222,
+      "linux_on_demand_usd_per_hour": 1.093,
+      "compute_estimate_usd": 7.4798998095638884
+    },
+    {
+      "name": "fix4",
+      "region": "eastus2",
+      "size": "Standard_F16as_v6",
+      "created_utc": "2026-11-12T05:43:58.3038733+00:00",
+      "deallocated_utc": "2026-11-12T07:50:33.305559+00:00",
+      "estimated_billable_hours": 2.1097226905555555,
+      "linux_on_demand_usd_per_hour": 1.093,
+      "compute_estimate_usd": 2.305926900777222
+    },
+    {
+      "name": "fix3",
+      "region": "centralus",
+      "size": "Standard_F16as_v6",
+      "created_utc": "2026-11-12T05:38:15.9123175+00:00",
+      "deallocated_utc": "2026-11-12T08:17:13.872384+00:00",
+      "estimated_billable_hours": 2.6494333519444444,
+      "linux_on_demand_usd_per_hour": 1.235,
+      "compute_estimate_usd": 3.272050189651389
+    },
+    {
+      "name": "fix5",
+      "region": "southcentralus",
+      "size": "Standard_F16as_v6",
+      "created_utc": "2026-11-12T05:48:46.4099691+00:00",
+      "deallocated_utc": "2026-11-12T10:36:09.874346+00:00",
+      "estimated_billable_hours": 4.789851215833333,
+      "linux_on_demand_usd_per_hour": 1.309,
+      "compute_estimate_usd": 6.269915241525832
+    },
+    {
+      "name": "fix2",
+      "region": "westus2",
+      "size": "Standard_F16as_v6",
+      "created_utc": "2026-11-12T05:31:57.9102465+00:00",
+      "deallocated_utc": "2026-11-12T08:39:12.211045+00:00",
+      "estimated_billable_hours": 3.1206391108333333,
+      "linux_on_demand_usd_per_hour": 1.093,
+      "compute_estimate_usd": 3.4108585481408333
+    },
+    {
+      "name": "fix6",
+      "region": "westus3",
+      "size": "Standard_F16as_v6",
+      "created_utc": "2026-11-12T05:54:21.1478475+00:00",
+      "deallocated_utc": "2026-11-12T10:42:04.189102+00:00",
+      "estimated_billable_hours": 4.7952892375000005,
+      "linux_on_demand_usd_per_hour": 1.093,
+      "compute_estimate_usd": 5.2412511365875005
+    }
+  ],
+  "compute_estimate_usd": 27.979901826246667,
+  "approximate_disk_ip_allowance_usd": 1.0,
+  "approximate_total_usd": 28.979901826246667,
+  "billing_note": "Estimate, not billed spend: cached public Linux on-demand rates times VM creation-to-deallocation lifetimes; approximately USD 1 allowed for disks and public IPs. Actual billing, discounts, rounding and data-transfer charges may differ."
+}
