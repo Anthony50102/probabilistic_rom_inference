@@ -660,3 +660,10 @@ away from the training curves. The held-out Re has already influenced developmen
 are only a robustness check. The runner's seed also changes inference and predictive Monte Carlo randomness,
 not only observation noise/timing; no new physical flow is generated. Total declared: 78 conditional screens
 and 19 joint/modular fits.
+
+Run-record correction: the shell launch wrapper was initially deployed in place while the four original
+fix2/fix3 jobs were running. This prevented completion markers from being written after their Python commands,
+delaying the dependent queues. Recover markers from GNU time's recorded command exit status; for successful
+commands require the final three-target summary and CRC-valid posterior/plot archives. Keep recovery provenance
+beside each job's logs, using the final timing file's modification time for the reconstructed finish timestamp.
+Future wrapper deployments use a new file followed by atomic rename. No fit is rerun or resampled by this repair.
