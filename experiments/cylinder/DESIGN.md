@@ -502,3 +502,46 @@ Run record and disclosures:
   npz (`O_samples` etc., no true states) was kept for the diagnostic. mre1/mre2 (r 17/29) deleted 04:32 UTC 12 Nov
   after `diag.py` on r 29 free. Resource group `rg-thesis-multire` deleted (confirmed ResourceGroupNotFound).
 - Cost ≈ 50 VM-hours × $1.09 ≈ $55-57 (estimate; billing lags).
+
+## Diagnosing and regularising multi-Re instability (12 Nov 2026; before new fits)
+
+The user requested a substantial investigation of priors and algorithm tuning, not another rank sweep.
+Safety tag `pre-multire-stabilization` preserves the previous result. Heavy computation runs only on Azure,
+in `rg-thesis-rom-stability-20261112`; no NODE experiments.
+
+First, diagnose the saved r25 free/shift fits: compare RK45 tolerances with Radau; assess the feature spectrum,
+derivative errors on projected truth, tangent/normal Jacobians, loss progression, and variability of the mean
+operator estimated from subsets of its 500 draws. Shrinking saved deviations around their sample mean is a
+sensitivity diagnostic ONLY, not a posterior or a proposed UQ procedure. The old diagnostic used projected
+truth, not GP-smoothed states as the previous result paragraph incorrectly said. Low derivative residuals do
+not establish transverse stability, identifiability of the Re dependence, or absence of all implementation bugs.
+The old exports omitted operator-scale hyperparameter draws, so an exact replay of their conditional posterior
+is unavailable; new exports must retain those draws and analytic conditional means.
+
+**Stage 1: conditional screening, exploratory, not full Bayesian refits.** Freeze each GP's hyperparameters at
+the medians of the saved r25 free run. Reconstruct the derivative/IBP likelihood from the core GP and weak-form
+helpers. Recompute its tempering exponent from those fixed hypers (not the original data-only MAP); record it.
+Keep the original observations, basis, train/test split, all three Re, and full-order fluctuation metric.
+No evaluation truth enters a prior, hyperparameter selection, or derivative training target.
+
+- Coordinates: unshifted or shifted by the pooled training mean.
+- Gaussian zero-centred priors: original global scale; output-mode fluctuation-scaled (within-trajectory
+  fluctuations); feature-balanced (output fluctuation divided by feature RMS and square root of block width).
+  Global SD multiplier: 0.03, 0.1, 0.3, 1, 3, 10, 30. Also likelihood-power multipliers 4 and 16 for the original
+  prior at multiplier 1, explicitly testing the effect of tempering, not asserting independence of pseudo-data.
+- Additional Gaussian local-Jacobian priors: in fluctuation-scaled coordinates, favour contraction normal to
+  the GP trajectory at 12 evenly spaced interior anchors per training Re. Leave its tangent unpenalised.
+  Target normal damping 0, 1, 5, 20 per training time; prior SD 0.3, 1, 3, 10 per training time; normalise by the
+  square root of the number of anchors so extra anchors do not automatically strengthen the prior.
+  This is a new empirical, local stability assumption, NOT a global stability certificate or the EP prior.
+- Common random numbers, 32 draws per screen; retain failures, analytic mean, derivative residual, forecast
+  accuracy, bounded fraction, and conditional 90% interval coverage. Solver-budget exhaustion is a failure,
+  not a silently discarded draw. Stable-only intervals are labelled conditional on survival.
+
+These are development results on an already inspected problem. Advance promising mechanisms, not just the
+lowest forecast error: useful accuracy and survival, a clear causal interpretation, and no fabricated posterior
+shrinkage. Declare any full joint refits/data extensions and independent confirmation before running them.
+Report all screened variants, including negative results. Expectations: stronger likelihood alone will not
+identify directions absent from the data; shrinking all coefficients can trade instability for bias;
+mode-aware or normal-contraction priors may help, but can suppress real dynamics. A longer periodic record alone
+may improve noise averaging without supplying missing off-cycle excitation.
