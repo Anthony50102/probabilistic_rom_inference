@@ -28,6 +28,10 @@ def collect(root):
                 folder = root / f"{system}--{schema}--s{seed}--{variant}"
                 request = json.loads((folder / "request.json").read_text())
                 summary = json.loads((folder / "summary.json").read_text())
+                priors = json.loads((folder / "priors.json").read_text())
+                with np.load(folder / "posterior.npz") as posterior:
+                    learned_scales = (np.median(np.exp(posterior["op_log_tau_samples"]), axis=0).tolist()
+                                      if variant == "hierarchical" else None)
                 cfg = request["config"]
                 if (cfg["seed"] != seed or request["variant"] != variant
                         or request["system"] != system or request["schema"]["name"] != schema
@@ -59,6 +63,8 @@ def collect(root):
                         mean_error=mean_complete([None if e is None else e["full_relative"] for e in mean_errors]),
                         mean_fluct_error=mean_complete([None if e is None else e["fluct_relative"] for e in mean_errors]),
                         median_error=mean_complete([None if e is None else e["full_relative"] for e in median_errors]),
+                        mean_reduced_error=mean_complete([None if e is None else e["reduced_relative"] for e in mean_errors]),
+                        median_reduced_error=mean_complete([None if e is None else e["reduced_relative"] for e in median_errors]),
                         floor=float(np.mean([row["physical_basis_floor"]["full_relative"] for row in targets])),
                         survival=float(np.mean([row["survival"] for row in targets])),
                         long_survival=float(np.mean([row["long_survival"] for row in targets])),
@@ -66,7 +72,10 @@ def collect(root):
                         band_width=mean_complete([row["relative_band_width"] for row in targets]),
                         long_mean_complete=all(row["long_mean"]["complete"] for row in targets),
                         fit_seconds=summary["fit_seconds"], final_loss_sd=summary["final_loss_sd"],
-                        loss_block_change=summary["loss_block_change"], failures=failures))
+                        loss_block_change=summary["loss_block_change"], failures=failures,
+                        learned_block_scale_medians=learned_scales,
+                        skipped_stationary_anchors=(priors["local_contraction"]["skipped_stationary_anchors"]
+                                                    if variant.startswith("contract") else None)))
     if len(sources) != 1:
         raise ValueError(f"Mixed production source revisions: {sources}")
     return records, sources.pop()
@@ -85,7 +94,8 @@ def summarize(records):
                 if len(items) != 2:
                     raise ValueError("Both seeds are required")
                 metrics = {key: mean_complete([r[key] for r in items]) for key in
-                           ("mean_error", "mean_fluct_error", "median_error", "floor", "survival",
+                           ("mean_error", "mean_fluct_error", "median_error", "mean_reduced_error",
+                            "median_reduced_error", "floor", "survival",
                             "long_survival", "coverage", "band_width")}
                 rows.append(dict(variant=variant, **metrics))
             groups.append(dict(system=system, schema=schema, held_out=held_out, label=label, variants=rows))
@@ -102,10 +112,12 @@ def overview(groups, output):
         for ax, metric in zip(axes, ("mean_error", "survival", "long_survival")):
             values = [np.nan if r[metric] is None else 100*r[metric] for r in rows]
             ax.barh(y, values, height=width, color=COLORS[k], label=variant)
+            for position, row in zip(y, rows):
+                if row[metric] is None:
+                    ax.text(.1, position, "FAILED", color=COLORS[k], fontsize=7, va="center")
     axes[0].set_yticks(centers, [g["label"] for g in groups])
     axes[0].invert_yaxis()
     axes[0].set_xlabel("Full-state-relative mean-operator error (%)")
-    axes[0].set_xscale("symlog", linthresh=5)
     axes[1].set_xlabel("Short-window completed draws (%)")
     axes[2].set_xlabel("Long-window completed draws (%)")
     for ax in axes[1:]:
@@ -128,7 +140,6 @@ def overview(groups, output):
     axes[0].axvline(90, color="gray", linestyle="--", linewidth=1)
     axes[0].set_xlabel("Survivor-only 90% band coverage, reduced states (%)")
     axes[1].set_xlabel("Band width / reduced-truth norm")
-    axes[1].set_xscale("symlog", linthresh=1)
     for ax in axes:
         ax.grid(axis="x", alpha=.2)
     fig.suptitle("Uncertainty: coverage and width must be read with draw survival", fontsize=14)
@@ -157,6 +168,8 @@ def trajectories(root, groups, output):
                     if f"mean_{target}" in data:
                         ax.plot(t, data[f"mean_{target}"][mode], color=COLORS[k],
                                 linestyle="--" if k == 0 else "-", label=variant)
+                    else:
+                        ax.plot([], [], color=COLORS[k], label=f"{variant}: mean failed")
                     if variant in ("hierarchical", "contract20") and f"lo_{target}" in data:
                         ax.fill_between(t, data[f"lo_{target}"][mode], data[f"hi_{target}"][mode],
                                         color=COLORS[k], alpha=.10)
@@ -175,18 +188,19 @@ def main(args):
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "summary.json").write_text(json.dumps(
         dict(source_commit=source, records=records, groups=groups), indent=2, allow_nan=False) + "\n")
-    with (args.output / "results.csv").open("w") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(records[0]))
+    with (args.output / "results.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(records[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows([{**r, "failures": json.dumps(r["failures"])} for r in records])
     lines = ["All 40 fits; values averaged over seeds 42/43. Heat training rows also average over five targets.",
-             "Errors use full-state normalization. Bands are survivor-only; no failed targets are dropped.",
-             "variant          mean%  median%   short%    long%  cover%    width"]
+             "Mean/median errors use full-state normalization; red-med is the paper-style reduced median error.",
+             "Bands are survivor-only; no failed targets are dropped.",
+             "variant          mean%  median% red-med%   short%    long%  cover%    width"]
     for group in groups:
         lines.append("\n" + group["label"])
         for row in group["variants"]:
             values = [(None if row[key] is None else factor * row[key]) for key, factor in
-                      (("mean_error", 100), ("median_error", 100), ("survival", 100),
+                      (("mean_error", 100), ("median_error", 100), ("median_reduced_error", 100), ("survival", 100),
                        ("long_survival", 100), ("coverage", 100), ("band_width", 1))]
             lines.append(f"{row['variant']:15s} " + " ".join(
                 f"{value:8.3f}" if value is not None else "  FAILED" for value in values))

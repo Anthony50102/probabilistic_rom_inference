@@ -1,0 +1,17 @@
+{
+  "resource_group": "rg-thesis-stability-transfer-20261112",
+  "vm": "prior-transfer-cus",
+  "region": "centralus",
+  "sku": "Standard_F16as_v6",
+  "created_utc": "2026-11-12T17:46:40.092384+00:00",
+  "deallocate_requested_utc": "2026-11-12T18:56:47.187792+00:00",
+  "resources": 8,
+  "source_commit": "94e24bf2444daa5e9120cd33dd90a211da635549",
+  "compute_usd_per_hour": 1.235,
+  "pricing": "cached public Linux on-demand retail rate; not billed spend",
+  "deallocated_verified_utc": "2026-11-12T18:57:19.564172+00:00",
+  "creation_to_deallocation_hours": 1.1776310522222222,
+  "estimated_compute_usd_upper_bound": 1.4543743494944446,
+  "delete_requested_utc": "2026-11-12T18:57:19.564202+00:00",
+  "deletion_verified_utc": "2026-11-12T19:00:26.709216+00:00"
+}
