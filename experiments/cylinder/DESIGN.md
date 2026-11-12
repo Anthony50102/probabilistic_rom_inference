@@ -685,3 +685,88 @@ a new folder `modular43-continued`, retaining the original 6000-step fit. Same o
 guide, optimizer state and learning rate. This is a convergence check, not an independent experiment or a
 new tuning search. Apply the same short and expanded-budget long scoring. Keep the final 19-fit comparison
 and show this continuation additionally rather than silently replacing its less favourable predecessor.
+
+### Full-fit results and diagnosis
+
+All 19 declared fits completed with exit 0. Errors below are full-order fluctuation errors (%) of the
+**Rao-Blackwell mean-operator forecast**, not the posterior mean of trajectories. Columns are Re150 / Re300 /
+held-out Re200. Training-Re errors use (17,19]; held-out errors cover the whole rollout. Bounded fractions use
+all 500 draws, including their original IC uncertainty. "unb" means the mean failed the declared evaluation.
+
+| Fit | Mean-operator error (%) | Bounded draws (%) |
+|---|---|---|
+| broad-control | 11.07 / 26.36 / unb | 0 / 0 / 0 |
+| fixed01 | unb / unb / unb | 0 / 0 / 0 |
+| fixed03 | unb / unb / unb | 0 / 0 / 0 |
+| fixed1 | 6.64 / 12.73 / 93.00 | 2.2 / 0.4 / 0 |
+| narrow03 | 9.79 / 20.73 / unb | 0 / 0 / 0 |
+| rank29 | unb / unb / unb | 0 / 0 / 0 |
+| noise43 | unb / unb / unb | 0 / 0 / 0 |
+| noise44 | unb / unb / unb | 0 / 0 / 0 |
+| longer-broad | unb / unb / unb | 0 / 0 / 0 |
+| longer-fixed03 | unb / unb / unb | 0 / 0 / 0 |
+| longer-fixed09 | unb / unb / unb | 0 / 0.2 / 0 |
+| warm42 | 139.63 / 133.50 / 153.36 | 21.4 / 18.4 / 9.6 |
+| warm43 | 202.87 / 205.60 / 187.89 | 5.2 / 12.6 / 4.4 |
+| modular42 | 4.31 / 2.31 / 69.27 | 97.4 / 99.2 / 45.0 |
+| modular43 | 17.95 / 4.23 / 68.83 | 82.4 / 83.4 / 23.0 |
+| jac5 | 10.17 / 3.77 / 74.28 | 100 / 99.4 / 99.8 |
+| jac20 | 2.08 / 2.37 / 23.71 | 100 / 99.2 / 98.6 |
+| jac20-noise43 | 2.03 / 2.02 / 27.69 | 100 / 99.8 / 99.4 |
+| jac20-r29 | 1.39 / 1.66 / 22.57 | 100 / 99.8 / 96.8 |
+
+The damping-20 prior gives useful forecasts at 25 and 29 modes. The rank-29 training-Re floors are
+1.33 / 1.39%; errors of its pointwise survivor-median trajectories are 1.40 / 1.66%, so success is not
+restricted to one averaged operator. Training-Re 90% survivor-band coverage is 94.4 / 95.3%, with widths
+0.052 / 0.155 relative to the reduced fluctuation norm. Rank25 coverage is 89.1 / 93.0%; seed43 gives
+91.3 / 95.1%. These remain empirical coverage on one physical problem, conditional on survival, not a
+general calibration guarantee.
+
+Held-out Re200 is only partly fixed: means are bounded and 96.8-99.4% of draws survive, but the damping-20
+mean errors are 22.6-27.7% against a 7.7-7.8% basis floor. Survivor-median errors are 29.2-32.4%, with
+coverage 68.5-82.6% and substantially wider bands. Do not present this as accurate general Reynolds-number
+transfer or independent confirmation: these flows and this held-out Re were already used in development.
+
+What the diagnosis supports:
+
+- The sampled periodic curves leave most polynomial directions weakly identified: r25 has 377 coefficients
+  per equation, while only 28 singular directions exceed 1e-3 of the largest singular value (61 exceed 1e-6).
+  Accurate rates along those curves do not determine restoring dynamics away from them. One fixed-hyperparameter
+  Gaussian already produces unstable draws, so operator-posterior multimodality is not needed to explain failure.
+- Solver/tolerance agreement on the original cap-crossing trajectories supports a dynamical problem rather than
+  an RK45 artifact. Distinguish that diagnosis from the *separate* long-horizon work-budget censoring discovered
+  in the successful contraction fits.
+- Global shrinkage is not enough in joint inference. Fixed0.3 changed weak-mode GP lengthscales and increased
+  rate error from about 1.8/2.3% to 4.7/7.0%; the mean operator's residual on the GP rates rose from 0.4/0.4%
+  to 15.1/17.9%. Stronger shrinkage gave still poorer rates. The operator evidence feeds back into the smoother.
+  Warm initialization reaches different, better-objective solutions of the same model but not good forecasts.
+  Removing this feedback helps at seed42, but the original seed43 result is less robust.
+- The tight hierarchy largely returns to the broad hierarchy's solution; merely collecting a longer periodic
+  history, including the matched dimensional-width control, did not fix the problem. These are negative results,
+  not omitted runs. The longer rollout start remains a confound in the longer-history comparison.
+- Local contraction is more targeted than shrinking every coefficient: it discourages sensitivity normal to the
+  observed trajectories while leaving the tangent free. It reduces large instantaneous normal growth measures,
+  but does NOT make them uniformly negative: the prior is soft, empirical and local, not a stability certificate.
+- Rao-Blackwell averaging is useful independently: in the broad control it improves the finite-sample mean
+  forecast from 20.6/49.6% to 11.1/26.4%, but it cannot repair the posterior (0/500 bounded draws).
+  It still uses Monte Carlo over GP/prior hyperparameters; it is not an exact unconditional operator mean.
+
+Recommendation: keep the exact conditional-mean export and the opt-in Gaussian covariance-root API. The
+training-informed local-contraction prior is the useful experimental stabilization, not a universal default
+and not the energy-preserving/global-trapping construction of arXiv:2308.13819. Do not silently rewrite the old
+benchmark metrics or paper results. A fresh physical-flow/data regime is still needed before claiming a broadly
+validated stability-aware method.
+
+Expanded-budget long checks reproduce every original short mean trajectory and original long-survival
+count. At ten training-window lengths, damping-20 means remain bounded at all three Re. Draw survival
+(50 draws, Re150 / Re300 / Re200) is 70 / 72 / 80% for r25 seed42; 80 / 76 / 92% for r25 seed43;
+86 / 74 / 84% for r29. Damping5 gives 78 / 66 / 92%. These remaining contraction-prior failures hit the
+amplitude cap, not the expanded computational budget. The original 0% training-Re long-survival entries
+were thus work-limit artifacts, not evidence that every stabilized draw blew up. Keep those original
+results alongside the expanded-budget evaluation.
+
+This is still not global stabilization: 14-30% of damping-20 training-Re draws escape by the longer horizon.
+The rank29 mean maintains oscillations at the training Re, while its held-out-Re oscillation amplitude
+decays in the long plot, illustrating why boundedness alone is not an accuracy claim. The broad control,
+fixed shrinkage, narrow hierarchy, longer-history controls and warm starts have 0/50 long survivors at
+both training Re; modular42 has only 1/50 at Re300 and zero at Re150.

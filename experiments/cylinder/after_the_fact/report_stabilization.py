@@ -45,7 +45,7 @@ def main(root, output):
                 row["long_failures"] = extended["failures"]
                 row["long_max_rhs"] = check["max_rhs"]
     with (output / "joint_results.csv").open("w") as stream:
-        writer = csv.writer(stream)
+        writer = csv.writer(stream, lineterminator="\n")
         writer.writerow(["run", "Re", "floor_pct", "mean_RB_error_pct", "sample_mean_error_pct",
                          "median_error_pct", "bounded_pct", "coverage_survivors_pct", "band_width",
                          "long_bounded_pct", "long_original_bounded_pct", "long_max_rhs", "gp_only"])
@@ -59,7 +59,7 @@ def main(root, output):
                     100 * row["long_survival"], 100 * row.get("long_survival_original", row["long_survival"]),
                     row.get("long_max_rhs", 20000), fits[name].get("gp_only", False)])
     with (output / "conditional_results.csv").open("w") as stream:
-        writer = csv.writer(stream)
+        writer = csv.writer(stream, lineterminator="\n")
         writer.writerow(["id", "shift", "prior", "multiplier", "power", "damping", "jac_sd", "Re",
                          "pm_error_pct", "bounded_pct", "median_error_pct", "coverage_survivors_pct"])
         for case in screens:
@@ -70,6 +70,9 @@ def main(root, output):
                     100 * row.get("median_error", np.inf), 100 * row.get("coverage_survivors", np.nan)])
     (output / "all_results.json").write_text(json.dumps(
         dict(conditional=screens, joint=fits, long_evaluation=long_checks), indent=2))
+    (output / "compact_results.json").write_text(json.dumps(dict(
+        conditional_cases=len(screens), full_refits=len([n for n in names if not n.endswith("-continued")]),
+        checkpoint_continuations=len([n for n in names if n.endswith("-continued")]), joint=fits), indent=2) + "\n")
 
     diagnostic_path = root / "diagnostics" / "diag_r25_free.json"
     if diagnostic_path.exists():
@@ -137,10 +140,10 @@ def main(root, output):
                     ax.plot(val if np.isfinite(val) else 500, j, "o" if np.isfinite(val) else "x",
                             color="C0", label="Rao-Blackwell mean (x = failure)" if j == 0 else None)
                     if np.isfinite(median):
-                        ax.plot(median, j, "s", color="C1", markersize=4,
-                                label="Median of bounded draws" if j == 0 else None)
+                        ax.plot(median, j, "s", color="C1", markersize=4)
                 else:
-                    ax.barh(j, 100 * row["survival"], color="C0", alpha=.75)
+                    ax.barh(j, 100 * row["survival"], color="C0", alpha=.75,
+                            label="Forecast window (500 draws)" if j == 0 else None)
                     ax.plot(100 * row["long_survival"], j, "ko", markersize=4,
                             label=("10x-window (50 draws; duration-scaled budget)" if long_checks else
                                    "10x-window (50 draws; original 20k budget)") if j == 0 else None)
@@ -153,6 +156,8 @@ def main(root, output):
                 ax.set_xlim(0, 105)
         axes[0].set_yticks(range(len(names)), names)
         axes[0].invert_yaxis()
+        if metric == "error":
+            axes[0].plot([], [], "s", color="C1", markersize=4, label="Pointwise survivor median")
         axes[0].legend(fontsize=7, loc="best")
         fig.suptitle("Joint Bayesian refits; modular runs remove operator-to-GP feedback")
         fig.tight_layout()
@@ -208,10 +213,13 @@ def main(root, output):
         fig.savefig(output / "06_conditional_contraction.png", dpi=170)
         plt.close(fig)
 
-    if "jac20" in fits:
-        with np.load(root / "fits" / "jac20" / "plotdata.npz") as data:
+    for fit_name, filename in (("jac20", "07_contraction_uncertainty.png"),
+                               ("jac20-r29", "09_rank29_uncertainty.png")):
+        if fit_name not in fits:
+            continue
+        with np.load(root / "fits" / fit_name / "plotdata.npz") as data:
             fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharex="col")
-            for k, row in enumerate(fits["jac20"]["targets"]):
+            for k, row in enumerate(fits[fit_name]["targets"]):
                 t, truth = data[f"t_{k}"], data[f"truth_{k}"]
                 lead = int(np.argmax(np.std(truth[:, t > 1], axis=1)))
                 for j, mode in enumerate((0, lead)):
@@ -233,9 +241,36 @@ def main(root, output):
                                     + (" (held out)" if k == 2 else ""))
                 axes[1, k].set_xlabel("Time since t=16")
             axes[0, 0].legend(fontsize=7)
-            fig.suptitle("Full joint contraction-prior fit: damping 20, SD 3, rank 25")
+            fig.suptitle(f"Full joint contraction-prior fit: damping 20, SD 3, rank {fits[fit_name]['config']['num_modes']}")
             fig.tight_layout()
-            fig.savefig(output / "07_contraction_uncertainty.png", dpi=170)
+            fig.savefig(output / filename, dpi=170)
+            plt.close(fig)
+
+    if "jac20-r29" in long_checks:
+        with np.load(root / "long_check" / "jac20-r29.npz") as extended, \
+                np.load(root / "fits" / "jac20-r29" / "plotdata.npz") as data:
+            fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharex=True)
+            for k, row in enumerate(fits["jac20-r29"]["targets"]):
+                t, truth = data[f"t_{k}"], data[f"truth_{k}"]
+                lead = int(np.argmax(np.std(truth[:, t > 1], axis=1)))
+                for j, mode in enumerate((0, lead)):
+                    ax = axes[j, k]
+                    ax.plot(t, truth[mode], "k-", linewidth=1, label="Projected truth (available window)")
+                    if k < 2:
+                        ax.plot(data[f"t_samp_{k}"], data[f"obs_{k}"][mode], "k*", markersize=2,
+                                label="Observations")
+                    if f"mean_{k}" in extended.files:
+                        ax.plot(extended["t"], extended[f"mean_{k}"][mode], "--", color="C1",
+                                label="Mean-operator forecast")
+                    ax.axvspan(t[-1], extended["t"][-1], color="gray", alpha=.12,
+                               label="Beyond scored truth window")
+                    ax.set_ylabel(f"POD coefficient {mode+1}")
+                axes[0, k].set_title(f"Re {int(row['re'])}: {round(50 * row['long_survival'])}/50 long draws bounded")
+                axes[1, k].set_xlabel("Time since t=16")
+            axes[0, 0].legend(fontsize=7)
+            fig.suptitle("29-mode mean remains bounded; long-draw survival is not an accuracy claim")
+            fig.tight_layout()
+            fig.savefig(output / "08_long_mean_trajectories.png", dpi=170)
             plt.close(fig)
 
     diagnostics = {}
@@ -245,7 +280,7 @@ def main(root, output):
     if diagnostics:
         (output / "fit_diagnostics.json").write_text(json.dumps(diagnostics, indent=2))
         with (output / "gp_diagnostics.csv").open("w") as stream:
-            writer = csv.writer(stream)
+            writer = csv.writer(stream, lineterminator="\n")
             writer.writerow(["run", "Re", "GP_state_error_pct", "data_GP_state_error_pct",
                              "GP_rate_error_pct", "operator_rate_residual_on_GP_pct",
                              "operator_rate_residual_on_truth_pct", "normal_abscissa_mean_median",
@@ -259,7 +294,9 @@ def main(root, output):
                         100 * row["gp_rate_error"], 100 * row["O_rate_residual_on_GP"],
                         100 * row["O_rate_residual_on_truth"], row["normal_numerical_abscissa_mean_quantiles"][1],
                         row["normal_numerical_abscissa_draw_quantiles"][1], d["loss_500_block_means"][-1]])
-    print(f"{len(screens)} conditional screens, {len(fits)} refits; figures and tables in {output}")
+    continued = sum(name.endswith("-continued") for name in names)
+    print(f"{len(screens)} conditional screens, {len(fits) - continued} refits + {continued} continuations; "
+          f"figures and tables in {output}")
 
 
 if __name__ == "__main__":
