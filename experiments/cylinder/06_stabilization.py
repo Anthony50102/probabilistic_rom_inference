@@ -22,7 +22,7 @@ sys.path.insert(0, str(HERE))
 import jax
 import jax.numpy as jnp
 import numpyro
-from numpyro.infer import SVI, Trace_ELBO, autoguide, init_to_median
+from numpyro.infer import SVI, Trace_ELBO, autoguide, init_to_median, init_to_value
 from numpyro.optim import ClippedAdam
 
 from core.weakform_opinf import WeakFormConfig
@@ -43,7 +43,7 @@ def atomic_pickle(value, path):
     temporary.replace(path)
 
 
-def inference(prepared, cfg, out, gp_only=False):
+def inference(prepared, cfg, out, gp_only=False, init_data_gp=False):
     model, posterior, grids, priors = build_model(prepared.rom, prepared.trajectories, cfg)
     if gp_only:
         locs = [_prior_locs(tr, cfg) for tr in prepared.trajectories]
@@ -59,7 +59,14 @@ def inference(prepared, cfg, out, gp_only=False):
         priors["inference"] = "modular: GP posterior uses observations only; O conditional remains Gaussian"
     (out / "priors.json").write_text(json.dumps(priors, indent=2))
     gamma = priors["gamma2"]
-    guide = autoguide.AutoNormal(model, init_loc_fn=init_to_median)
+    init = init_to_median
+    if init_data_gp:
+        fitted = priors["closure"]["data_only_gp"]
+        values = {f"{site}_{k}_{i}": jnp.asarray(fitted[key][k][i])
+                  for site, key in (("lengthscale", "ell"), ("variance", "sig2"), ("noise", "nu"))
+                  for k in range(len(prepared.trajectories)) for i in range(cfg.num_modes)}
+        init = init_to_value(values=values)
+    guide = autoguide.AutoNormal(model, init_loc_fn=init)
     svi = SVI(model, guide, ClippedAdam(step_size=cfg.learning_rate), Trace_ELBO())
     key, ik = jax.random.split(jax.random.PRNGKey(cfg.seed))
     state = svi.init(ik, gamma2=gamma)
@@ -196,12 +203,14 @@ def main(args):
         raise ValueError("GP-only inference requires fixed operator-prior scales")
     window = (14., 3., 5.) if args.longer else (16., 1., 3.)
     spec = multi_re.MultiReSpec([150., 300.], [200.], window=window, samples=450 if args.longer else 250)
-    request = dict(config=asdict(cfg), window=window, samples=spec.samples, gp_only=args.gp_only)
+    request = dict(config=asdict(cfg), window=window, samples=spec.samples, gp_only=args.gp_only,
+                   init_data_gp=args.init_data_gp)
     args.output.mkdir(parents=True, exist_ok=True)
     request_path = args.output / "request.json"
     if request_path.exists():
         previous = json.loads(request_path.read_text())
         previous.setdefault("gp_only", False)
+        previous.setdefault("init_data_gp", False)
         if previous != json.loads(json.dumps(request)):
             raise ValueError("Existing experiment has a different request")
     request_path.write_text(json.dumps(request, indent=2))
@@ -212,9 +221,10 @@ def main(args):
         with np.load(args.output / "posterior.npz") as data:
             arrays = {key: data[key] for key in data.files}
     else:
-        arrays = inference(prepared, cfg, args.output, args.gp_only)
+        arrays = inference(prepared, cfg, args.output, args.gp_only, args.init_data_gp)
     result = score(prepared, cfg, arrays, args.output)
     result["gp_only"] = args.gp_only
+    result["init_data_gp"] = args.init_data_gp
     result["seconds_this_invocation"] = time.time() - started
     (args.output / "summary.json").write_text(json.dumps(result, indent=2))
 
@@ -232,4 +242,5 @@ if __name__ == "__main__":
     parser.add_argument("--eval-points", type=int, default=200)
     parser.add_argument("--longer", action="store_true")
     parser.add_argument("--gp-only", action="store_true", help="modular GP posterior without operator-evidence feedback")
+    parser.add_argument("--init-data-gp", action="store_true", help="initialize joint SVI at the training-only GP fit")
     main(parser.parse_args())

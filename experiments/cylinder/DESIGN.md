@@ -620,3 +620,10 @@ The first local-Jacobian screens used the row-scaled shifted prior, whose own me
 attributing that baseline's bias to the stability idea, repeat the same 16 damping/SD combinations on the
 unshifted global prior (multiplier 1), still with fixed GP hypers and 32 draws. No new parameter grid is
 selected from forecast truth. All 78 conditional screens and 13 full/modular fits will be reported.
+
+**Initialization ablation (before reading a joint forecast).** Add `warm42` / `warm43`, otherwise identical to
+fixed03 / noise43, initializing GP variational locations at the training-only GP MAP already computed for
+tempering. No parameters or truths from a good forecast are supplied. This changes optimization only, not the
+joint posterior or priors, and tests whether tight priors and prior-median initialization lead to a bad local
+solution. Same 6000 updates and 500 draws. The total is now 15 full/modular fits; no conditional success will be
+presented as success of the original joint method without this distinction.
