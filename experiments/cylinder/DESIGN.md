@@ -460,3 +460,45 @@ Expectations (written before any fit):
 5. Held-out Re 200: PM* error ≥ its floor (~8%) and ≤ 20%.
 6. LS: unbounded or > 50% at every r.
 7. Every fit finishes within 14 h.
+
+### Multi-Re results (12 Nov 2026; 4 Azure F16as_v6, 8 cores per fit, float64; all 8 fits rc 0)
+Forecast-window full-order fluctuation error (%), training Re on (17, 19], held-out Re 200 on (16, 19]. "unb" = the
+mean operator (PM*) is unbounded on the window. Floors and LS are identical across arms (same basis and data).
+
+| r | POD energy | floor 150 / 300 / 200 | PM* free 150 / 300 / 200 | PM* shift | draws stable | LS 150 / 300 / 200 (λ) | runtime free / shift (h) | peak RSS (GB) |
+|---|---|---|---|---|---|---|---|---|
+| 17 | 0.99972 | 4.36 / 3.76 / 8.29 | unb / unb / unb | unb everywhere | 0% | 95 / 231 / 174 (3162) | 1.74 / 1.75 | 6.7-6.9 |
+| 21 | 0.99983 | 2.45 / 2.65 / 7.89 | 99.4 / unb / unb | unb everywhere | 0% | 167 / 254 / 174 (3162) | 3.14 / 3.34 | 8.1-8.2 |
+| 25 | 0.99987 | 1.89 / 1.82 / 7.78 | 18.9 / 49.0 / unb | unb everywhere | 0% | 177 / 212 / 156 (1e4) | 6.55 / 7.94 | 9.3-9.5 |
+| 29 | 0.99989 | 1.33 / 1.39 / 7.71 | unb / unb / unb | unb everywhere | 0% | 152 / 381 / 187 (3162) | 12.27 / 12.34 | 10.8-10.9 |
+
+r 25 free: Strouhal 0.3148 vs 0.3131 (Re 150), 0.3385 vs 0.3321 (Re 300). The shedding mode keeps phase and
+amplitude; the mean-flow mode q1 drifts (Re 300 strongly after t ≈ 1.3). Long-horizon (10×) PM* and all 50 long
+draws are unbounded in every run. Draw medians, bands and coverage are undefined (no stable draws).
+
+Expectations: 1 met (r 25 floors 1.89 / 1.82); 2 (primary) NOT met (shift r 25 PM* unbounded); 3 NOT met (shift PM*
+unbounded at every r); 4 met (0% stable at every r; no stable-draw median exists); 5 NOT met (held-out PM* unbounded
+at every r); 6 met; 7 met (longest 12.34 h).
+
+After the fact (descriptive; session `diag.py`, run on the VMs from the saved fit npz, r 21 / r 25 / r 29 free):
+- No plumbing error: the mean operator's derivative residual on the GP-smoothed training states is 1.1-1.7% with the
+  correct input u and 1.9-3.1% with the inputs swapped, so the viscosity dependence is learned.
+- The posterior does not concentrate: posterior std of an operator entry is 8.5-11× |mean| (median; r 29 11.4×),
+  with 275-495 unknowns per row (r 21-29) from two trajectories of one time unit each.
+- Draws have unstable Jacobians (max real eigenvalue at the mean state ~13-18 vs 1-2 for the mean operator) and
+  diverge at t ≈ 0.27-0.43, before the end of the training window; 0% reach t = 1.
+- The mean operator is marginal: from the TRUE initial state it stays bounded over [0, 3] at both training Re for
+  r 25, reaches 2.43 (r 21, Re 300), and fails at 2.0 / 1.04 for r 29 (Re 150 / 300); Re 200 fails at 0.32-1.6.
+
+Reading: at 17-29 modes the method fits the mean dynamics (including the Re dependence), but with this much data
+the posterior is too wide for sampling-based forecasts and the mean operator is not reliably stable; the shift arm,
+which helped at single Re, does not help here. This is reported as a scalability limitation, not a result.
+
+Run record and disclosures:
+- Smoke fix before the declaration: the layout check called `_assemble_data_matrix` in float32 outside the float64
+  context; it now uses `constraints._features` (in 91d8fcf, before any fit).
+- FOM files carry no `D` key; `load_fom` defaults D = 0.1 (the cylinder diameter used to make them).
+- Launch 16:07 UTC 11 Nov; mre3/mre4 (r 21/25) deleted after their fits finished and results were pulled; the slim
+  npz (`O_samples` etc., no true states) was kept for the diagnostic. mre1/mre2 (r 17/29) deleted 04:32 UTC 12 Nov
+  after `diag.py` on r 29 free. Resource group `rg-thesis-multire` deleted (confirmed ResourceGroupNotFound).
+- Cost ≈ 50 VM-hours × $1.09 ≈ $55-57 (estimate; billing lags).
