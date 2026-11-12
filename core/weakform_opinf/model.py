@@ -419,10 +419,11 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
     if nondim:
         col_scale, operator_prior = nondimensional_column_scale(rom, trajectories, num_modes)
         operator_prior["block_scale"] = [float(col_scale[block_id == b][0]) for b in range(n_blocks)]
+        operator_prior["sd_multiplier"] = cfg.op_prior_scale
         col_scale_jnp = jnp.asarray(col_scale)
 
         def prior_prec_from_tau(kappa_block):
-            var = kappa_block[block_id_jnp] ** 2 * col_scale_jnp ** 2
+            var = kappa_block[block_id_jnp] ** 2 * col_scale_jnp ** 2 * cfg.op_prior_scale ** 2
             return 1.0 / var, jnp.sum(jnp.log(var))
 
         log_tau_center = 0.0
@@ -561,7 +562,7 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         """Mode i's design blocks in its coefficients θ_i, their prior precision and log|prior cov|."""
         blocks = [(A_D @ P_rows[i], y_D, S_D, A_W @ P_rows[i], y_W, S_W)
                   for A_D, y_D, S_D, A_W, y_W, S_W in traj_blocks]
-        var = kappa_block[theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2
+        var = kappa_block[theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2 * cfg.op_prior_scale ** 2
         return blocks, 1.0 / var, jnp.sum(jnp.log(var))
 
     def _structured_pooled_mode(batch_blocks, i, kappa):
@@ -569,8 +570,8 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         θ_M,i and of every δ⁽ᵏ⁾_i, and log|prior cov| of all of them."""
         blocks = [(A_D @ P_rows[i], y_D, S_D, A_W @ P_rows[i], y_W, S_W)
                   for A_D, y_D, S_D, A_W, y_W, S_W in batch_blocks]
-        var_M = kappa[:n_blocks][theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2
-        var_d = kappa[n_blocks:][theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2
+        var_M = kappa[:n_blocks][theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2 * cfg.op_prior_scale ** 2
+        var_d = kappa[n_blocks:][theta_block_jnp[i]] ** 2 * theta_scale_jnp[i] ** 2 * cfg.op_prior_scale ** 2
         return blocks, 1.0 / var_M, 1.0 / var_d, jnp.sum(jnp.log(var_M)) + num_traj * jnp.sum(jnp.log(var_d))
 
     tempered = cfg.closure == "tempered"

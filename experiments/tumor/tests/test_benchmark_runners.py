@@ -77,6 +77,15 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class FitBookkeepingTests(unittest.TestCase):
+    def test_old_prior_strength_defaults_but_changed_strength_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fit_start.json"
+            previous = {k: v for k, v in bm.LATER_CONFIG_DEFAULTS.items() if k != "op_prior_scale"}
+            bd.write_json(path, {"production_config": previous})
+            bm._same_request(path, {"production_config": dict(previous, op_prior_scale=1.)})
+            with self.assertRaisesRegex(ValueError, "different settings"):
+                bm._same_request(path, {"production_config": dict(previous, op_prior_scale=.3)})
+
     def test_refuses_to_reuse_a_fit_started_with_other_settings(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "fit_start.json"

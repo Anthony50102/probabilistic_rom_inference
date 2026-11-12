@@ -55,12 +55,14 @@ def constant_input(u):
     return lambda t, u=u: np.full((1,) + np.shape(t), u)
 
 
-def _window(re, num_samples):
+def _window(re, num_samples, window=None):
     """Truth on the lc window and noisy samples on its training part (global RNG, seeded by the pipeline)."""
     fom = config.load_fom(fom_path(re))
     if fom["geometry"] != "cylinder" or abs(fom["D"] / fom["nu"] - re) > 1e-6 * re:
         raise ValueError(f"{fom_path(re)} is not the cylinder at Re {re}")
-    start, train, total = config.task_window("lc", fom)
+    start, train, total = config.task_window("lc", fom) if window is None else window
+    if not (0 <= start and 0 < train < total and fom["t"][0] <= start and start + total <= fom["t"][-1]):
+        raise ValueError(f"Invalid or unavailable window {(start, train, total)} for Re {re}")
     t_full, X, spline = config.window_states(fom, start, total)
     t_samp = np.sort(np.random.uniform(0, train, num_samples))
     t_samp[0], t_samp[-1] = 0.0, train
@@ -73,12 +75,14 @@ def _window(re, num_samples):
 class MultiReSpec:
     name = "05_multi_re"
 
-    def __init__(self, train_re, held_re):
+    def __init__(self, train_re, held_re, window=None, samples=None):
         self.train_re, self.held_re = list(train_re), list(held_re)
+        self.window, self.samples = window, samples
 
     def prepare(self, cfg, schema):
-        n = int(round(config.SAMPLES_PER_TIME[REGIME["density"]] * config.LC_TRAIN))
-        runs = [_window(re, n) for re in self.train_re] + [_window(re, n) for re in self.held_re]
+        n = (int(round(config.SAMPLES_PER_TIME[REGIME["density"]] * config.LC_TRAIN))
+             if self.samples is None else self.samples)
+        runs = [_window(re, n, self.window) for re in self.train_re] + [_window(re, n, self.window) for re in self.held_re]
         train_runs = runs[:len(self.train_re)]
         basis = Basis(num_vectors=cfg.num_modes)
         basis.fit(np.hstack([w["snaps"] for w in train_runs]))

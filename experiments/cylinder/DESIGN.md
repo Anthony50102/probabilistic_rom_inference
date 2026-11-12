@@ -545,3 +545,58 @@ Report all screened variants, including negative results. Expectations: stronger
 identify directions absent from the data; shrinking all coefficients can trade instability for bias;
 mode-aware or normal-contraction priors may help, but can suppress real dynamics. A longer periodic record alone
 may improve noise averaging without supplying missing off-cycle excitation.
+
+### Stage 1 outcome and joint-refit declaration (before any joint refit)
+
+All 62 conditional screens completed. Ordinary unshifted Gaussian priors were the useful direction:
+SD multiplier 0.3 gave PM errors 5.2 / 2.4% (Re 150/300), bounded fractions 31/32 and 30/32, and conditional
+median errors 4.8 / 2.3%. Re 200 remained poor: PM 65.7%, 14/32 bounded. Multiplier 0.1 bounded every draw
+at both training Re but biased the mean to 7.5 / 4.2%; multiplier 1 gave mean errors 6.1 / 2.9% but only
+2/32 and 0/32 bounded draws. Stronger likelihood weights did not fix survival. The mode-aware and local
+contraction priors generally traded instability for substantial forecast bias. This is exploratory evidence,
+not joint inference and not a new paper claim.
+
+Saved-fit diagnostics: the 377-column noise-free design has 61 directions above 1e-6 of its largest singular
+value, only 28 above 1e-3; the noisy design has 274 and 28 respectively. RK45 (two tolerances) and Radau agree
+on representative cap-crossing times. The loss plateau precedes the final several thousand updates. Independent
+100-draw groups yield substantially different mean-operator forecasts, motivating a Rao-Blackwell estimate:
+average the analytic conditional means over hyperparameter draws instead of averaging noisy operator draws.
+The IC protocol remains the first noisy reduced observation plus GP-derived uncertainty, NOT a smoothed GP IC.
+
+**Stage 2, ten joint refits:** same shared `build_model`, AutoNormal, learning rate, seeded preparation and
+Gaussian operator posterior. Use `06_stabilization.py`, 6000 updates (the old control plateaued by ~4000),
+500 operator/hyperparameter draws, checkpoint every 100 updates. Every run starts from the standard initializer,
+not from a selected good forecast. Save all losses, hyperparameters including block scales, conditional operator
+means, and draws before prediction. All new mean-model metrics use the Rao-Blackwell estimate; also report the
+finite-sample operator average to distinguish estimator effects from prior effects.
+
+| name | rank | prior SD multiplier / log-block SD | data seed | data |
+|---|---|---|---|---|
+| broad-control | 25 | learned, 1 / 3 | 42 | original |
+| fixed01 | 25 | fixed 0.1 | 42 | original |
+| fixed03 | 25 | fixed 0.3 | 42 | original |
+| fixed1 | 25 | fixed 1 | 42 | original |
+| narrow03 | 25 | learned, 0.3 / 0.35 | 42 | original |
+| rank29 | 29 | fixed 0.3 | 42 | original |
+| noise43 | 25 | fixed 0.3 | 43 | fresh noise/times, same two flows |
+| noise44 | 25 | fixed 0.3 | 44 | fresh noise/times, same two flows |
+| longer-fixed03 | 25 | fixed 0.3 | 42 | [14,17], 450 samples/Re, 600 quadrature points |
+| longer-broad | 25 | learned, 1 / 3 | 42 | same longer window |
+
+Original cases forecast (17,19]; the longer cases forecast exactly the same absolute window, with a basis fitted
+only to their longer training data and its own projection floor. Re 200 is never used in either fit or basis,
+but is an already-inspected development target, not a fresh confirmation problem. Seeds 43/44 assess acquisition
+robustness only, not a different flow. Long-horizon check: 50 draws and the mean to 10 training-window lengths,
+boundedness only where FOM truth is unavailable.
+
+Keep the original two-times-largest-training-coefficient cap, use RK45 with tighter tolerances, and report
+solver-budget exhaustion as a failure. Integrate all 500 new draws (the original shared pipeline integrated
+at most 200, although it saved 500). Report 90% interval coverage and width conditional on survival alongside
+the survival rate; do not present survivor-only bands as calibrated unconditional UQ. No posterior rejection,
+draw shrinkage, trajectory clipping, or future-truth calibration is used.
+
+Expectations: fixed 0.3 improves training-Re survival and accuracy; fixed 0.1 trades accuracy for survival;
+the tight hierarchy may move away from the useful shrinkage; the broad control exposes large null-direction
+prior variance; longer records may help less than shrinkage; held-out Re 200 may remain poor. These are hypotheses,
+not required outcomes. If losses are nonfinite, stop and report failure; per-fit cap 18 h. Any change or extra
+experiment after these results must be disclosed.

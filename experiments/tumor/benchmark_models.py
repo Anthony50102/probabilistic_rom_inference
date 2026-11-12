@@ -49,7 +49,8 @@ def _checked_steps(steps, default):
 
 
 # Production settings added after earlier fits were recorded, at the values those fits used.
-LATER_CONFIG_DEFAULTS = {"gp_trend_scale": "fixed", "quad_constraint": "none", "feature_shift": "none"}
+LATER_CONFIG_DEFAULTS = {"gp_trend_scale": "fixed", "quad_constraint": "none", "feature_shift": "none",
+                         "op_prior_scale": 1.0}
 
 
 def _same_request(path, requested):

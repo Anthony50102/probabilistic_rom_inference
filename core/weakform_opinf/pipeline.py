@@ -163,14 +163,18 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
         draw = mu_O + jnp.einsum("ijk,ik->ij", C_O, eps)
         if constraint_C is not None:
             draw = condition_on_constraint(draw, C_O, constraint_C)  # exact draw of the constrained posterior
-        return draw
+            mu_O = condition_on_constraint(mu_O, C_O, constraint_C)
+        return draw, mu_O
 
-    O_samples = []
+    O_samples, O_conditional_means = [], []
     for s in range(npost):
         theta_s = (ells_s[s], sig2s_s[s], nus_s[s]) + tuple(t[s] for t in trend_s)
         tau_s = None if tau_block_s is None else tau_block_s[s]
-        O_samples.append(np.asarray(_draw_O(theta_s, keys[s], tau_s)))
+        draw, mean = _draw_O(theta_s, keys[s], tau_s)
+        O_samples.append(np.asarray(draw))
+        O_conditional_means.append(np.asarray(mean))
     O_samples = np.stack(O_samples)
+    O_conditional_means = np.stack(O_conditional_means)
     op_norms = np.linalg.norm(O_samples.reshape(npost, -1), axis=1)
     if verbose:
         print(f"  ‖O‖ median={np.median(op_norms):.1f}")
@@ -185,6 +189,9 @@ def _run_experiment(spec, cfg, schema, script_dir, save=True, verbose=True):
 
     result = dict(
         schema=schema, cfg=cfg, losses=losses, O_samples=O_samples,
+        O_conditional_means=O_conditional_means,
+        O_mean_rao_blackwell=O_conditional_means.mean(0),
+        **({"op_log_tau_samples": np.asarray(post["log_tau_block"])} if "log_tau_block" in post else {}),
         gp_lengthscale_samples=np.asarray(ells_s),
         gp_variance_samples=np.asarray(sig2s_s),
         gp_noise_samples=np.asarray(nus_s), gp_prior_info=prior_info,
@@ -337,7 +344,8 @@ def _save_npz(result, spec, schema, script_dir):
         O_samples=result["O_samples"],
         basis_entries=np.asarray(result["basis"].entries),
     )
-    for key in ("gp_lengthscale_samples", "gp_variance_samples", "gp_noise_samples"):
+    for key in ("gp_lengthscale_samples", "gp_variance_samples", "gp_noise_samples",
+                "O_conditional_means", "O_mean_rao_blackwell", "op_log_tau_samples"):
         if key in result:
             data[key] = result[key]
     metric_keys = ("train_error", "pred_error", "stability_pct", "ci_coverage",

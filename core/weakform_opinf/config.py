@@ -14,6 +14,7 @@ algorithm, with no per-experiment constant.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass
@@ -74,6 +75,11 @@ class WeakFormConfig:
     op_prior_mode: str = "block_hier"
     """'block_hier' (per-block ARD scales, learned) or 'fixed' (scales held at
     their prior centre)."""
+    op_prior_scale: float = 1.0
+    """Positive dimensionless multiplier of the operator-prior standard deviations.
+    The default preserves the production prior; with 'fixed' this fixes its strength,
+    and with 'block_hier' it moves the centre of the learned block multipliers.
+    Only supported with the nondimensional prior (sigma_O=None)."""
     sigma_O: float | None = None
     """None (default, every reported experiment): nondimensional operator prior
     O_ij ~ N(0, (κ_b s_j)²), s_j = S^(1-p_j) U^(-q_j) / T, with T the training
@@ -175,6 +181,10 @@ class WeakFormConfig:
             value = getattr(self, name)
             if value is not None and not value > 0:
                 raise ValueError(f"WeakFormConfig.{name}={value!r} must be None or positive")
+        if not math.isfinite(self.op_prior_scale) or self.op_prior_scale <= 0:
+            raise ValueError("WeakFormConfig.op_prior_scale must be finite and positive")
+        if self.sigma_O is not None and self.op_prior_scale != 1:
+            raise ValueError("op_prior_scale needs the nondimensional prior (sigma_O=None)")
         if not self.gamma2_nd > 0:
             raise ValueError(f"WeakFormConfig.gamma2_nd={self.gamma2_nd!r} must be positive")
 

@@ -7,7 +7,7 @@ import numpy as np
 
 from core.weakform_opinf.config import WeakFormConfig
 from core.weakform_opinf.gp import make_gp_conditional
-from core.weakform_opinf.model import nondimensional_column_scale
+from core.weakform_opinf.model import build_model, nondimensional_column_scale
 
 
 def _rom(with_inputs):
@@ -18,7 +18,11 @@ def _rom(with_inputs):
         if with_inputs:
             columns += [inputs[0], q1 * inputs[0], q2 * inputs[0]]
         return jnp.column_stack(columns)
-    return SimpleNamespace(model=SimpleNamespace(_assemble_data_matrix=assemble))
+    shapes = [(2,), (2, 2), (2, 3)] + ([(2, 1), (2, 2)] if with_inputs else [])
+    return SimpleNamespace(model=SimpleNamespace(
+        _assemble_data_matrix=assemble,
+        operators=[SimpleNamespace(entries=np.zeros(shape)) for shape in shapes],
+        operator_matrix=np.zeros((2, 9 if with_inputs else 6))))
 
 
 class NondimensionalPriorTests(unittest.TestCase):
@@ -61,6 +65,26 @@ class NondimensionalPriorTests(unittest.TestCase):
         for field in ("sigma_O", "gp_jitter_rel"):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
                 WeakFormConfig(**{field: 0.})
+        for value in (0., -1., float("inf"), float("nan")):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "op_prior_scale"):
+                WeakFormConfig(op_prior_scale=value)
+        with self.assertRaisesRegex(ValueError, "nondimensional"):
+            WeakFormConfig(sigma_O=1., op_prior_scale=.3)
+
+    def test_prior_multiplier_matches_explicit_block_scales(self):
+        from dataclasses import replace
+
+        with jax.experimental.enable_x64():
+            cfg = WeakFormConfig(num_modes=2, num_eval_points=9, window_size=3,
+                                 closure="slack", op_prior_mode="fixed")
+            _, reference, _, _ = build_model(_rom(True), [self.trajectory], cfg)
+            _, scaled, _, info = build_model(_rom(True), [self.trajectory], replace(cfg, op_prior_scale=.3))
+            theta = (jnp.full((1, 2), .5), jnp.ones((1, 2)), jnp.full((1, 2), .01))
+            expected = reference(theta, None, None, jnp.full(5, .3))
+            actual = scaled(theta, None, None)
+            for left, right in zip(expected, actual):
+                np.testing.assert_allclose(left, right, rtol=1e-10, atol=1e-12)
+            self.assertEqual(info["operator_prior"]["sd_multiplier"], .3)
 
 
 class RoundoffNuggetTests(unittest.TestCase):

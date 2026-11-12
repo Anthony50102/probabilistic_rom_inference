@@ -179,6 +179,7 @@ def run_matched(schema, data=None, out_dir=None, profile="historical"):
         stored_config = dict(stored["config"])
         for name, default in (("operator_solver", "normal"), ("gp_input_trend", False),
                               ("gp_noise_prior", "spectrum"), ("gp_trend_scale", "fixed"),
+                              ("op_prior_scale", 1.0),
                               ("precision", "default"),
                               ("weak_slack", "legacy"),
                               # Checkpoints without the field fixed gamma2, so gamma2_nd was unused.
