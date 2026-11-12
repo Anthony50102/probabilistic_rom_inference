@@ -86,3 +86,20 @@ rewrites are part of this request.
 Heavy preparation, fitting and tests run remotely. Download and verify
 artifacts, export plots, then remove only this study's Azure resource group
 `rg-thesis-stability-transfer-20261112` and record estimated cost.
+
+### Implementation checks before production fits
+
+The shared helper differentiates each model's feature assembler; independent
+Gaussian-algebra checks cover two input channels, time-unit changes, duplicate
+anchors, stationary-anchor reporting and invalid inputs. Together with the
+existing nonzero-mean/full-covariance tests and the study's integration guards,
+12 focused tests passed on the worker. End-to-end plumbing checks used seed 45,
+100 updates and three draws for heat at 1% noise and diffusion-reaction, both
+with `contract20`; these are not scientific results or hyperparameter selection.
+
+The first worker request in East US failed quota preflight because unrelated
+work used eight regional cores. A single Central US worker was created instead;
+no unrelated resource was modified. Its auto-shutdown schedule required the
+VM's region explicitly rather than the resource group's region. Source staging
+initially omitted `core/plotting/figures.py` along with figure directories; the
+directory-only exclusion was corrected before the successful checks.
