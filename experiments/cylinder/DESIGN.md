@@ -600,3 +600,11 @@ the tight hierarchy may move away from the useful shrinkage; the broad control e
 prior variance; longer records may help less than shrinkage; held-out Re 200 may remain poor. These are hypotheses,
 not required outcomes. If losses are nonfinite, stop and report failure; per-fit cap 18 h. Any change or extra
 experiment after these results must be disclosed.
+
+**Amendment before reading any stage-2 forecast:** add `longer-fixed09`, identical to `longer-fixed03` except
+SD multiplier 0.9. The nondimensional prior contains 1/T: merely extending the window from 1 to 3 also narrows
+its dimensional width threefold. This extra control compensates for that change (apart from the basis/state
+scale changing with the data), separating more observations from automatic extra shrinkage. It runs after the
+two short-window fits on fix1; all other rules stay unchanged. A screen-only status-label correction now names
+an original-state-cap failure explicitly rather than leaving its successful numerical-solver message; bounded
+flags and every reported score are unchanged.

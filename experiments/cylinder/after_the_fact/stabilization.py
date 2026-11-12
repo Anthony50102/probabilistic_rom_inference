@@ -234,6 +234,8 @@ def fit_case(cache, case, draws=32):
         if report["bounded"]:
             sol = sol + shift[:, None]
             row["pm"]["bounded"] = bool(np.max(np.abs(sol)) <= cache[f"cap_{k}"])
+            if not row["pm"]["bounded"]:
+                row["pm"]["reason"] = "original_state_cap"
             if row["pm"]["bounded"]:
                 row["pm_error"] = error(sol)
                 plot[f"pm_{k}"] = sol
