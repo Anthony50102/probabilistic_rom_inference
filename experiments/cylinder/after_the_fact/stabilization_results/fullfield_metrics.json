@@ -1,0 +1,86 @@
+{
+  "visualization": "finite-difference vorticity from gridded velocity",
+  "vorticity_limit": 40.0,
+  "error_limits": "per Re, fixed over time",
+  "no_refitting": true,
+  "cases": [
+    {
+      "re": 150,
+      "held_out": false,
+      "full_state_values": 18564,
+      "mesh_cells": 15599,
+      "grid_shape": [
+        42,
+        221
+      ],
+      "fluctuation_error_pct": 1.393772551889474,
+      "absolute_state_error_pct": 0.4548476924149403,
+      "basis_floor_pct": 1.3334457315151536,
+      "source_fit": "cylinder-stabilization/fits/jac20-r29",
+      "source_fom": "cylinder-highre/vm_fom/medium_re150.npz",
+      "mean": "Rao-Blackwell mean-operator trajectory, not mean trajectory",
+      "score_time_interval": [
+        17.0,
+        18.999999999991783
+      ],
+      "score_left_endpoint_excluded": true,
+      "movie": {
+        "frames": 151,
+        "fps": 15,
+        "duration_seconds": 10.066666666666666
+      }
+    },
+    {
+      "re": 300,
+      "held_out": false,
+      "full_state_values": 18564,
+      "mesh_cells": 15599,
+      "grid_shape": [
+        42,
+        221
+      ],
+      "fluctuation_error_pct": 1.663309586419414,
+      "absolute_state_error_pct": 0.6780217571083628,
+      "basis_floor_pct": 1.385212461135866,
+      "source_fit": "cylinder-stabilization/fits/jac20-r29",
+      "source_fom": "cylinder-highre/vm_fom/medium_re300.npz",
+      "mean": "Rao-Blackwell mean-operator trajectory, not mean trajectory",
+      "score_time_interval": [
+        17.0,
+        18.999999999991783
+      ],
+      "score_left_endpoint_excluded": true,
+      "movie": {
+        "frames": 151,
+        "fps": 15,
+        "duration_seconds": 10.066666666666666
+      }
+    },
+    {
+      "re": 200,
+      "held_out": true,
+      "full_state_values": 18564,
+      "mesh_cells": 15599,
+      "grid_shape": [
+        42,
+        221
+      ],
+      "fluctuation_error_pct": 22.567009097588485,
+      "absolute_state_error_pct": 8.222023864107857,
+      "basis_floor_pct": 7.712883810830375,
+      "source_fit": "cylinder-stabilization/fits/jac20-r29",
+      "source_fom": "cylinder-highre/vm_fom/medium_re200.npz",
+      "mean": "Rao-Blackwell mean-operator trajectory, not mean trajectory",
+      "score_time_interval": [
+        16.0,
+        18.999999999991783
+      ],
+      "score_left_endpoint_excluded": true,
+      "movie": {
+        "frames": 151,
+        "fps": 15,
+        "duration_seconds": 10.066666666666666
+      }
+    }
+  ]
+}

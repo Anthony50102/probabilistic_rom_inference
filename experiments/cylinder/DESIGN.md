@@ -799,3 +799,77 @@ The six Azure F16as_v6 workers are deallocated, and deletion of this study's res
 Cached public Linux on-demand rates times creation-to-deallocation lifetimes give a compute estimate of
 $27.98; allowing roughly $1 for disks/public IPs gives about $29 total, not a billed-spend figure.
 Per-worker times, rates and assumptions are in `after_the_fact/stabilization_results/cloud_run.json`.
+
+### Full-field trajectories and literature context
+
+The after-the-fact renderer `after_the_fact/render_fullfield.py` lifts the saved `jac20-r29`
+Rao-Blackwell mean-operator trajectories onto the original velocity grid. It does not refit,
+reintegrate, or alter the forecasts. Three movies show the full-order simulation, reconstructed ROM
+and velocity-vector error over times 16--19. Individual final-frame figures and a three-Re comparison
+are exported to `~/Downloads/cylinder_plots/multi_re/stabilization/fullfield/`.
+
+The medium FOM mesh has 15599 triangles; the displayed velocity samples have 18564 values on a
+221-by-42 grid with two components. This sampled-state size is not the native finite-element DOF
+count. Vorticity is calculated from the sampled velocities using second-order finite differences,
+masking the cylinder and adjacent stencil cells. The shared vorticity range is fixed at +/-40;
+values outside it saturate. Velocity-error scales differ by Re but are fixed over time. The display
+uses nearest-neighbor pixels, not spatial smoothing. These are mean-operator fields, not posterior
+mean fields or spatial uncertainty bands.
+
+Direct errors between reconstructed and full-order velocity fields reproduce the saved evaluation:
+
+| Re | Scoring interval | Fluctuation-relative error (%) | Full-state-relative error (%) | POD floor, fluctuation-relative (%) |
+|---|---|---|---|---|
+| 150 | (17,19] | 1.3938 | 0.4548 | 1.3334 |
+| 300 | (17,19] | 1.6633 | 0.6780 | 1.3852 |
+| 200, held out from fitting | (16,19] | 22.5670 | 8.2220 | 7.7129 |
+
+Both errors have the same space-time velocity-error numerator. The first denominator is the
+space-time norm of the truth minus its temporal mean over the scoring interval; the second is the
+norm of the truth itself. The steady flow makes the second denominator larger. Neither percentage
+is a vorticity error. Full-precision values and rendering metadata are retained in
+`after_the_fact/stabilization_results/fullfield_metrics.json`.
+
+The training-Re reconstructions closely track the vortex street. The held-out Re200 reconstruction
+visibly loses wake amplitude. Re200 was not used for fitting or basis construction, but has been
+inspected during development; it is not an untouched final validation case.
+
+**Literature context, not a head-to-head benchmark:**
+
+- [Noack et al. (2003), *A hierarchy of low-dimensional models for the transient and post-transient
+  cylinder wake*](https://doi.org/10.1017/S0022112003006694) established an eight-POD-mode model with
+  an additional shift mode for transient and periodic wake dynamics. Accurate low-dimensional
+  cylinder behavior is therefore not itself a new result. Their reduction and evaluation task do not
+  establish an equal full-field error for our multi-Re/noisy-data setting.
+- [Benner, Goyal, Heiland and Pontes Duff, *Operator Inference and Physics-Informed Learning of
+  Low-Dimensional Models for Incompressible Flows*](https://arxiv.org/abs/2010.06701v2), Section 7.2.3,
+  uses a Re60 cylinder with 5812 velocity states and 513 snapshots over [0,2], including a
+  representative 30-mode ROM and a rank sweep from 8 to 32. Thus 29 modes is a useful scale-up of
+  this Bayesian implementation, not a field-wide scalability record. Its relative velocity-error
+  protocol is not our fluctuation-normalized forecast protocol; no numerical superiority follows
+  from comparing unmatched plotted percentages.
+- [Kaptanoglu et al. (2021), *Promoting global stability in data-driven models of quadratic nonlinear
+  dynamics*](https://doi.org/10.1103/PhysRevFluids.6.094401), Section 4.6, reports five- and nine-dimensional
+  cylinder trapping-SINDy models. The five-dimensional example is provably stable; the authors did
+  not obtain a certificate for the empirically stable nine-dimensional example. They also identify
+  harmonic-feature ill-conditioning in the cylinder wake, consistent with our feature-rank
+  diagnosis. Their deterministic results are not posterior-draw survival rates.
+- [Goyal, Pontes Duff and Benner, *Guaranteed Stable Quadratic Models and their Applications in SINDy
+  and Operator Inference*](https://arxiv.org/abs/2308.13819) provides structural stability/trapping
+  parameterizations under its assumptions. Its numerical examples are not a matched cylinder
+  benchmark. Our soft, local Gaussian contraction prior does not provide equivalent guarantees.
+- [McQuarrie, Chaudhuri, Willcox and Guo, *Bayesian learning with Gaussian processes for low-dimensional
+  representations of time-dependent nonlinear systems*](https://arxiv.org/abs/2408.03455v2) already
+  combines noisy/sparse observations, GP derivative uncertainty and Gaussian operator posteriors.
+  Its examples are not a matched cylinder benchmark. Bayesian OpInf or uncertainty quantification
+  alone is not the novel claim.
+
+The supported result is a large improvement over our failing probabilistic baseline, reaching
+near-POD-floor training-Re mean forecasts while greatly improving finite-horizon draw survival.
+The potentially useful contribution is the stability-aware Gaussian-prior extension with joint GP
+inference and retained analytic conditional operator treatment. The fixed, training-informed prior
+geometry is an empirical-model choice whose uncertainty is not propagated. Transfer error,
+long-horizon escapes and development-set reuse remain limitations. A claim of superiority over
+standard ROMs requires matched regularized OpInf, GP-BayesOpInf and stability-aware comparisons on
+the same observations, basis, horizons and error normalization; those comparisons have not been run
+in this visualization follow-up.
