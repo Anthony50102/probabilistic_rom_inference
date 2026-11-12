@@ -873,3 +873,56 @@ long-horizon escapes and development-set reuse remain limitations. A claim of su
 standard ROMs requires matched regularized OpInf, GP-BayesOpInf and stability-aware comparisons on
 the same observations, basis, horizons and error normalization; those comparisons have not been run
 in this visualization follow-up.
+
+## Quick matched SINDy / deterministic OpInf comparison
+
+### Declared before comparator fits (2026-11-12)
+
+The user requested a quick comparator check on the same flows, not a manuscript
+rewrite or a new FOM campaign. Protect starting commit `e562585` with local tag
+`pre-cylinder-baselines-20261112`. Use exactly the saved `jac20`,
+`jac20-noise43`, and `jac20-r29` cases: ranks 25/25/29, seeds 42/43/42,
+training Re150/300, held-out Re200. The same 250 noisy observations per training
+Re, POD coordinates, polynomial library `cAHBN`, and input `u=200/Re` are used.
+This is SINDy in the existing POD coordinates, not sparse PDE discovery.
+
+Compare ridge-regularized deterministic OpInf and PySINDy 2.0.0 STLSQ
+(sequentially thresholded least squares). For both, use two derivative routes:
+second-order nonuniform finite differences of the noisy reduced observations,
+and the saved **data-only GP MAP** states/derivatives. The latter is a shared
+denoising aid, not the joint operator-informed GP posterior and not a
+contraction constraint. No new GP or Bayesian fit is needed.
+
+Normalize each feature column and each derivative output to unit Euclidean
+norm. Ridge minimizes squared residual plus `alpha^2` times squared coefficient
+norm. OpInf uses `alpha=10^k`, `k=-7,...,2`. SINDy uses
+`alpha={1e-4,1e-2,1e-1}` and thresholds
+`{1e-4,1e-3,1e-2,3e-2,1e-1,3e-1,1,3,10}`, with 30 STLSQ iterations and the
+library's standard final unregularized refit on the selected support.
+Undo both normalizations when exporting physical-coordinate operators.
+
+Select the candidate with the smallest average fluctuation-relative rollout
+misfit to the two noisy **training** trajectories on [0,1], requiring both
+training solves to complete. This is in-sample, training-only selection, not
+cross-validation. Do not select using future truth, held-out Re200, or future
+boundedness. Preserve the full candidate table and all warnings/failures.
+Do not silently choose a fallback if no candidate qualifies. This gives
+12 selected comparator models, from 222 candidate fits.
+
+For final evaluation, reuse the exact initial states of the saved Bayesian
+mean trajectories, the original 2x amplitude guards, RK45 tolerances
+1e-7/1e-9, and the original 20,000-RHS short budget. Score physical-field
+fluctuation errors on (17,19] for training Re and (16,19] for held-out Re.
+Compute denominators and projection residuals directly from the same FOM
+snapshots; reproduce the saved Bayesian errors before using this compressed
+error calculation. Check the selected deterministic models to ten training
+durations with the already corrected 80,000-RHS budget, without claiming
+long-time accuracy. A bounded deterministic trajectory is not posterior-draw
+survival or uncertainty calibration.
+
+This is an exploratory baseline screen, not an exhaustive tuning benchmark.
+POD coordinates need not have sparse governing equations; the library omits
+`u^2` consistently with the Bayesian model. Previous cylinder results and
+Re200 have already been inspected during development. Do not infer universal
+method superiority, or equate this classical SINDy baseline with specialized
+trapping/stability-constrained SINDy. Preserve the original fits and paper.
