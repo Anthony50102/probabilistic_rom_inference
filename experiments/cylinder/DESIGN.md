@@ -481,8 +481,9 @@ unbounded at every r); 4 met (0% stable at every r; no stable-draw median exists
 at every r); 6 met; 7 met (longest 12.34 h).
 
 After the fact (descriptive; session `diag.py`, run on the VMs from the saved fit npz, r 21 / r 25 / r 29 free):
-- No plumbing error: the mean operator's derivative residual on the GP-smoothed training states is 1.1-1.7% with the
-  correct input u and 1.9-3.1% with the inputs swapped, so the viscosity dependence is learned.
+- The mean operator's derivative residual on projected training truth is 1.1-1.7% with the correct input u and
+  1.9-3.1% with inputs swapped. This does not establish identifiability of the viscosity dependence or rule out
+  every implementation bug (the original description incorrectly called these GP-smoothed states).
 - The posterior does not concentrate: posterior std of an operator entry is 8.5-11× |mean| (median; r 29 11.4×),
   with 275-495 unknowns per row (r 21-29) from two trajectories of one time unit each.
 - Draws have unstable Jacobians (max real eigenvalue at the mean state ~13-18 vs 1-2 for the mean operator) and
@@ -490,7 +491,7 @@ After the fact (descriptive; session `diag.py`, run on the VMs from the saved fi
 - The mean operator is marginal: from the TRUE initial state it stays bounded over [0, 3] at both training Re for
   r 25, reaches 2.43 (r 21, Re 300), and fails at 2.0 / 1.04 for r 29 (Re 150 / 300); Re 200 fails at 0.32-1.6.
 
-Reading: at 17-29 modes the method fits the mean dynamics (including the Re dependence), but with this much data
+Reading: at 17-29 modes the method fits rates along the observed curves, but with this much data
 the posterior is too wide for sampling-based forecasts and the mean operator is not reliably stable; the shift arm,
 which helped at single Re, does not help here. This is reported as a scalability limitation, not a result.
 
@@ -604,7 +605,9 @@ experiment after these results must be disclosed.
 **Amendment before reading any stage-2 forecast:** add `longer-fixed09`, identical to `longer-fixed03` except
 SD multiplier 0.9. The nondimensional prior contains 1/T: merely extending the window from 1 to 3 also narrows
 its dimensional width threefold. This extra control compensates for that change (apart from the basis/state
-scale changing with the data), separating more observations from automatic extra shrinkage. It runs after the
+scale changing with the data), partly separating more observations from automatic extra shrinkage. The longer
+fits also integrate from t=14 rather than t=16, so they accumulate more rollout error; this is not an isolated
+"more data only" comparison. It runs after the
 two short-window fits on fix1; all other rules stay unchanged. A screen-only status-label correction now names
 an original-state-cap failure explicitly rather than leaving its successful numerical-solver message; bounded
 flags and every reported score are unchanged.
@@ -654,4 +657,6 @@ not by projecting posterior draws after fitting. Tests compare its evidence and 
 This is an empirical, training-geometry-informed local contraction prior. It is not a global trapping
 certificate, does not impose negative eigenvalues on the tangent dynamics, and does not guarantee boundedness
 away from the training curves. The held-out Re has already influenced development, so fresh acquisition seeds
-are only a robustness check. Total declared: 78 conditional screens and 19 joint/modular fits.
+are only a robustness check. The runner's seed also changes inference and predictive Monte Carlo randomness,
+not only observation noise/timing; no new physical flow is generated. Total declared: 78 conditional screens
+and 19 joint/modular fits.

@@ -141,7 +141,7 @@ def main(root, output):
         fig.savefig(output / filename, dpi=170)
         plt.close(fig)
 
-    selected = [name for name in ("broad-control", "fixed03", "modular42") if name in fits]
+    selected = [name for name in ("broad-control", "fixed03", "warm42", "modular42", "jac20") if name in fits]
     if not selected:
         return
     fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharex="col")
@@ -169,6 +169,78 @@ def main(root, output):
     fig.tight_layout()
     fig.savefig(output / "05_mean_trajectories.png", dpi=170)
     plt.close(fig)
+
+    jac = [c for c in screens if c["id"].startswith("jacglobal")]
+    if jac:
+        fig, axes = plt.subplots(2, 3, figsize=(13, 7), sharex=True)
+        for k, re in enumerate((150, 300, 200)):
+            for damping in (0, 1, 5, 20):
+                cases = sorted([c for c in jac if c["damping"] == damping], key=lambda c: c["jac_sd"])
+                x = [c["jac_sd"] for c in cases]
+                axes[0, k].plot(x, [100 * c["targets"][k].get("pm_error", np.nan) for c in cases],
+                                "o-", label=f"Damping {damping}")
+                axes[1, k].plot(x, [100 * c["targets"][k]["survival"] for c in cases], "o-")
+            axes[0, k].set(yscale="log", title=f"Re {re}" + (" (held out)" if re == 200 else ""))
+            axes[1, k].set(xscale="log", xlabel="Local contraction prior SD", ylim=(-3, 103))
+        axes[0, 0].set_ylabel("Analytic mean error (%)")
+        axes[1, 0].set_ylabel("Bounded draws (%)")
+        axes[0, 0].legend(fontsize=8)
+        fig.suptitle("Conditional contraction screen: frozen GP, global base prior, 32 draws")
+        fig.tight_layout()
+        fig.savefig(output / "06_conditional_contraction.png", dpi=170)
+        plt.close(fig)
+
+    if "jac20" in fits:
+        with np.load(root / "fits" / "jac20" / "plotdata.npz") as data:
+            fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharex="col")
+            for k, row in enumerate(fits["jac20"]["targets"]):
+                t, truth = data[f"t_{k}"], data[f"truth_{k}"]
+                lead = int(np.argmax(np.std(truth[:, t > 1], axis=1)))
+                for j, mode in enumerate((0, lead)):
+                    ax = axes[j, k]
+                    ax.plot(t, truth[mode], "k-", linewidth=1, label="Projected truth")
+                    if k < 2:
+                        ax.plot(data[f"t_samp_{k}"], data[f"obs_{k}"][mode], "k*", markersize=2,
+                                label="Observations")
+                    if f"median_{k}" in data.files:
+                        ax.fill_between(t, data[f"low_{k}"][mode], data[f"high_{k}"][mode],
+                                        color="C0", alpha=.25, label="Survivor-only 90% interval")
+                        ax.plot(t, data[f"median_{k}"][mode], color="C0", label="Survivor median")
+                    if f"rao_blackwell_{k}" in data.files:
+                        ax.plot(t, data[f"rao_blackwell_{k}"][mode], "--", color="C1",
+                                label="Mean-operator forecast")
+                    ax.axvline(1 if k < 2 else 0, color="gray", linestyle=":")
+                    ax.set_ylabel(f"POD coefficient {mode+1}")
+                axes[0, k].set_title(f"Re {int(row['re'])}: {row['n_bounded']}/{row['n_draws']} bounded"
+                                    + (" (held out)" if k == 2 else ""))
+                axes[1, k].set_xlabel("Time since t=16")
+            axes[0, 0].legend(fontsize=7)
+            fig.suptitle("Full joint contraction-prior fit: damping 20, SD 3, rank 25")
+            fig.tight_layout()
+            fig.savefig(output / "07_contraction_uncertainty.png", dpi=170)
+            plt.close(fig)
+
+    diagnostics = {}
+    for path in (root / "fit_diagnostics").glob("*.json"):
+        if path.stem in fits:
+            diagnostics[path.stem] = json.loads(path.read_text())
+    if diagnostics:
+        (output / "fit_diagnostics.json").write_text(json.dumps(diagnostics, indent=2))
+        with (output / "gp_diagnostics.csv").open("w") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(["run", "Re", "GP_state_error_pct", "data_GP_state_error_pct",
+                             "GP_rate_error_pct", "operator_rate_residual_on_GP_pct",
+                             "operator_rate_residual_on_truth_pct", "normal_abscissa_mean_median",
+                             "normal_abscissa_draw_median", "final_500_mean_loss"])
+            for name in names:
+                if name not in diagnostics:
+                    continue
+                d = diagnostics[name]
+                for row in d["targets"]:
+                    writer.writerow([name, row["re"], 100 * row["gp_state_error"], 100 * row["data_gp_state_error"],
+                        100 * row["gp_rate_error"], 100 * row["O_rate_residual_on_GP"],
+                        100 * row["O_rate_residual_on_truth"], row["normal_numerical_abscissa_mean_quantiles"][1],
+                        row["normal_numerical_abscissa_draw_quantiles"][1], d["loss_500_block_means"][-1]])
     print(f"{len(screens)} conditional screens, {len(fits)} refits; figures and tables in {output}")
 
 
