@@ -49,7 +49,7 @@ def gaussian_fit(A, y, scale, prior_A=None, prior_y=None):
     return mu, root
 
 
-def integrate(O, q0, u, t, cap, method="RK45", tol=1e-7):
+def integrate(O, q0, u, t, cap, method="RK45", tol=1e-7, max_rhs=20000):
     r = len(q0)
     a, b = np.tril_indices(r)
     H = O[:, 1 + r:1 + r + len(a)]
@@ -60,7 +60,7 @@ def integrate(O, q0, u, t, cap, method="RK45", tol=1e-7):
     def rhs(tt, q):
         nonlocal calls
         calls += 1
-        if calls > 20000:
+        if calls > max_rhs:
             raise RuntimeError("RHS evaluation budget exhausted")
         return c + L @ q + H @ (q[a] * q[b])
 
@@ -298,7 +298,15 @@ def check():
     cov = np.linalg.inv(A.T @ A + np.diag(sd ** -2) + B.T @ B)
     np.testing.assert_allclose(mu, cov @ (A.T @ y + B.T @ z), atol=1e-12)
     np.testing.assert_allclose(root @ root.T, cov, atol=1e-12)
-    print("Feature, Jacobian and Gaussian-prior checks passed")
+    constant = np.zeros((1, 5))
+    constant[0, 0] = 1.
+    times = np.array([0., 1.])
+    limited, _ = integrate(constant, np.zeros(1), 1., times, 10., max_rhs=1)
+    assert not limited["bounded"] and limited["reason"] == "RHS evaluation budget exhausted"
+    complete, states = integrate(constant, np.zeros(1), 1., times, 10.)
+    assert complete["bounded"]
+    np.testing.assert_allclose(states[0], times, atol=1e-12)
+    print("Feature, Jacobian, Gaussian-prior and solver-budget checks passed")
 
 
 if __name__ == "__main__":

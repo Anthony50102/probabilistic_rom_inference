@@ -667,3 +667,21 @@ delaying the dependent queues. Recover markers from GNU time's recorded command 
 commands require the final three-target summary and CRC-valid posterior/plot archives. Keep recovery provenance
 beside each job's logs, using the final timing file's modification time for the reconstructed finish timestamp.
 Future wrapper deployments use a new file followed by atomic rename. No fit is rerun or resampled by this repair.
+
+### Evaluation-budget and convergence follow-up (after all 19 fits, before these evaluations)
+
+The full damping-20 fits improve short-window errors and survival, but their long-horizon mean solves hit
+the 20,000-RHS limit. A typical successful three-unit forecast already costs 13,000-16,000 evaluations;
+using the same budget for ten units confounds computational censoring with dynamical escape.
+Preserve all original summaries. Re-evaluate the exact same first 50 operator/IC draws and mean for EVERY
+fit, with budget `20000 * ceil(long_duration / original_rollout_duration)` (80,000 for the short-window
+models, 120,000 for the longer models), unchanged tolerances and amplitude cap. First reproduce each
+original short mean trajectory and original long-survival count; retain individual status/reason records.
+Report the original and expanded-budget results separately. No fitting or posterior conditioning is involved.
+
+Eighteen fits have effectively flat terminal loss blocks; `modular43` still improves by 10.7 over its last
+two 500-update blocks (individual-loss SD 13.4). Continue THAT saved SVI state from 6000 to 12000 updates in
+a new folder `modular43-continued`, retaining the original 6000-step fit. Same observations, seed, prior,
+guide, optimizer state and learning rate. This is a convergence check, not an independent experiment or a
+new tuning search. Apply the same short and expanded-budget long scoring. Keep the final 19-fit comparison
+and show this continuation additionally rather than silently replacing its less favourable predecessor.

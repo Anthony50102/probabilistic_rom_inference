@@ -12,7 +12,8 @@ import numpy as np
 
 ORDER = ["broad-control", "fixed01", "fixed03", "fixed1", "narrow03", "rank29",
          "noise43", "noise44", "longer-broad", "longer-fixed03", "longer-fixed09",
-         "warm42", "warm43", "modular42", "modular43", "jac5", "jac20", "jac20-noise43", "jac20-r29"]
+         "warm42", "warm43", "modular42", "modular43", "modular43-continued",
+         "jac5", "jac20", "jac20-noise43", "jac20-r29"]
 
 
 def main(root, output):
@@ -29,11 +30,25 @@ def main(root, output):
             if len(data["targets"]) == 3:
                 fits[path.parent.name] = data
     names = [name for name in ORDER if name in fits]
+    long_checks = {path.stem: json.loads(path.read_text()) for path in (root / "long_check").glob("*.json")
+                   if path.stem in fits}
+    if long_checks:
+        if set(long_checks) != set(fits):
+            raise ValueError("Incomplete expanded-budget evaluation; do not mix long-horizon budgets")
+        for name, check in long_checks.items():
+            for row, extended in zip(fits[name]["targets"], check["targets"]):
+                assert row["re"] == extended["re"]
+                row["long_survival_original"] = row["long_survival"]
+                row["mean_long_original"] = row["mean_long"]
+                row["long_survival"] = extended["survival"]
+                row["mean_long"] = extended["mean"]
+                row["long_failures"] = extended["failures"]
+                row["long_max_rhs"] = check["max_rhs"]
     with (output / "joint_results.csv").open("w") as stream:
         writer = csv.writer(stream)
         writer.writerow(["run", "Re", "floor_pct", "mean_RB_error_pct", "sample_mean_error_pct",
                          "median_error_pct", "bounded_pct", "coverage_survivors_pct", "band_width",
-                         "long_bounded_pct", "gp_only"])
+                         "long_bounded_pct", "long_original_bounded_pct", "long_max_rhs", "gp_only"])
         for name in names:
             for row in fits[name]["targets"]:
                 writer.writerow([name, row["re"], 100 * row["floor"],
@@ -41,7 +56,8 @@ def main(root, output):
                     100 * row["means"]["sample_mean"].get("error", np.inf),
                     100 * row.get("median_error", np.inf), 100 * row["survival"],
                     100 * row.get("coverage_survivors", np.nan), row.get("width_over_fluct", np.nan),
-                    100 * row["long_survival"], fits[name].get("gp_only", False)])
+                    100 * row["long_survival"], 100 * row.get("long_survival_original", row["long_survival"]),
+                    row.get("long_max_rhs", 20000), fits[name].get("gp_only", False)])
     with (output / "conditional_results.csv").open("w") as stream:
         writer = csv.writer(stream)
         writer.writerow(["id", "shift", "prior", "multiplier", "power", "damping", "jac_sd", "Re",
@@ -52,7 +68,8 @@ def main(root, output):
                     case.get("damping", ""), case.get("jac_sd", ""), row["re"],
                     100 * row.get("pm_error", np.inf), 100 * row["survival"],
                     100 * row.get("median_error", np.inf), 100 * row.get("coverage_survivors", np.nan)])
-    (output / "all_results.json").write_text(json.dumps(dict(conditional=screens, joint=fits), indent=2))
+    (output / "all_results.json").write_text(json.dumps(
+        dict(conditional=screens, joint=fits, long_evaluation=long_checks), indent=2))
 
     diagnostic_path = root / "diagnostics" / "diag_r25_free.json"
     if diagnostic_path.exists():
@@ -125,7 +142,8 @@ def main(root, output):
                 else:
                     ax.barh(j, 100 * row["survival"], color="C0", alpha=.75)
                     ax.plot(100 * row["long_survival"], j, "ko", markersize=4,
-                            label="10x-window survival (50 draws)" if j == 0 else None)
+                            label=("10x-window (50 draws; duration-scaled budget)" if long_checks else
+                                   "10x-window (50 draws; original 20k budget)") if j == 0 else None)
             ax.set(title=f"Re {(150, 300, 200)[k]}" + (" (held out)" if k == 2 else " (training)"),
                    xlabel=xlabel)
             ax.grid(axis="x", alpha=.2)
