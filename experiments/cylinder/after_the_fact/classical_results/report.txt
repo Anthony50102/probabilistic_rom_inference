@@ -1,0 +1,29 @@
+Full-field fluctuation errors (%); selection uses training observations only.
+Deterministic boundedness is not posterior survival or uncertainty calibration.
+
+jac20 (r=25, seed=42): Re150 / Re300 / Re200
+Bayesian contraction   2.075 / 2.372 / 23.713; long bounded: yes/yes/yes
+OpInf / FD             141.611 / 143.189 / 141.399; long bounded: yes/yes/yes
+SINDy / FD             141.654 / 143.054 / 141.404; long bounded: yes/yes/yes
+OpInf / GP             9.026 / 35.826 / FAIL: cap; long bounded: no/no/no
+SINDy / GP             141.654 / 143.054 / 141.404; long bounded: yes/yes/yes
+SINDy / FD (ridge retained) 141.654 / 143.054 / 141.404; long bounded: yes/yes/yes
+SINDy / GP (ridge retained) 9.033 / 35.794 / FAIL: cap; long bounded: no/no/no
+
+jac20-noise43 (r=25, seed=43): Re150 / Re300 / Re200
+Bayesian contraction   2.032 / 2.019 / 27.692; long bounded: yes/yes/yes
+OpInf / FD             141.459 / 143.083 / 141.277; long bounded: yes/yes/yes
+SINDy / FD             141.647 / 143.048 / 141.395; long bounded: yes/yes/yes
+OpInf / GP             19.492 / 28.081 / FAIL: cap; long bounded: no/no/no
+SINDy / GP             141.647 / 143.048 / 141.395; long bounded: yes/yes/yes
+SINDy / FD (ridge retained) 141.647 / 143.048 / 141.395; long bounded: yes/yes/yes
+SINDy / GP (ridge retained) 15.705 / 25.316 / FAIL: cap; long bounded: no/no/no
+
+jac20-r29 (r=29, seed=42): Re150 / Re300 / Re200
+Bayesian contraction   1.394 / 1.663 / 22.567; long bounded: yes/yes/yes
+OpInf / FD             141.547 / 143.345 / 141.403; long bounded: yes/yes/yes
+SINDy / FD             141.656 / 143.056 / 141.408; long bounded: yes/yes/yes
+OpInf / GP             FAIL: cap / 25.082 / FAIL: cap; long bounded: no/no/no
+SINDy / GP             141.656 / 143.056 / 141.408; long bounded: yes/yes/yes
+SINDy / FD (ridge retained) 141.656 / 143.056 / 141.408; long bounded: yes/yes/yes
+SINDy / GP (ridge retained) 63.667 / 22.815 / FAIL: cap; long bounded: no/no/no

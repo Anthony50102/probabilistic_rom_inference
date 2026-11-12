@@ -943,3 +943,94 @@ six selected models. Preserve all original results and disclose that this
 follow-up was declared after seeing them. It is not a fresh independent
 validation set. No further hyperparameter grid is selected from forecast
 truth. Test that zero-threshold retained-ridge STLSQ agrees with dense ridge.
+
+### Completed comparator results
+
+All 384 candidate fits and 18 selected comparator models completed. The
+initial screen used source `ba53481`; the retained-ridge follow-up used
+`dcc1cff`. Four focused checks passed, including known sparse-operator
+recovery, coefficient normalization, failure handling, and agreement between
+zero-threshold retained-ridge STLSQ and dense ridge. All nine saved Bayesian
+reference trajectories and physical-field errors were reproduced. No
+numerical fitting exceptions or STLSQ convergence warnings occurred.
+
+The following are full-field **fluctuation-relative** mean-trajectory errors
+(%), with Re150 / Re300 / held-out Re200 in each cell. The GP comparator
+routes use the same training-only smoother, not the operator-informed
+posterior. `cap` denotes an incomplete forecast, not an omitted error.
+
+| Case | Bayesian contraction | Ridge OpInf + GP | SINDy + GP, ridge retained |
+|---|---|---|---|
+| r25, seed42 | 2.075 / 2.372 / 23.713 | 9.026 / 35.826 / cap | 9.033 / 35.794 / cap |
+| r25, seed43 | 2.032 / 2.019 / 27.692 | 19.492 / 28.081 / cap | 15.705 / 25.316 / cap |
+| r29, seed42 | 1.394 / 1.663 / 22.567 | cap / 25.082 / cap | 63.667 / 22.815 / cap |
+
+This table highlights the useful nontrivial baselines, not the complete
+screen. All methods, parameters, training scores, warnings, and failures are
+retained in [`after_the_fact/classical_results/summary.json`](after_the_fact/classical_results/summary.json);
+[`results.csv`](after_the_fact/classical_results/results.csv) has all 63
+method/case/Re rows, including the Bayesian references.
+
+The standard final-unregularized SINDy fits selected zero operators on both
+derivative routes. Their predictions are therefore the **unchanging initial
+state**, not a zero flow field. Their fluctuation errors are about 141-143%.
+The raw-finite-difference OpInf fits select strong ridge regularization
+(alpha=100) and likewise produce nearly static forecasts. The retained-ridge
+SINDy FD route also selects zero operators. These stationary predictions
+remain bounded but are not successful wake models.
+
+Keeping ridge in SINDy's final refit does recover nontrivial GP-based models.
+Their selected alpha is 0.1, with thresholds 0.0001/0.001/0.001 for the three
+cases. They retain 9300/9425, 8126/9425, and 12370/14355 coefficients
+(98.7%, 86.2%, and 86.2%). Thus the successful training fits are not especially
+sparse; sparsity in these POD coordinates is not demonstrated. The selected
+training misfits are only 1.718%, 1.251%, and 2.996%, despite their much worse
+future forecasts. Fitting the observed curves is still not sufficient.
+
+All seven incomplete selected short forecasts hit the amplitude cap.
+At ten training-window lengths, all 18 target solves from the nontrivial
+GP-OpInf and retained-ridge GP-SINDy models hit that cap; none failed because
+of the work budget. The nine Bayesian mean-operator solves remain bounded.
+This compares deterministic point trajectories only, not posterior survival
+or uncertainty calibration. The approximately 23-28% held-out error of our
+model remains a limitation even though these nontrivial comparators escape.
+
+These are encouraging **screening results**, not proof of superiority over
+well-tuned OpInf or SINDy in general. Selection was in-sample; grids were
+limited; the Bayesian prior had substantially more development; the
+retained-ridge follow-up was added after the initial results; and the same
+physical flows/Re200 had already been inspected. In particular, retained-ridge
+SINDy selected the largest alpha in its three-value grid. Alternative
+coordinates, weak/integral sparse regression, block-specific regularization,
+and specialized stability-constrained comparators were not tested.
+
+The main-paper explanation of the new prior can remain a focused extension:
+state the transverse-contraction assumption, define the training geometry,
+and show that a Gaussian factor linear in operator coefficients yields a
+Gaussian prior, preserving analytic operator marginalization. Its empirical
+geometry and lack of a global guarantee must be explicit. The Gaussian
+algebra/normalization and checks can go in an appendix; no paper text was
+edited for this check.
+
+Four figures and complete numerical tables are exported to
+`~/Downloads/cylinder_plots/multi_re/classical_baselines/`. The raw inputs,
+selected operators, all candidate records, initial report, and SHA256-verified
+worker artifacts remain in session `files/cylinder-baselines/`. A
+reporting-only legend correction keeps a method in the figure legend even
+when its first displayed trajectory failed; it changes no numerical result.
+Given the collected directories, reproduce the final report with:
+
+```bash
+conda run -n prob_rom python experiments/cylinder/after_the_fact/classical_baselines.py report \
+  --results /path/to/cylinder-baselines/results \
+  --regularized /path/to/cylinder-baselines/regularized_results \
+  --output /path/to/report
+```
+
+All 56 worker artifacts were SHA256-verified before retirement. The task-only
+Central US F8as_v6 worker was verified deallocated at 22:26:21 UTC on
+2026-11-12, and its seven-resource group was verified deleted at 22:29:30 UTC.
+The estimated compute upper bound is $0.16 at the public Linux rate of
+$0.618/hour; this excludes disk/IP charges and is not billed spend.
+The inventory-matched cleanup and calculation are recorded in
+[`after_the_fact/classical_results/cloud_run.json`](after_the_fact/classical_results/cloud_run.json).

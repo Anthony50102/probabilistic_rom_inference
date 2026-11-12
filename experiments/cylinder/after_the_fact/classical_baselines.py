@@ -326,6 +326,8 @@ def report(results, output, regularized=None):
                     if key in data:
                         ax.plot(t+16, data[key][mode], color=colors[method], lw=1,
                                 linestyle="--" if method == "reference" else "-", label=labels[method])
+                    else:
+                        ax.plot([], [], color=colors[method], lw=1, label=labels[method])
                 if k < 2:
                     ax.plot(data[f"t_obs_{k}"][::6]+16, data[f"obs_{k}"][mode, ::6], "k*", ms=3,
                             label="observations (subset)")

@@ -1,0 +1,17 @@
+{
+  "resource_group": "rg-thesis-cylinder-baselines-20261112",
+  "vm": "baselines-cus",
+  "region": "centralus",
+  "sku": "Standard_F8as_v6",
+  "created_utc": "2026-11-12T22:11:10.258383+00:00",
+  "resources": 7,
+  "deallocate_requested_utc": "2026-11-12T22:25:48.443393+00:00",
+  "source_commit": "ba53481fdbfa33e4c2972f8ac785a465345f2e24",
+  "regularized_source_commit": "dcc1cff6140f45350ca60f3ca5268cd537a6be29",
+  "deallocated_verified_utc": "2026-11-12T22:26:21.822127+00:00",
+  "deletion_verified_utc": "2026-11-12T22:29:30.006238+00:00",
+  "creation_to_deallocation_hours": 0.2532121511111111,
+  "compute_usd_per_hour": 0.618,
+  "estimated_compute_usd_upper_bound": 0.15648510938666668,
+  "pricing": "public Linux on-demand retail rate; excludes disk/IP; not billed spend"
+}
