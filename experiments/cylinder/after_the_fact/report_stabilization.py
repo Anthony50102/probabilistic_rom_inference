@@ -12,7 +12,7 @@ import numpy as np
 
 ORDER = ["broad-control", "fixed01", "fixed03", "fixed1", "narrow03", "rank29",
          "noise43", "noise44", "longer-broad", "longer-fixed03", "longer-fixed09",
-         "warm42", "warm43", "modular42", "modular43"]
+         "warm42", "warm43", "modular42", "modular43", "jac5", "jac20", "jac20-noise43", "jac20-r29"]
 
 
 def main(root, output):

@@ -93,6 +93,39 @@ class PriorMeanTests(unittest.TestCase):
                 build_model(_rom(), [self.trajectory], self.cfg, row_maps=np.stack([np.eye(6)] * 2),
                             prior_mean=np.zeros((2, 6)))
 
+    def test_given_covariance_posterior_and_evidence(self):
+        cfg = replace(self.cfg, closure="slack", op_prior_mode="fixed")
+        roots = np.random.default_rng(4).normal(size=(2, 6, 6)) * .2 + np.eye(6)[None]
+        hypers = tuple(jnp.asarray(x)[None] for x in self.theta)
+        with pipeline.precision_context(cfg):
+            reference = build_model(_rom(), [self.trajectory], replace(cfg, sigma_O=1.))
+            given = build_model(_rom(), [self.trajectory], cfg, prior_mean=self.mean, prior_root=roots)
+            mu0, R0 = map(np.asarray, reference[1](hypers, None, 1.))
+            mu, R = map(np.asarray, given[1](hypers, None, None))
+            difference = self._evidence(given[0]) - self._evidence(reference[0])
+        expected = 0.
+        for i in range(2):
+            L0 = np.linalg.inv(R0[i] @ R0[i].T)
+            P = np.linalg.inv(roots[i] @ roots[i].T)
+            L = L0 - np.eye(6) + P
+            cov = np.linalg.inv(L)
+            mean = cov @ (L0 @ mu0[i] + P @ self.mean[i])
+            np.testing.assert_allclose(mu[i], mean, rtol=1e-8, atol=1e-10)
+            np.testing.assert_allclose(R[i] @ R[i].T, cov, rtol=1e-8, atol=1e-10)
+            expected += .5 * (mean @ L @ mean - mu0[i] @ L0 @ mu0[i]
+                              - self.mean[i] @ P @ self.mean[i] - np.linalg.slogdet(L)[1]
+                              + np.linalg.slogdet(L0)[1] + np.linalg.slogdet(P)[1])
+        self.assertAlmostEqual(difference, expected, delta=1e-7 * max(1., abs(expected)))
+
+    def test_given_covariance_rejects_singular_or_incompatible_inputs(self):
+        cfg = replace(self.cfg, closure="slack", op_prior_mode="fixed")
+        with pipeline.precision_context(cfg):
+            for root in (np.zeros((2, 6, 6)), np.ones((2, 6, 5)), np.full((2, 6, 6), np.nan)):
+                with self.assertRaisesRegex(ValueError, "prior_root"):
+                    build_model(_rom(), [self.trajectory], cfg, prior_root=root)
+            with self.assertRaisesRegex(ValueError, "prior_root"):
+                build_model(_rom(), [self.trajectory], self.cfg, prior_root=np.stack([np.eye(6)] * 2))
+
 
 if __name__ == "__main__":
     unittest.main()

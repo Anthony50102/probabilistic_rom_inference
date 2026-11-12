@@ -627,3 +627,31 @@ tempering. No parameters or truths from a good forecast are supplied. This chang
 joint posterior or priors, and tests whether tight priors and prior-median initialization lead to a bad local
 solution. Same 6000 updates and 500 draws. The total is now 15 full/modular fits; no conditional success will be
 presented as success of the original joint method without this distinction.
+
+### Full local-contraction prior (declared after conditional screens, before these refits)
+
+The matched-baseline screen materially changes the assessment of this prior: damping 20, SD 3 yielded
+PM errors 2.02 / 1.84 / 19.35% at Re 150 / 300 / 200, with 32/32 bounded draws at all three Re.
+Damping 5, SD 1 yielded 1.95 / 2.49 / 84.59%, with 32/32, 32/32, 31/32 bounded. The earlier conclusion that
+the tested contraction construction was mostly biased was confounded by its row-scaled shifted base prior.
+These remain conditional, already-inspected development results.
+
+Four full joint fits: `jac5` (damping 5, SD 1, r25, seed42), `jac20` (20, 3, r25, seed42),
+`jac20-noise43` (20, 3, r25, seed43), and `jac20-r29` (20, 3, r29, seed42).
+Original windows, global unshifted base prior of multiplier 1, 6000 updates, 500 draws, and the same forecast
+scoring. Initialize at the data-only GP MAP, as in the declared initialization ablation.
+
+Construct the Gaussian prior from the training-only data-GP MAP (not from the old joint GP fit used in the
+conditional screen). At 12 interior anchors per Re, let D be the diagonal within-trajectory fluctuation scales,
+v the normalized tangent D^-1 qdot, and P=I-vv^T. Favour D^-1 J(q,u) D P = -damping P, dividing each residual
+by SD times the square root of the anchor count so adding anchors does not automatically strengthen the prior.
+The residual is linear in each operator row.
+Multiplying this factor by the original Gaussian prior gives a proper full-covariance Gaussian per row;
+retain its nonzero mean and covariance, including its normalization, in both the marginal evidence and
+conditional posterior. `build_model(prior_root=..., prior_mean=...)` implements this by exact whitening,
+not by projecting posterior draws after fitting. Tests compare its evidence and moments to Gaussian algebra.
+
+This is an empirical, training-geometry-informed local contraction prior. It is not a global trapping
+certificate, does not impose negative eigenvalues on the tangent dynamics, and does not guarantee boundedness
+away from the training curves. The held-out Re has already influenced development, so fresh acquisition seeds
+are only a robustness check. Total declared: 78 conditional screens and 19 joint/modular fits.

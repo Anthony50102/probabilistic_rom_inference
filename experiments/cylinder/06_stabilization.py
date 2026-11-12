@@ -27,9 +27,9 @@ from numpyro.optim import ClippedAdam
 
 from core.weakform_opinf import WeakFormConfig
 from core.weakform_opinf import gp
-from core.weakform_opinf.model import _prior_locs, _sample_gp_hypers, build_model
+from core.weakform_opinf.model import _prior_locs, _sample_gp_hypers, build_model, nondimensional_column_scale
 from core.weakform_opinf.pipeline import _ic_sigma, _stack_theta
-from after_the_fact.stabilization import integrate
+from after_the_fact.stabilization import gaussian_fit, integrate, jacobian_prior
 
 module_spec = importlib.util.spec_from_file_location("multi_re", HERE / "05_multi_re.py")
 multi_re = importlib.util.module_from_spec(module_spec)
@@ -43,8 +43,30 @@ def atomic_pickle(value, path):
     temporary.replace(path)
 
 
-def inference(prepared, cfg, out, gp_only=False, init_data_gp=False):
+def inference(prepared, cfg, out, gp_only=False, init_data_gp=False, jac_damping=None, jac_sd=None):
     model, posterior, grids, priors = build_model(prepared.rom, prepared.trajectories, cfg)
+    if jac_damping is not None:
+        fitted = priors["closure"]["data_only_gp"]
+        states, derivatives = [], []
+        for k, (tr, grid) in enumerate(zip(prepared.trajectories, grids)):
+            th = tuple(jnp.asarray(fitted[key][k]) for key in ("ell", "sig2", "nu"))
+            batch = jax.jit(gp.trajectory_gp_conditional(tr, cfg)(grid)[1])
+            vals = batch(*th, jnp.asarray(tr["snapshots_comp"]))
+            states.append(np.asarray(vals[0]))
+            derivatives.append(np.asarray(vals[1]))
+        amp = np.sqrt(np.mean([np.var(tr["snapshots_comp"], axis=1) for tr in prepared.trajectories], axis=0))
+        cache = dict(r=cfg.num_modes, amp=amp, gp_states=np.array(states), gp_derivatives=np.array(derivatives))
+        A, y = jacobian_prior(cache, np.zeros(cfg.num_modes), jac_damping, jac_sd)
+        scales, base_info = nondimensional_column_scale(prepared.rom, prepared.trajectories, cfg.num_modes)
+        moments = [gaussian_fit(np.empty((0, len(scales))), np.empty(0), scales, A / amp[i], y[i])
+                   for i in range(cfg.num_modes)]
+        mean, root = np.array([v[0] for v in moments]), np.array([v[1] for v in moments])
+        np.savez_compressed(out / "operator_prior.npz", mean=mean, root=root, amp=amp,
+                            anchor_states=np.array(states), anchor_rates=np.array(derivatives))
+        model, posterior, grids, priors = build_model(
+            prepared.rom, prepared.trajectories, cfg, prior_mean=mean, prior_root=root)
+        priors["local_contraction"] = dict(damping=jac_damping, sd=jac_sd, anchors_per_Re=12,
+                                           base_prior=base_info, geometry="training-only data-GP MAP")
     if gp_only:
         locs = [_prior_locs(tr, cfg) for tr in prepared.trajectories]
         batches = [gp.trajectory_gp_conditional(tr, cfg)(grid)[1]
@@ -201,16 +223,25 @@ def main(args):
         raise ValueError("Steps must be a positive multiple of 100")
     if args.gp_only and cfg.op_prior_mode != "fixed":
         raise ValueError("GP-only inference requires fixed operator-prior scales")
+    if args.jac_damping is not None:
+        if (args.longer or args.gp_only or cfg.op_prior_mode != "fixed" or cfg.op_prior_scale != 1
+                or not np.isfinite(args.jac_damping) or args.jac_damping < 0
+                or args.jac_sd is None or not np.isfinite(args.jac_sd) or args.jac_sd <= 0):
+            raise ValueError("Jacobian prior needs fixed scale=1, original window, joint GP, damping>=0 and sd>0")
+    elif args.jac_sd is not None:
+        raise ValueError("--jac-sd needs --jac-damping")
     window = (14., 3., 5.) if args.longer else (16., 1., 3.)
     spec = multi_re.MultiReSpec([150., 300.], [200.], window=window, samples=450 if args.longer else 250)
     request = dict(config=asdict(cfg), window=window, samples=spec.samples, gp_only=args.gp_only,
-                   init_data_gp=args.init_data_gp)
+                   init_data_gp=args.init_data_gp, jac_damping=args.jac_damping, jac_sd=args.jac_sd)
     args.output.mkdir(parents=True, exist_ok=True)
     request_path = args.output / "request.json"
     if request_path.exists():
         previous = json.loads(request_path.read_text())
         previous.setdefault("gp_only", False)
         previous.setdefault("init_data_gp", False)
+        previous.setdefault("jac_damping", None)
+        previous.setdefault("jac_sd", None)
         if previous != json.loads(json.dumps(request)):
             raise ValueError("Existing experiment has a different request")
     request_path.write_text(json.dumps(request, indent=2))
@@ -221,10 +252,11 @@ def main(args):
         with np.load(args.output / "posterior.npz") as data:
             arrays = {key: data[key] for key in data.files}
     else:
-        arrays = inference(prepared, cfg, args.output, args.gp_only, args.init_data_gp)
+        arrays = inference(prepared, cfg, args.output, args.gp_only, args.init_data_gp, args.jac_damping, args.jac_sd)
     result = score(prepared, cfg, arrays, args.output)
     result["gp_only"] = args.gp_only
     result["init_data_gp"] = args.init_data_gp
+    result["jac_damping"], result["jac_sd"] = args.jac_damping, args.jac_sd
     result["seconds_this_invocation"] = time.time() - started
     (args.output / "summary.json").write_text(json.dumps(result, indent=2))
 
@@ -243,4 +275,6 @@ if __name__ == "__main__":
     parser.add_argument("--longer", action="store_true")
     parser.add_argument("--gp-only", action="store_true", help="modular GP posterior without operator-evidence feedback")
     parser.add_argument("--init-data-gp", action="store_true", help="initialize joint SVI at the training-only GP fit")
+    parser.add_argument("--jac-damping", type=float)
+    parser.add_argument("--jac-sd", type=float)
     main(parser.parse_args())
