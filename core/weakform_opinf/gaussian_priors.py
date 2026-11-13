@@ -7,7 +7,8 @@ from .model import _block_id_from_rom, _column_degrees, nondimensional_column_sc
 
 
 def training_scaled_prior(rom, trajectories, states, rates, *, normalization="rate",
-                          center=False, scale=1., damping=0., correlation="none", ridge=.01):
+                          center=False, scale=1., damping=0., correlation="none", ridge=.01,
+                          mean_clock="training"):
     """Return a physical-coordinate mean, base root and a serializable record.
 
     In optionally centered feature coordinates, amplitude/rate priors give each
@@ -27,6 +28,8 @@ def training_scaled_prior(rom, trajectories, states, rates, *, normalization="ra
         raise ValueError(f"Unknown normalization: {normalization}")
     if correlation not in ("none", "block", "full"):
         raise ValueError(f"Unknown correlation: {correlation}")
+    if mean_clock not in ("training", "rate"):
+        raise ValueError(f"Unknown mean clock: {mean_clock}")
     if (not np.isfinite([scale, damping, ridge]).all() or scale <= 0 or damping < 0
             or not 0 < ridge <= 1):
         raise ValueError("Require finite scale>0, damping>=0, and 0<ridge<=1")
@@ -90,11 +93,13 @@ def training_scaled_prior(rom, trajectories, states, rates, *, normalization="ra
             raise ValueError("A damping mean requires a complete linear state block")
         u0 = None if not ninputs else np.zeros((ninputs, r))
         linear_features = _features(rom, np.eye(r), u0)[:, linear]
-        mean[:, linear] = -damping / base["T"] * np.linalg.inv(linear_features).T
+        clock = np.full(r, 1 / base["T"]) if mean_clock == "training" else rate_scale / amplitude
+        mean[:, linear] = -damping * clock[:, None] * np.linalg.inv(linear_features).T
         mean = mean @ G.T
     predictive_rms = np.sqrt(np.mean([
         np.sum((F @ (sd[i, :, None] * Croot)) ** 2, axis=1) for i in range(r)], axis=1))
     info = dict(normalization=normalization, center=bool(center), scale=float(scale), damping=float(damping),
+                mean_clock=mean_clock,
                 correlation=correlation, ridge=float(ridge), offset=offset.tolist(), base=base,
                 block_counts=counts.tolist(), feature_rms=feature_rms.tolist(), amplitude=amplitude.tolist(),
                 gp_rate_rms=rate_rms.tolist(), rate_scale=rate_scale.tolist(),

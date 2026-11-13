@@ -125,3 +125,21 @@ Download and checksum results before retiring only this study's resources.
 Export readable plots with observations as black stars. Report both successes
 and limitations, approximate compute cost, and whether a shared-prior main-paper
 story is actually supported.
+
+## Pre-development amendment: the clock in a damping mean
+
+Before any full development fit, add six generic mean controls. The original
+29 settings use damping relative to the whole training duration T. For a rapidly
+oscillating trajectory this clock can be much slower than the observed dynamics,
+making a damping mean negligible compared with the rate-scaled prior variance.
+The additional controls use each mode's rate_scale / observed_amplitude as its
+inverse clock. Test damping multipliers 0.3/1/3 for centered rate scaling, plus
+multiplier 1 with centered amplitude scaling, dimensional scaling, and blockwise
+feature-support covariance (ridge 0.01). No tangent or Jacobian is computed.
+
+The initial full grid is therefore **35 settings x four systems = 140 joint
+fits**, followed by the same frozen-shortlist confirmation. Four seed45
+100-update plumbing smokes were started under the original 29-setting code;
+they are not used to select this amendment or as scientific results. The
+amendment follows from matching the prior mean's clock to its variance, not from
+inspecting any full-fit forecast.

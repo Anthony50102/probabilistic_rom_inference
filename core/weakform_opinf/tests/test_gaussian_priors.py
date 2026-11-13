@@ -77,6 +77,16 @@ class TrainingScaledPriorTests(unittest.TestCase):
             ratio = np.sum((direction @ supported[i])**2) / np.sum((direction @ plain[i])**2)
             self.assertAlmostEqual(ratio, .01, places=10)
 
+    def test_rate_clock_mean_uses_each_modes_observed_rate_scale(self):
+        mean, _, info = self.prior(center=True, damping=.3, mean_clock="rate")
+        expected = -.3 * (np.asarray(info["rate_scale"]) / info["amplitude"])[:, None] * (
+            self.q - np.asarray(info["offset"])[:, None])
+        np.testing.assert_allclose(_features(self.rom, self.q, self.u) @ mean.T, expected.T, atol=1e-12)
+        scaled = dict(self.tr, t_sampled=self.tr["t_sampled"] * 4)
+        changed, _, _ = training_scaled_prior(
+            self.rom, [scaled], [self.q], [self.dq / 4], center=True, damping=.3, mean_clock="rate")
+        np.testing.assert_allclose(changed, mean / 4, atol=1e-12)
+
     def test_invalid_or_unexcited_inputs_raise(self):
         for args in (dict(scale=0), dict(ridge=0), dict(damping=-1), dict(normalization="unknown")):
             with self.assertRaises(ValueError):

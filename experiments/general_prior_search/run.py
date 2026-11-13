@@ -56,6 +56,11 @@ def candidates():
         add(f"full-support-{ridge:g}", center=True, correlation="full", ridge=ridge, fixed=True)
     for scale in (.3, 1., 3.):
         add(f"fixed-rate-centered-{scale:g}", center=True, scale=scale, fixed=True)
+    for damping in (.3, 1., 3.):
+        add(f"rate-clock-d{damping:g}", center=True, damping=damping, mean_clock="rate")
+    add("amplitude-clock-d1", "amplitude", center=True, damping=1., mean_clock="rate")
+    add("dimensional-clock-d1", "dimensional", center=True, damping=1., mean_clock="rate", width=3.)
+    add("support-clock-d1", center=True, damping=1., mean_clock="rate", correlation="block", ridge=.01)
     return cases
 
 
