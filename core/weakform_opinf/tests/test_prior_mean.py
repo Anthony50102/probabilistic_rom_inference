@@ -124,7 +124,42 @@ class PriorMeanTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "prior_root"):
                     build_model(_rom(), [self.trajectory], cfg, prior_root=root)
             with self.assertRaisesRegex(ValueError, "prior_root"):
-                build_model(_rom(), [self.trajectory], self.cfg, prior_root=np.stack([np.eye(6)] * 2))
+                build_model(_rom(), [self.trajectory], replace(cfg, sigma_O=1.),
+                            prior_root=np.stack([np.eye(6)] * 2))
+
+    def test_hierarchical_root_scales_latent_columns_in_evidence_and_posterior(self):
+        cfg = replace(self.cfg, closure="slack")
+        roots = np.random.default_rng(4).normal(size=(2, 6, 6)) * .2 + np.eye(6)[None]
+        blocks, _, _ = _block_id_from_rom(_rom())
+        hypers = tuple(jnp.asarray(x)[None] for x in self.theta)
+        with pipeline.precision_context(cfg):
+            hierarchical = build_model(_rom(), [self.trajectory], cfg,
+                                       prior_mean=self.mean, prior_root=roots)
+            for tau in (np.ones(3), self.tau, 2 * self.tau):
+                self.tau = tau
+                fixed = build_model(_rom(), [self.trajectory], replace(cfg, op_prior_mode="fixed"),
+                                    prior_mean=self.mean, prior_root=roots * tau[blocks][None, None, :])
+                self.assertAlmostEqual(self._evidence(hierarchical[0]), self._evidence(fixed[0]), places=8)
+                mu, root = map(np.asarray, hierarchical[1](hypers, None, None, jnp.asarray(tau)))
+                expected, expected_root = map(np.asarray, fixed[1](hypers, None, None))
+                np.testing.assert_allclose(mu, expected, rtol=1e-8, atol=1e-10)
+                np.testing.assert_allclose(root @ root.transpose(0, 2, 1),
+                                           expected_root @ expected_root.transpose(0, 2, 1),
+                                           rtol=1e-8, atol=1e-10)
+
+    def test_diagonal_root_reproduces_native_hierarchical_scales(self):
+        cfg = replace(self.cfg, closure="slack")
+        scales, _ = nondimensional_column_scale(_rom(), [self.trajectory], 2)
+        with pipeline.precision_context(cfg):
+            native = build_model(_rom(), [self.trajectory], cfg, prior_mean=self.mean)
+            supplied = build_model(_rom(), [self.trajectory], cfg, prior_mean=self.mean,
+                                   prior_root=np.stack([np.diag(scales)] * 2))
+            self.assertAlmostEqual(self._evidence(native[0]), self._evidence(supplied[0]), places=8)
+            (mu, root), (expected, expected_root) = self._posterior(supplied[1]), self._posterior(native[1])
+            np.testing.assert_allclose(mu, expected, rtol=1e-8, atol=1e-10)
+            np.testing.assert_allclose(root @ root.transpose(0, 2, 1),
+                                       expected_root @ expected_root.transpose(0, 2, 1),
+                                       rtol=1e-8, atol=1e-10)
 
 
 if __name__ == "__main__":

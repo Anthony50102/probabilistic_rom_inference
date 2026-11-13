@@ -161,9 +161,11 @@ def integrate(model, operator, q0, inputs, times, cap, duration_scale):
     return dict(complete=complete, reason=reason, calls=calls), result.y if complete else None
 
 
-def evaluate(prepared, cfg, arrays, module, system, output, long_draws):
+def evaluate(prepared, cfg, arrays, module, system, output, long_draws, *, short_draws=200):
     operators = arrays["O_samples"]
-    indices = np.linspace(0, len(operators) - 1, min(200, len(operators)), dtype=int)
+    indices = np.linspace(0, len(operators) - 1, min(short_draws, len(operators)), dtype=int)
+    if not 0 <= long_draws <= len(indices):
+        raise ValueError("Long-draw count must not exceed the short-draw count")
     rng = np.random.default_rng(cfg.seed)
     hypers = [arrays[name].mean(0) for name in
               ("gp_lengthscale_samples", "gp_variance_samples", "gp_noise_samples")]
@@ -177,6 +179,8 @@ def evaluate(prepared, cfg, arrays, module, system, output, long_draws):
     for k, target in enumerate(prepared.eval_targets):
         t = target.t_pred
         idx = target.training_index
+        if system == "cylinder":
+            cap = 2 * float(np.max(np.abs(target.snapshots_comp)))
         th = tuple(h.mean(0) if idx is None else h[idx] for h in hypers)
         sigma = _ic_sigma(target.t_sampled, *th, cfg.num_modes,
                           roundoff_nugget=cfg.gp_jitter_rel is None)
@@ -190,7 +194,8 @@ def evaluate(prepared, cfg, arrays, module, system, output, long_draws):
                 np.testing.assert_allclose(inputs(tt), target.input_func(tt), rtol=1e-12, atol=1e-12)
         truth = interp1d(target.t_full, target.true_comp, kind="cubic")(t)
         full = interp1d(target.t_full, target.true_states, kind="cubic")(t)
-        score = t > prepared.training_span[1]
+        score_start = 0. if system == "cylinder" and idx is None else prepared.training_span[1]
+        score = t > score_start
         norm_full = np.linalg.norm(full[:, score])
         norm_fluct = np.linalg.norm(full[:, score] - full[:, score].mean(axis=1, keepdims=True))
         norm_reduced = np.linalg.norm(truth[:, score])
@@ -205,11 +210,12 @@ def evaluate(prepared, cfg, arrays, module, system, output, long_draws):
 
         best_physical = np.linalg.lstsq(physical_basis, full - offset, rcond=None)[0]
         row = dict(index=k, label=target.label, held_out=idx is None, cap=cap,
-                   score_interval=[float(prepared.training_span[1]), float(t[-1])],
+                   score_interval=[float(score_start), float(t[-1])],
                    projected_reconstruction=errors(truth), physical_basis_floor=errors(best_physical),
                    short=[], long=[], draws=len(indices))
         mean_status, mean = integrate(prepared.rom.model, arrays["O_mean_rao_blackwell"],
-                                      target.state0_comp, inputs, t, cap, duration)
+                                      q0s.mean(0) if system == "cylinder" else target.state0_comp,
+                                      inputs, t, cap, duration)
         row["mean"] = dict(mean_status, errors=None if mean is None else errors(mean))
         solutions, survived = [], []
         for s in indices:
@@ -233,7 +239,8 @@ def evaluate(prepared, cfg, arrays, module, system, output, long_draws):
             row["coverage"], row["relative_band_width"] = None, None
         if long_draws:
             status, pred = integrate(prepared.rom.model, arrays["O_mean_rao_blackwell"],
-                                     target.state0_comp, inputs, long_t, cap, duration)
+                                     q0s.mean(0) if system == "cylinder" else target.state0_comp,
+                                     inputs, long_t, cap, duration)
             row["long_mean"] = status
             if pred is not None:
                 plots[f"long_mean_{k}"] = pred

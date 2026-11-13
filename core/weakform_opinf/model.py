@@ -346,10 +346,12 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         evidence: the rows are fitted to y − A Mᵢ and Mᵢ is added back to the
         posterior mean. Not available with row maps.
     prior_root : optional (num_modes, m, m) array
-        Fixed nonsingular covariance factors, Sigma_i = root_i root_i.T, replacing
-        the diagonal prior. Infer standard-normal latent rows and transform them
-        back exactly. Supports prior_mean, but requires fixed scales, QR, and an
-        unpooled model without row maps, feature shifts or quadratic constraints.
+        Fixed nonsingular base factors replacing the nondimensional column
+        scales: O_i = M_i + root_i theta_i. With fixed scales theta_i ~ N(0, I);
+        with block_hier its column j has SD kappa[block_id[j]]. Block scales
+        therefore act in the supplied latent coordinates, not on physical rows
+        of root_i. Supports prior_mean, QR, and an unpooled model without row
+        maps, feature shifts or quadratic constraints.
     pooled : bool
         Partial pooling: trajectory k has its own operator O⁽ᵏ⁾ = M + δ⁽ᵏ⁾
         around a shared population operator M, with M ~ N(0, (κ_M,b s_j)²)
@@ -442,9 +444,9 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
     supplied_root = prior_root is not None
     if supplied_root:
         if (structured or pooled or input_scale or cfg.feature_shift != "none" or cfg.quad_constraint != "none"
-                or cfg.op_prior_mode != "fixed" or cfg.sigma_O is not None or cfg.op_prior_scale != 1
+                or cfg.sigma_O is not None or cfg.op_prior_scale != 1
                 or cfg.operator_solver != "qr"):
-            raise ValueError("prior_root needs an unpooled, unshifted, unconstrained fixed prior, "
+            raise ValueError("prior_root needs an unpooled, unshifted, unconstrained prior, "
                              "without row maps/input scales; sigma_O=None, op_prior_scale=1 and operator_solver='qr'")
         root_np = np.asarray(prior_root, dtype=float)
         if root_np.shape != (num_modes, m_total, m_total) or not np.isfinite(root_np).all():
@@ -453,7 +455,12 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         if np.any(signs == 0) or not np.isfinite(logdets).all():
             raise ValueError("Every prior_root row factor must be nonsingular")
         given_root = jnp.asarray(root_np)
-        operator_prior = dict(rule="given_gaussian_root", log_cov_determinants=(2 * logdets).tolist())
+        operator_prior = dict(rule="given_gaussian_root", log_cov_determinants=(2 * logdets).tolist(),
+                              block_scale_coordinates="latent columns")
+
+        def prior_prec_from_tau(kappa_block):
+            var = kappa_block[block_id_jnp] ** 2
+            return 1.0 / var, jnp.sum(jnp.log(var))
     if structured:
         if not nondim:
             raise ValueError("Structured operator rows need the nondimensional operator prior (sigma_O=None)")
@@ -502,7 +509,7 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         return A_D, y_D - mean_O @ A_D.T, S_D, A_W, y_W - mean_O @ A_W.T, S_W
 
     def _root_blocks(blocks, i):
-        """O_i = mean_i + root_i theta_i, theta_i ~ N(0, I); _centre handles the mean."""
+        """Transform the design to latent coefficients; _centre handles the mean."""
         return [(A_D @ given_root[i], y_D, S_D, A_W @ given_root[i], y_W, S_W)
                 for A_D, y_D, S_D, A_W, y_W, S_W in blocks]
 
@@ -828,7 +835,7 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         for i in range(num_modes):
             if supplied_root:
                 log_p_i, _, _ = evidence_fn(
-                    _root_blocks(traj_blocks, i), i, m_total, jnp.ones(m_total), 0.0, deriv_is_diag)
+                    _root_blocks(traj_blocks, i), i, m_total, prior_prec, log_prior_cov, deriv_is_diag)
             elif structured:
                 blocks_i, prec_i, log_cov_i = _structured_mode(traj_blocks, i, kappa_block)
                 log_p_i, _, _ = evidence_fn(
@@ -868,10 +875,8 @@ def build_model(rom, trajectories, cfg, row_maps=None, prior_mean=None, pooled=F
         mu_all, C_all = [], []
         for i in range(num_modes):
             if supplied_root:
-                if tau_block is not None:
-                    raise ValueError("prior_root does not accept learned block multipliers")
                 latent_mean, latent_root = posterior_fn(
-                    _root_blocks(traj_blocks, i), i, m_total, jnp.ones(m_total), deriv_is_diag)
+                    _root_blocks(traj_blocks, i), i, m_total, prior_prec_vec, deriv_is_diag)
                 mi, Ci = given_root[i] @ latent_mean, given_root[i] @ latent_root
                 if centred:
                     mi = mi + mean_O[i]
