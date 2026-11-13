@@ -1,0 +1,235 @@
+{
+  "candidate": "rate-centered-h0.5",
+  "source_commit": "fb670542c10956cd3d6a2cd80b3a2bf92bce1821",
+  "training_hash": "fca913c0d96e4c7b5320ace5c3485d4c738e103b48e2d742976afed6070bb8a8",
+  "after_the_fact": true,
+  "anchor_count": 24,
+  "scaling": "state perturbations / observed mode SD; vector fields / training GP rate scale",
+  "derivative_caveat": "Local uncertainty diagnostic, not a Floquet or global stability test",
+  "sample_spread": {
+    "rate_sd_rms": 0.0070225775942388,
+    "tangent_derivative_sd_rms": 0.002978819588257264,
+    "normal_derivative_sd_rms": 0.07004446270372044
+  },
+  "conditional_mean_spread": {
+    "rate_sd_rms": 0.0008663681874905689,
+    "tangent_derivative_sd_rms": 0.0003872136775272715,
+    "normal_derivative_sd_rms": 0.003849274272859293
+  },
+  "fixed_observed_initial_state": [
+    {
+      "name": "Re 150 (train)",
+      "draws": 20,
+      "complete": 0,
+      "solves": [
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4622
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3548
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4136
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4448
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4664
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 6104
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4958
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 5474
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 6554
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4424
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 6290
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3044
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4454
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3062
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4094
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3164
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3500
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3704
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4718
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 2978
+        }
+      ]
+    },
+    {
+      "name": "Re 300 (train)",
+      "draws": 20,
+      "complete": 0,
+      "solves": [
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3896
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3230
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4022
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3986
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4400
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4646
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3698
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3038
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 6218
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3416
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 5036
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3944
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4106
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3530
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4022
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3962
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4244
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 3644
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4766
+        },
+        {
+          "complete": false,
+          "reason": "amplitude",
+          "calls": 4832
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+candidate,target,held_out,mean_completed,mean_fluctuation_error,reconstruction_floor,short_survivors,short_draws,long_survivors,long_draws
+amplitude,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+amplitude,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+amplitude,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+amplitude-centered,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+amplitude-centered,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+amplitude-centered,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+amplitude-clock-d1,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+amplitude-clock-d1,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+amplitude-clock-d1,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+balanced-centered,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+balanced-centered,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+balanced-centered,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+balanced-h1,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+balanced-h1,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+balanced-h1,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+balanced-h3,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+balanced-h3,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+balanced-h3,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+dimensional-centered-d1,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+dimensional-centered-d1,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+dimensional-centered-d1,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+dimensional-clock-d1,Re 150 (train),False,True,0.01929778950181168,0.01894733291572075,0,200,0,20
+dimensional-clock-d1,Re 300 (train),False,True,0.01827721208653128,0.018168433422774674,0,200,0,20
+dimensional-clock-d1,Re 200 (held out),True,True,0.7223713750270057,0.07783821192185755,0,200,0,20
+fixed-rate-centered-0.3,Re 150 (train),False,True,0.09272324835499167,0.01894733291572075,0,200,0,20
+fixed-rate-centered-0.3,Re 300 (train),False,True,0.08463779868683996,0.018168433422774674,0,200,0,20
+fixed-rate-centered-0.3,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+fixed-rate-centered-1,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+fixed-rate-centered-1,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+fixed-rate-centered-1,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+fixed-rate-centered-3,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+fixed-rate-centered-3,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+fixed-rate-centered-3,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+full-support-0.0001,Re 150 (train),False,True,0.4650748598035398,0.01894733291572075,191,200,1,20
+full-support-0.0001,Re 300 (train),False,True,0.7767955072181016,0.018168433422774674,142,200,0,20
+full-support-0.0001,Re 200 (held out),True,False,,0.07783821192185755,38,200,0,20
+full-support-0.01,Re 150 (train),False,True,0.2234382677323389,0.01894733291572075,2,200,0,20
+full-support-0.01,Re 300 (train),False,True,1.0605017268083134,0.018168433422774674,1,200,0,20
+full-support-0.01,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+original,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+original,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+original,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+original-h1,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+original-h1,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+original-h1,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+rate-centered-d0.1,Re 150 (train),False,True,0.032007721963399946,0.01894733291572075,0,200,0,20
+rate-centered-d0.1,Re 300 (train),False,True,0.06838847040003143,0.018168433422774674,0,200,0,20
+rate-centered-d0.1,Re 200 (held out),True,True,1.5156891644780173,0.07783821192185755,0,200,0,20
+rate-centered-d1,Re 150 (train),False,True,0.03276878430362177,0.01894733291572075,0,200,0,20
+rate-centered-d1,Re 300 (train),False,True,0.06546227941013062,0.018168433422774674,0,200,0,20
+rate-centered-d1,Re 200 (held out),True,True,1.551746874703507,0.07783821192185755,0,200,0,20
+rate-centered-d3,Re 150 (train),False,True,0.034932010416095706,0.01894733291572075,0,200,0,20
+rate-centered-d3,Re 300 (train),False,True,0.05791708499662219,0.018168433422774674,0,200,0,20
+rate-centered-d3,Re 200 (held out),True,True,1.642730147551846,0.07783821192185755,0,200,0,20
+rate-centered-h0.5,Re 150 (train),False,True,0.03201707983952855,0.01894733291572075,0,200,0,20
+rate-centered-h0.5,Re 300 (train),False,True,0.038968924704109995,0.018168433422774674,0,200,0,20
+rate-centered-h0.5,Re 200 (held out),True,True,1.5210897898222888,0.07783821192185755,0,200,0,20
+rate-centered-h1,Re 150 (train),False,True,0.031932259280712826,0.01894733291572075,0,200,0,20
+rate-centered-h1,Re 300 (train),False,True,0.06864811089740991,0.018168433422774674,0,200,0,20
+rate-centered-h1,Re 200 (held out),True,True,1.5117620997364174,0.07783821192185755,0,200,0,20
+rate-centered-h3,Re 150 (train),False,True,0.0315329408933753,0.01894733291572075,0,200,0,20
+rate-centered-h3,Re 300 (train),False,True,0.06991960985955736,0.018168433422774674,0,200,0,20
+rate-centered-h3,Re 200 (held out),True,True,1.5026655540501053,0.07783821192185755,0,200,0,20
+rate-centered-scale0.3,Re 150 (train),False,True,0.03209541775995656,0.01894733291572075,0,200,0,20
+rate-centered-scale0.3,Re 300 (train),False,True,0.08021363391945527,0.018168433422774674,0,200,0,20
+rate-centered-scale0.3,Re 200 (held out),True,True,1.509834284227302,0.07783821192185755,0,200,0,20
+rate-centered-scale3,Re 150 (train),False,True,0.0317604028968302,0.01894733291572075,0,200,0,20
+rate-centered-scale3,Re 300 (train),False,True,0.05603778232439364,0.018168433422774674,0,200,0,20
+rate-centered-scale3,Re 200 (held out),True,True,1.5128521746450192,0.07783821192185755,0,200,0,20
+rate-clock-d0.3,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+rate-clock-d0.3,Re 300 (train),False,True,0.021242196491987903,0.018168433422774674,2,200,0,20
+rate-clock-d0.3,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+rate-clock-d1,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+rate-clock-d1,Re 300 (train),False,True,0.01956007706719021,0.018168433422774674,29,200,1,20
+rate-clock-d1,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+rate-clock-d3,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+rate-clock-d3,Re 300 (train),False,True,0.019323810445949913,0.018168433422774674,48,200,0,20
+rate-clock-d3,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+rate-d1,Re 150 (train),False,True,0.034671002781388606,0.01894733291572075,0,200,0,20
+rate-d1,Re 300 (train),False,True,0.09007247403023326,0.018168433422774674,0,200,0,20
+rate-d1,Re 200 (held out),True,True,1.631188647659974,0.07783821192185755,0,200,0,20
+rate-h0.5,Re 150 (train),False,True,0.03430739444858138,0.01894733291572075,0,200,0,20
+rate-h0.5,Re 300 (train),False,True,0.07179572360077822,0.018168433422774674,0,200,0,20
+rate-h0.5,Re 200 (held out),True,True,1.5776116762421348,0.07783821192185755,0,200,0,20
+rate-h1,Re 150 (train),False,True,0.03551403544199277,0.01894733291572075,0,200,0,20
+rate-h1,Re 300 (train),False,True,0.09949476419650818,0.018168433422774674,0,200,0,20
+rate-h1,Re 200 (held out),True,True,1.5630136851801288,0.07783821192185755,0,200,0,20
+rate-h3,Re 150 (train),False,True,0.03622308893343139,0.01894733291572075,0,200,0,20
+rate-h3,Re 300 (train),False,True,0.10208171352249804,0.018168433422774674,0,200,0,20
+rate-h3,Re 200 (held out),True,True,1.555190033685386,0.07783821192185755,0,200,0,20
+support-0.0001,Re 150 (train),False,True,0.03605864925056045,0.01894733291572075,5,200,0,20
+support-0.0001,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+support-0.0001,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+support-0.01,Re 150 (train),False,True,0.03738799897860566,0.01894733291572075,6,200,0,20
+support-0.01,Re 300 (train),False,True,0.062153188751089196,0.018168433422774674,0,200,0,20
+support-0.01,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+support-centered-0.0001,Re 150 (train),False,True,0.06423109666095685,0.01894733291572075,0,200,0,20
+support-centered-0.0001,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+support-centered-0.0001,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+support-centered-0.01,Re 150 (train),False,True,0.03719424555640685,0.01894733291572075,0,200,0,20
+support-centered-0.01,Re 300 (train),False,False,,0.018168433422774674,0,200,0,20
+support-centered-0.01,Re 200 (held out),True,False,,0.07783821192185755,0,200,0,20
+support-clock-d1,Re 150 (train),False,False,,0.01894733291572075,0,200,0,20
+support-clock-d1,Re 300 (train),False,True,0.019143491339766623,0.018168433422774674,39,200,1,20
+support-clock-d1,Re 200 (held out),True,True,0.9059591784164488,0.07783821192185755,0,200,0,20

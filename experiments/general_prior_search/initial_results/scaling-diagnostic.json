@@ -1,0 +1,253 @@
+{
+  "source": {
+    "fit_directory": "cylinder-dense_low_noise-r25-s42-w16-rate-centered-h0.5",
+    "prior_record": "priors.json[training_scaled_prior]",
+    "posterior_array": "posterior.npz[gp_map_states]",
+    "summary_record": "summary.json[block_multiplier_median]"
+  },
+  "mode_count": 25,
+  "base_T": 1.0,
+  "modes": [
+    {
+      "mode": 1,
+      "observed_amplitude": 0.7037504982521042,
+      "gp_amplitude": 0.6986912008479685,
+      "observed_amplitude_over_gp_amplitude": 1.0072411065117115,
+      "rate_rms": 13.974929361133794,
+      "amplitude_over_T_floor": 0.7037504982521042,
+      "rate_rms_over_amplitude_over_T": 19.857789651081088
+    },
+    {
+      "mode": 2,
+      "observed_amplitude": 29.943228905230505,
+      "gp_amplitude": 29.407534170893094,
+      "observed_amplitude_over_gp_amplitude": 1.0182162411586222,
+      "rate_rms": 580.4115397124065,
+      "amplitude_over_T_floor": 29.943228905230505,
+      "rate_rms_over_amplitude_over_T": 19.383732514265347
+    },
+    {
+      "mode": 3,
+      "observed_amplitude": 26.74714603916523,
+      "gp_amplitude": 27.85465005713393,
+      "observed_amplitude_over_gp_amplitude": 0.9602398875700449,
+      "rate_rms": 592.7773312417197,
+      "amplitude_over_T_floor": 26.74714603916523,
+      "rate_rms_over_amplitude_over_T": 22.162264728122004
+    },
+    {
+      "mode": 4,
+      "observed_amplitude": 6.224747322973153,
+      "gp_amplitude": 6.187489417063903,
+      "observed_amplitude_over_gp_amplitude": 1.0060214900419062,
+      "rate_rms": 146.0177230349407,
+      "amplitude_over_T_floor": 6.224747322973153,
+      "rate_rms_over_amplitude_over_T": 23.457614495619016
+    },
+    {
+      "mode": 5,
+      "observed_amplitude": 5.950354828097659,
+      "gp_amplitude": 5.7424371011720785,
+      "observed_amplitude_over_gp_amplitude": 1.0362072275694831,
+      "rate_rms": 149.52660066715413,
+      "amplitude_over_T_floor": 5.950354828097659,
+      "rate_rms_over_amplitude_over_T": 25.129022551913614
+    },
+    {
+      "mode": 6,
+      "observed_amplitude": 5.170944316189275,
+      "gp_amplitude": 5.1824032362320045,
+      "observed_amplitude_over_gp_amplitude": 0.9977888791125678,
+      "rate_rms": 191.80062866319327,
+      "amplitude_over_T_floor": 5.170944316189275,
+      "rate_rms_over_amplitude_over_T": 37.09199266808981
+    },
+    {
+      "mode": 7,
+      "observed_amplitude": 4.652709977980484,
+      "gp_amplitude": 4.953553530933718,
+      "observed_amplitude_over_gp_amplitude": 0.9392671238789406,
+      "rate_rms": 196.13946765316408,
+      "amplitude_over_T_floor": 4.652709977980484,
+      "rate_rms_over_amplitude_over_T": 42.15596256405793
+    },
+    {
+      "mode": 8,
+      "observed_amplitude": 2.171708368352587,
+      "gp_amplitude": 2.309436254211666,
+      "observed_amplitude_over_gp_amplitude": 0.9403629844262174,
+      "rate_rms": 87.82007242485763,
+      "amplitude_over_T_floor": 2.171708368352587,
+      "rate_rms_over_amplitude_over_T": 40.43824378292382
+    },
+    {
+      "mode": 9,
+      "observed_amplitude": 3.136494397155939,
+      "gp_amplitude": 3.177496724096912,
+      "observed_amplitude_over_gp_amplitude": 0.9870960285717915,
+      "rate_rms": 190.9086918265213,
+      "amplitude_over_T_floor": 3.136494397155939,
+      "rate_rms_over_amplitude_over_T": 60.86690032018883
+    },
+    {
+      "mode": 10,
+      "observed_amplitude": 2.9334717266680417,
+      "gp_amplitude": 3.1697390936721277,
+      "observed_amplitude_over_gp_amplitude": 0.9254615726967069,
+      "rate_rms": 189.40565085236497,
+      "amplitude_over_T_floor": 2.9334717266680417,
+      "rate_rms_over_amplitude_over_T": 64.56706200045764
+    },
+    {
+      "mode": 11,
+      "observed_amplitude": 2.348952776856094,
+      "gp_amplitude": 2.3064054238667473,
+      "observed_amplitude_over_gp_amplitude": 1.0184474735226796,
+      "rate_rms": 94.75047409265643,
+      "amplitude_over_T_floor": 2.348952776856094,
+      "rate_rms_over_amplitude_over_T": 40.33732607407851
+    },
+    {
+      "mode": 12,
+      "observed_amplitude": 1.9315740439964588,
+      "gp_amplitude": 2.0389698533831795,
+      "observed_amplitude_over_gp_amplitude": 0.9473283976177856,
+      "rate_rms": 83.61816627585594,
+      "amplitude_over_T_floor": 1.9315740439964588,
+      "rate_rms_over_amplitude_over_T": 43.290168728323025
+    },
+    {
+      "mode": 13,
+      "observed_amplitude": 1.5549578478020065,
+      "gp_amplitude": 1.5741779110856848,
+      "observed_amplitude_over_gp_amplitude": 0.9877904122854687,
+      "rate_rms": 94.2751822851271,
+      "amplitude_over_T_floor": 1.5549578478020065,
+      "rate_rms_over_amplitude_over_T": 60.62877036724098
+    },
+    {
+      "mode": 14,
+      "observed_amplitude": 1.5277329686369787,
+      "gp_amplitude": 1.6198377958752694,
+      "observed_amplitude_over_gp_amplitude": 0.9431394751543487,
+      "rate_rms": 95.16966982136718,
+      "amplitude_over_T_floor": 1.5277329686369787,
+      "rate_rms_over_amplitude_over_T": 62.294701872066156
+    },
+    {
+      "mode": 15,
+      "observed_amplitude": 1.066663069451986,
+      "gp_amplitude": 1.0320023943570578,
+      "observed_amplitude_over_gp_amplitude": 1.0335858475566058,
+      "rate_rms": 89.25530973490044,
+      "amplitude_over_T_floor": 1.066663069451986,
+      "rate_rms_over_amplitude_over_T": 83.6771350682992
+    },
+    {
+      "mode": 16,
+      "observed_amplitude": 0.9779122781269083,
+      "gp_amplitude": 1.015782042785709,
+      "observed_amplitude_over_gp_amplitude": 0.9627186118048066,
+      "rate_rms": 89.08230688278638,
+      "amplitude_over_T_floor": 0.9779122781269083,
+      "rate_rms_over_amplitude_over_T": 91.09437408170649
+    },
+    {
+      "mode": 17,
+      "observed_amplitude": 0.7848491819250408,
+      "gp_amplitude": 0.8492130406782957,
+      "observed_amplitude_over_gp_amplitude": 0.9242076420519341,
+      "rate_rms": 78.8385710189542,
+      "amplitude_over_T_floor": 0.7848491819250408,
+      "rate_rms_over_amplitude_over_T": 100.4505997261572
+    },
+    {
+      "mode": 18,
+      "observed_amplitude": 0.7532217401162694,
+      "gp_amplitude": 0.8205683604011719,
+      "observed_amplitude_over_gp_amplitude": 0.917926861996023,
+      "rate_rms": 81.32536433425818,
+      "amplitude_over_T_floor": 0.7532217401162694,
+      "rate_rms_over_amplitude_over_T": 107.97001733075916
+    },
+    {
+      "mode": 19,
+      "observed_amplitude": 0.6081414525796781,
+      "gp_amplitude": 0.6186456141440484,
+      "observed_amplitude_over_gp_amplitude": 0.9830207127890113,
+      "rate_rms": 49.83321320975414,
+      "amplitude_over_T_floor": 0.6081414525796781,
+      "rate_rms_over_amplitude_over_T": 81.9434573952596
+    },
+    {
+      "mode": 20,
+      "observed_amplitude": 0.5816447307212621,
+      "gp_amplitude": 0.6084373698971258,
+      "observed_amplitude_over_gp_amplitude": 0.9559648363143871,
+      "rate_rms": 50.35826772200643,
+      "amplitude_over_T_floor": 0.5816447307212621,
+      "rate_rms_over_amplitude_over_T": 86.57908352330506
+    },
+    {
+      "mode": 21,
+      "observed_amplitude": 0.4232365071734294,
+      "gp_amplitude": 0.44037514070847195,
+      "observed_amplitude_over_gp_amplitude": 0.9610817415636359,
+      "rate_rms": 46.30977034627296,
+      "amplitude_over_T_floor": 0.4232365071734294,
+      "rate_rms_over_amplitude_over_T": 109.41818477699664
+    },
+    {
+      "mode": 22,
+      "observed_amplitude": 0.41728309255665935,
+      "gp_amplitude": 0.439385451275752,
+      "observed_amplitude_over_gp_amplitude": 0.9496971084160419,
+      "rate_rms": 48.241343693226156,
+      "amplitude_over_T_floor": 0.41728309255665935,
+      "rate_rms_over_amplitude_over_T": 115.60819154606862
+    },
+    {
+      "mode": 23,
+      "observed_amplitude": 0.378050057802567,
+      "gp_amplitude": 0.38286161661220597,
+      "observed_amplitude_over_gp_amplitude": 0.9874326424983142,
+      "rate_rms": 46.63885750254441,
+      "amplitude_over_T_floor": 0.378050057802567,
+      "rate_rms_over_amplitude_over_T": 123.36688367047176
+    },
+    {
+      "mode": 24,
+      "observed_amplitude": 0.3697522698959171,
+      "gp_amplitude": 0.38667488143486517,
+      "observed_amplitude_over_gp_amplitude": 0.9562355551098846,
+      "rate_rms": 47.466613997584055,
+      "amplitude_over_T_floor": 0.3697522698959171,
+      "rate_rms_over_amplitude_over_T": 128.37409763825278
+    },
+    {
+      "mode": 25,
+      "observed_amplitude": 0.307858336021117,
+      "gp_amplitude": 0.33204183361465783,
+      "observed_amplitude_over_gp_amplitude": 0.9271673170507595,
+      "rate_rms": 45.11788286566663,
+      "amplitude_over_T_floor": 0.307858336021117,
+      "rate_rms_over_amplitude_over_T": 146.55403991585223
+    }
+  ],
+  "summary": {
+    "block_multiplier_median": [
+      0.10212797065441462,
+      0.9818710064591115,
+      0.1893587061749522,
+      0.10453863368670432,
+      0.4985515201466429
+    ],
+    "amplitude_over_T_floor_larger_than_gp_derivative_rms_count": 0,
+    "feature_rms_range": [
+      0.12247577576227787,
+      1097.876854734479
+    ]
+  },
+  "zero_denominator_cases": [],
+  "artifact_paths": "relative to the collected results root"
+}

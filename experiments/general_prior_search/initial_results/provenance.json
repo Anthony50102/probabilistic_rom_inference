@@ -1,0 +1,48 @@
+{
+  "stage": "initial_development",
+  "numerical_source_commit": "fb670542c10956cd3d6a2cd80b3a2bf92bce1821",
+  "protective_results_tag": "pre-general-prior-results",
+  "candidate_count": 35,
+  "systems": ["euler", "heat", "burgers_2d", "cylinder"],
+  "system_note": "burgers_2d is diffusion-reaction, not viscous Burgers",
+  "completed_fits": 140,
+  "execution_failures": 0,
+  "report_fit_groups": 210,
+  "fit_group_note": "Training and held-out targets are separate groups, not independent fits",
+  "updates_per_fit": 12000,
+  "posterior_draws_per_fit": 200,
+  "long_draws_per_fit": 20,
+  "seed": 42,
+  "shared_prior_target_met": false,
+  "shortlisted_candidates": [],
+  "confirmation_fits": 0,
+  "collected_metadata_sets": 140,
+  "locally_hashed_metadata_files": 700,
+  "remote_sha256_verified_full_artifact_sets": 97,
+  "remote_sha256_verified_files": 873,
+  "full_artifact_sets_pending_recovery": 43,
+  "censoring": "CSV blank and JSON null mean errors indicate failed forecasts, not zero error. Bands and median errors condition on surviving draws.",
+  "short_survival_guard": "Cylinder: 2x largest absolute target reduced observation; other systems: 100x largest absolute training reduced observation. Percentages are not equivalent cross-system stability thresholds.",
+  "diagnostics": "After-the-fact local Jacobian-spread and fixed-observed-initial-state checks, not Floquet/global-stability evidence",
+  "azure": {
+    "checked_utc": "2026-11-13T06:03:06Z",
+    "subscription_state": "Disabled",
+    "workers_deallocated": 9,
+    "disablement_cause": "not established",
+    "resources_deleted": false
+  },
+  "compute_estimate": {
+    "upper_bound_vm_hours": 46.397293070555556,
+    "conservative_public_retail_usd": 54.048564005523886,
+    "price_retrieved_utc": "2026-11-13T06:25:11.981261+00:00",
+    "price_source": "https://prices.azure.com/api/retail/prices",
+    "sku": "Standard_F16as_v6",
+    "assumption": "Continuous allocation from each worker's creation until confirmed-deallocated snapshot, at current regional regular Linux retail rates",
+    "excluded": ["disks", "public IPs", "network", "tax", "account-specific pricing"],
+    "billing_caveat": "Not an invoice. The confirmed-deallocated snapshot is not the exact shutdown time. Deallocated resources can retain non-compute charges."
+  },
+  "reproduction": [
+    "python experiments/general_prior_search/report.py --results /path/to/collected/development --output /path/to/report",
+    "python experiments/general_prior_search/plot_initial.py --results /path/to/collected/development --output /path/to/report"
+  ]
+}

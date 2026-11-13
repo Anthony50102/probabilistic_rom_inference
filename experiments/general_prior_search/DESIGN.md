@@ -144,7 +144,7 @@ they are not used to select this amendment or as scientific results. The
 amendment follows from matching the prior mean's clock to its variance, not from
 inspecting any full-fit forecast.
 
-## Execution record (results pending)
+## Execution record (initial grid completed)
 
 All four seed45 plumbing fits completed successfully (100 updates, two draws;
 not accuracy evidence). The numerical development source is
@@ -167,3 +167,137 @@ uninterrupted 200-update fit with a 100+100 continuation, including the complete
 loss history, GP/block-scale samples, and Gaussian operator samples (agreement
 to 1e-9 relative tolerance). Failed fits and failed forecast integrations remain
 separate report entries; missing or escaped forecasts never become zero errors.
+
+## Initial development results (2026-11-13)
+
+**All 140 fits completed, but none met the shared-prior development targets.**
+The report contains 210 training/held-out fit-groups, not 210 independent fits.
+Every fit retained the declared source, 12,000 updates, 200 posterior draws and
+20 long-horizon draws. Comparisons use matching training-data/basis fingerprints.
+Successful inference execution does not imply successful forecast integration.
+No shortlist was promoted and no confirmation fits were run.
+
+### Cylinder: excellent mean trajectories, unusable sampled forecasts
+
+The following are full-field **fluctuation-relative** errors after the training
+interval, reported separately for the two training Reynolds numbers.
+
+| Prior | Re150 mean error | Re300 mean error | Re150 short survival | Re300 short survival |
+|---|---:|---:|---:|---:|
+| Original | failed | failed | 0/200 | 0/200 |
+| `rate-centered-h0.5` | 3.202% | 3.897% | 0/200 | 0/200 |
+| `dimensional-clock-d1` | 1.930% | 1.828% | 0/200 | 0/200 |
+| `full-support-0.0001` | 46.507% | 77.680% | 191/200 | 142/200 |
+
+The corresponding POD reconstruction floors are 1.895% and 1.817%. The simple
+rate-clock damping mean nearly reaches those floors, but **a good mean operator
+is not a usable posterior over forecast trajectories**. Full feature-support
+shrinkage improves short survival at the cost of severe mean bias; its long
+survival is only 1/20 and 0/20. All recorded cylinder short-draw failures in this
+grid are amplitude failures, not RHS-budget exhaustion.
+
+Re200 also remains poor: rate-centered and dimensional-clock mean errors are
+152.109% and 72.237%, respectively, with zero sampled survival. Full-support
+ridge 0.0001 has a failed mean and 38/200 short survivors at Re200. These are
+reported development results, not independent held-out confirmation after the
+earlier investigations. No survivor-only band is presented as unconditional UQ.
+
+### Smaller systems: retain the hierarchy; centering is not harmless
+
+Matched-original mean full-state errors are 1.230% (Euler), 1.864% (heat), and
+4.188% (diffusion-reaction); survivor-median reduced errors are 7.540%, 1.995%,
+and 2.373%, respectively. All their training-target short draws survive.
+
+`balanced-h3` essentially preserves these results: mean-error ratios to original
+are 1.000, 1.000 and 1.002; reduced-median ratios are 1.000, 1.001 and 1.016.
+Changing base block scales alone can be offset by the learned block multipliers,
+so this near-equivalence is not evidence that arbitrary prior changes help.
+Uncentered `rate-h3` improves diffusion-reaction mean error to 3.894% with 99.5%
+short survival, but increases heat's reduced-median error from 1.995% to 3.307%.
+Centered rate families often damage diffusion-reaction substantially.
+Fixed-scale and full-support controls also lose important small-system
+performance. Thus the original/shared hierarchy remains the reasonable baseline;
+the cylinder problem has not been solved by replacing it with one new family.
+
+### After-the-fact diagnosis and rejected explanation
+
+For `rate-centered-h0.5`, an additional 20 sampled operators at each training Re
+were integrated from the **same fixed observed initial state**. Both cases still
+had 0/20 survivors, all amplitude failures. Initial-state uncertainty alone
+therefore cannot explain the failure.
+
+At 24 training anchors, using observed mode SD to scale perturbations and GP
+rate scales for vector fields, normal-direction derivative SD was 0.07004
+versus 0.002979 tangentially: approximately 24 times larger. Conditional-mean
+variation was much smaller (0.003849 normal, 0.000387 tangential). This points
+to the conditional Gaussian operator uncertainty, particularly off the observed
+paths, rather than only GP-hyperparameter variation. It is a local uncertainty
+diagnostic, **not** a Floquet analysis or proof of global instability.
+
+The proposed observation-noise/rate-floor explanation was checked and rejected
+for this candidate. In none of the 25 modes did observed amplitude/T exceed GP
+derivative RMS; the latter was 19--147 times larger. Observed and GP-smoothed
+amplitudes were close, and feature RMS values were not near machine zero.
+No noise-floor correction is justified by these data.
+
+The largest absolute recorded late-loss change was 0.095 within-block SD; the
+largest GP-rate relative shift was 0.276. These diagnostics do not reveal gross
+late loss drift, but are not proofs of SVI convergence or posterior calibration.
+
+### Interpretation and next experimental direction
+
+This is a negative result for the **tested grid**, not proof that no simple
+general prior can work. It does not support a claim that one new generic prior
+now handles all four systems with reliable UQ. The earlier specialized
+contraction-prior results remain an optional physics-informed comparison;
+they used a different run budget and are not matched controls in this grid.
+No production defaults or manuscript claims have been changed.
+
+A separately declared next round could combine full feature-support covariance
+with a simple damping mean, or constrain quadratic strength relative to linear
+strength while retaining hierarchy. Naively rescaling quadratic columns can be
+undone by learned multipliers, so that hypothesis needs a real prior change and
+a matched control. **Neither direction has been implemented or fitted.**
+
+### Preservation, compute and external blocker
+
+All 140 metadata sets are local. A streaming SHA256 audit verified 873 files,
+representing **97 complete nine-file artifact sets**. The remaining 43 fits
+have complete summaries but still require their posterior, prior-root, plotting
+and checkpoint files from worker disks. The exact per-job recovery inventory
+and hashes of all 700 collected metadata files are retained in the private
+operational workspace. Do not delete the disks before recovery.
+
+At 2026-11-13 06:03:06 UTC, Azure's subscription API reported **Disabled** and
+all nine workers were deallocated. The reason is not established; credit
+exhaustion must not be inferred from this status. No billing restrictions were
+changed, no subscription was switched, and no resources were deleted.
+Further experiments and the remaining downloads require subscription recovery.
+
+Assuming continuous allocation from each worker's creation until that
+confirmed-deallocated snapshot gives 46.397 VM-hours and a conservative
+**USD 54.05 compute estimate** at the regional public Linux F16as_v6 rates
+retrieved on 2026-11-13. This is not an invoice or an exact shutdown timestamp.
+Disk, public-IP, network, tax and account-specific pricing are excluded;
+deallocation does not eliminate all ongoing resource charges.
+
+### Report artifacts and reproduction
+
+`initial_results/` contains all-candidate CSV/JSON summaries and the heatmap,
+per-Re cylinder metrics, selected mean trajectories, the accuracy/survival
+comparison, diagnostic outputs and sanitized provenance. Blank CSV mean errors
+are failed forecasts, not zeros. The trajectory figure subtracts an observation
+mean only for display and shows the two modes with largest observed temporal
+variation. It does not display uncertainty bands when all draws fail.
+The metadata-only full-support case appears in the scalar comparison, not as
+a fabricated trajectory. Black stars at Re200 are explicitly held-out data.
+
+From the repository root, with the original collected-results directory
+available and the `prob_rom` environment active:
+
+```bash
+python experiments/general_prior_search/report.py \
+  --results /path/to/collected/development --output /path/to/report
+python experiments/general_prior_search/plot_initial.py \
+  --results /path/to/collected/development --output /path/to/report
+```
