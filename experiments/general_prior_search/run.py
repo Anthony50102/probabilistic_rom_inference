@@ -136,6 +136,7 @@ def fit(prepared, cfg, candidate, output):
     def block(state):
         return jax.lax.scan(lambda s, _: svi.update(s, gamma2=gamma), state, jnp.arange(100))
 
+    last_report = time.monotonic()
     while completed < cfg.num_steps:
         state, batch_losses = block(state)
         batch_losses = np.asarray(batch_losses)
@@ -149,7 +150,9 @@ def fit(prepared, cfg, candidate, output):
                 pickle.dump(dict(state=jax.device_get(state), completed=completed, losses=losses,
                                  fit_seconds=previous_seconds + time.monotonic() - started), stream)
             temporary.replace(checkpoint)
-            print(f"step={completed} loss={batch_losses.mean():.7g}", flush=True)
+            print(f"step={completed} loss={batch_losses.mean():.7g} "
+                  f"block_seconds={time.monotonic()-last_report:.2f}", flush=True)
+            last_report = time.monotonic()
     key, sk = jax.random.split(key)
     post = guide.sample_posterior(sk, svi.get_params(state),
                                   sample_shape=(cfg.num_posterior_samples,), gamma2=gamma)
@@ -193,7 +196,7 @@ def main(args):
     module, spec = load_adapter(args.system)
     if args.system == "cylinder":
         schema = dict(name="dense_low_noise", window=[args.window_start, 1., 3.])
-        cfg = WeakFormConfig(operators="cAHBN", num_modes=args.modes)
+        cfg = WeakFormConfig(operators="cAHBN", num_modes=args.modes, ic_uncertainty=True)
         spec = module.MultiReSpec([150., 300.], [200.], window=tuple(schema["window"]), samples=250)
     else:
         schema = next(s for s in module.SCHEMAS if s["name"] == args.schema)
