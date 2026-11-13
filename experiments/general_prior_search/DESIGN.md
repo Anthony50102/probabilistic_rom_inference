@@ -143,3 +143,27 @@ fits**, followed by the same frozen-shortlist confirmation. Four seed45
 they are not used to select this amendment or as scientific results. The
 amendment follows from matching the prior mean's clock to its variance, not from
 inspecting any full-fit forecast.
+
+## Execution record (results pending)
+
+All four seed45 plumbing fits completed successfully (100 updates, two draws;
+not accuracy evidence). The numerical development source is
+`fb670542c10956cd3d6a2cd80b3a2bf92bce1821`. Its last change makes the cylinder's
+request metadata explicitly record the initial-state uncertainty already used
+by the evaluator, and adds block timings; it does not change the sampled states.
+
+The 140-fit grid started on four isolated Standard_F16as_v6 workers. Observed
+1000-update cylinder blocks took approximately 13 minutes, so the same frozen
+jobs were redistributed across nine workers (centralus, eastus, eastus2,
+westus3, westus2, northcentralus, southcentralus, canadacentral, westus).
+No experimental setting or iteration count changed. The 16 started fits stayed
+on their original workers and resumed their saved SVI states; unstarted fits
+moved to the new workers. Each worker uses four disjoint four-CPU slots.
+The original and redistributed job manifests have the same 140 IDs/arguments.
+
+The queue interruption is an operational event, not a new inference run or a
+forecast-based selection. An independent two-mode unit test compares an
+uninterrupted 200-update fit with a 100+100 continuation, including the complete
+loss history, GP/block-scale samples, and Gaussian operator samples (agreement
+to 1e-9 relative tolerance). Failed fits and failed forecast integrations remain
+separate report entries; missing or escaped forecasts never become zero errors.

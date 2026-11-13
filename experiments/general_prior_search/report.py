@@ -81,32 +81,42 @@ def case_key(row):
 def plots(records, output):
     systems = ["euler", "heat", "burgers_2d", "cylinder"]
     names = sorted({r["candidate"] for r in records})
-    errors, survival = np.full((len(names), 4), np.nan), np.full((len(names), 4), np.nan)
+    cases = sorted({case_key(r) for r in records if not r["held_out"]},
+                   key=lambda key: (systems.index(key[0]), key[1:]))
+    errors = np.full((len(names), len(cases)), np.nan)
+    survival = np.full_like(errors, np.nan)
     for i, name in enumerate(names):
-        for j, system in enumerate(systems):
-            rows = [r for r in records if r["candidate"] == name and r["system"] == system and not r["held_out"]]
+        for j, case in enumerate(cases):
+            rows = [r for r in records if r["candidate"] == name and case_key(r) == case]
             if len(rows) != 1:
+                if rows:
+                    raise ValueError(f"Duplicate candidate/case: {name}, {case}")
                 continue
             row = rows[0]
-            metric = "mean_fluct_relative" if system == "cylinder" else "mean_full_relative"
+            metric = "mean_fluct_relative" if case[0] == "cylinder" else "mean_full_relative"
             if row[metric] is not None:
                 errors[i, j] = 100 * row[metric]
             survival[i, j] = 100 * row["min_survival"]
     if not names:
         return
-    fig, axes = plt.subplots(1, 2, figsize=(12, max(6, .32*len(names))), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(max(12, 2.4*len(cases)), max(6, .32*len(names))), sharey=True)
     from matplotlib.colors import LogNorm
     image = axes[0].imshow(errors, aspect="auto", norm=LogNorm(vmin=.1, vmax=100), cmap="viridis_r")
     plt.colorbar(image, ax=axes[0], label="Mean-operator forecast error (%)")
     image = axes[1].imshow(survival, aspect="auto", vmin=0, vmax=100, cmap="RdYlGn")
     plt.colorbar(image, ax=axes[1], label="Minimum short-draw survival (%)")
+    labels = [case[0].replace("burgers_2d", "Diffusion-reaction") for case in cases]
+    if len(cases) > 4:
+        labels = [f"{label}\n{case[1]}\nr{case[2]} s{case[3]} {case[4]}"
+                  for label, case in zip(labels, cases)]
     for ax, values in zip(axes, (errors, survival)):
-        ax.set_xticks(range(4), ["Euler", "Heat", "Diffusion-reaction", "Cylinder"], rotation=20)
+        ax.set_xticks(range(len(cases)), labels, rotation=20)
         ax.set_yticks(range(len(names)), names)
         for i in range(len(names)):
-            for j in range(4):
+            for j in range(len(cases)):
                 val = values[i, j]
-                ax.text(j, i, "fail/missing" if not np.isfinite(val) else f"{val:.1f}",
+                text = "fail/missing" if not np.isfinite(val) else (f"{val:.2g}" if val >= 1000 else f"{val:.1f}")
+                ax.text(j, i, text,
                         ha="center", va="center", fontsize=8,
                         bbox=dict(facecolor="white", alpha=.7, edgecolor="none", pad=.5))
     axes[0].set_title("Full-state error; cylinder uses fluctuations")
@@ -152,14 +162,17 @@ def trajectory_plot(records, output, names):
 def main(args):
     records, failures = collect(args.results)
     args.output.mkdir(parents=True, exist_ok=True)
-    report = dict(records=records, failed_or_incomplete_jobs=failures)
+    public_records = [dict(row, path=str(Path(row["path"]).relative_to(args.results))) for row in records]
+    public_failures = [dict(row, path=str(Path(row["path"]).relative_to(args.results))) for row in failures]
+    report = dict(records=public_records, failed_or_incomplete_jobs=public_failures,
+                  artifact_paths="relative to the collected results root")
     (args.output / "summary.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
-    keys = sorted(set().union(*(r.keys() for r in records)))
+    keys = sorted(set().union(*(r.keys() for r in public_records)))
     with (args.output / "results.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=keys, lineterminator="\n")
         writer.writeheader()
         writer.writerows({k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in row.items()}
-                         for row in records)
+                         for row in public_records)
     lines = [f"Successful fit-groups: {len(records)}; failed/incomplete jobs: {len(failures)}",
              "Errors are percent; cylinder fluctuation-relative, others full-state; survival is minimum per target."]
     for row in records:
